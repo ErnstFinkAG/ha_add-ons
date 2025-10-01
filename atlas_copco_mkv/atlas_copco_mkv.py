@@ -354,6 +354,26 @@ def mqtt_publish(client: Optional['mqtt.Client'], topic: str, payload: str, reta
     except Exception:
         pass
 
+
+def mqtt_connect_with_fallback(cfg: MqttCfg):
+    # Try host as-given, then common fallbacks for HA add-on host_network
+    candidates = []
+    if cfg.host:
+        candidates.append(cfg.host)
+    candidates += ["127.0.0.1", "localhost", "core-mosquitto"]
+    tried = []
+    for h in candidates:
+        if h in tried:
+            continue
+        tried.append(h)
+        c = MqttCfg(h, cfg.port, cfg.username, cfg.password, cfg.discovery_prefix, cfg.state_base)
+        client = mqtt_connect(c)
+        if client:
+            print(f"[DIAG ] MQTT connected to {h}:{cfg.port}")
+            return client, h
+        else:
+            print(f"[DIAG ] MQTT connect failed to {h}:{cfg.port}")
+    return None, None
 # --- Main --------------------------------------------------------------------
 
 def main(argv: Optional[List[str]] = None) -> int:
