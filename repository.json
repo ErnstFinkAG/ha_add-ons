@@ -1,0 +1,10 @@
+{
+  "name": "Ernst Fink AG - Add-ons",
+  "url": "https://github.com/ErnstFinkAG/ha_add-ons",
+  "maintainer": "Ernst Fink AG",
+  "description": "A collection of custom Home Assistant add-ons, without any support or documentation",
+  "arch": ["aarch64", "amd64", "armhf", "armv7", "i386"],
+  "homeassistant_min_version": "2022.5.0",
+  "image": "https://github.com/ErnstFinkAG/ha_add-ons/Fink_group_favicon.png",
+  "version": "1.0.0"
+}

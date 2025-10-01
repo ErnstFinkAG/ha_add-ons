@@ -1,0 +1,13 @@
+{
+  "name": "Test Addon",
+  "version": "1.0.0",
+  "slug": "test_addon",
+  "description": "A simple test addon for Home Assistant.",
+  "startup": "services",
+  "boot": "auto",
+  "arch": ["amd64", "aarch64", "armv7", "armhf", "i386"],
+  "startup": "application",
+  "options": {},
+  "schema": {},
+  "image": "ghcr.io/ernstfinkag/ha_add-ons/test_addon-{arch}"
+}
