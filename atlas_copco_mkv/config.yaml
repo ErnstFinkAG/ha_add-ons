@@ -1,5 +1,5 @@
 name: "Atlas Copco MKV"
-version: "0.0.16"
+version: "0.0.17"
 slug: "atlas_copco_mkv"
 description: "Poll Atlas Copco MK5s Touch controllers and publish MQTT sensors."
 arch:
@@ -32,7 +32,6 @@ schema:
   mqtt_host: str
   mqtt_port: int
   mqtt_user: str
-  mqtt_username: str
   mqtt_password: str
   discovery_prefix: str
   state_base_topic: str
