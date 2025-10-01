@@ -6,7 +6,7 @@ log_info()  { echo "[$(ts)] [INFO ] $*"; }
 log_error() { echo "[$(ts)] [ERROR] $*" >&2; }
 log_diag()  { echo "[$(ts)] [DIAG ] $*"; }
 
-# --- config arrays ---
+# --- read config into arrays ---
 IPS="$(bashio::config 'ip_list')"
 NAMES="$(bashio::config 'name_list')"
 TYPES="$(bashio::config 'type')"
@@ -25,14 +25,10 @@ fi
 
 log_info "Configured $count device(s). Starting parallel 5s polling loops..."
 
-# --- logging lock & per-device log dir ---
-LOG_DIR="/data/mkv_logs"
-mkdir -p "$LOG_DIR"
-# Open a lock file descriptor once; used with flock for atomic main-log blocks
+# Use a single lock file so we can print log blocks atomically
 LOCK_FILE="/tmp/mkv_mainlog.lock"
-exec {LOGFD}> "$LOCK_FILE"  # FD number stored in $LOGFD
+: > "$LOCK_FILE" || true
 
-# --- device loop spawner ---
 for ((i=0; i<count; i++)); do
   IP="${IP_ARR[$i]}"
   NAME="${NAME_ARR[$i]:-Device$i}"
@@ -40,45 +36,17 @@ for ((i=0; i<count; i++)); do
   TIMEOUT="${TOUT_ARR[$i]:-5}"
 
   if [[ -z "$IP" || -z "$TYPE" ]]; then
-    log_error "Skipping index $i: missing ip or type"
+    log_error "Skipping index $i: missing ip or type (ip='$IP', type='$TYPE')"
     continue
   fi
 
-  DEVLOG="${LOG_DIR}/${NAME}.log"
-
   (
-    # Slight stagger on start to avoid all devices aligning on the same second
-    sleep $(( (RANDOM % 500) / 100 ))
+    # slight random stagger to avoid exact alignment
+    sleep $(( (RANDOM % 400) / 100 ))
 
     while true; do
-      # Emit START line and command atomically in the main log
-      flock -x "$LOGFD" bash -c '
-        ts() { date "+%Y-%m-%d %H:%M:%S%z (%Z)"; }
-        echo "[$(ts)] [INFO ] Polling '"'"'"$NAME"'"'"' ('"$IP"') with question set '"'"'"$TYPE"'"'"', timeout '"$TIMEOUT"'s"
-        echo "[$(ts)] [DIAG ] Polling started for device '"'"'"$NAME"'"'"' ('"$IP"')"
-      '
+      start_ns=$(date +%s%N || echo 0)
 
-      # Run the poll; send its stdout/stderr to the per-device logfile
-      start_ns=$(date +%s%N) || true
-      python3 /atlas_copco_mkv.py \
-        --question-set "$TYPE" \
-        --controller-host "$IP" \
-        --device-name "$NAME" \
-        --timeout "$TIMEOUT" >>"$DEVLOG" 2>&1 || true
-      end_ns=$(date +%s%N) || true
-      dur_ms=$(( (end_ns - start_ns) / 1000000 ))
-
-      # Emit FINISH line atomically so it always follows the START line
-      flock -x "$LOGFD" bash -c '
-        ts() { date "+%Y-%m-%d %H:%M:%S%z (%Z)"; }
-        echo "[$(ts)] [DIAG ] Polling finished for device '"'"'"$NAME"'"'"' ('"$IP"') in '"$dur_ms"'ms"
-      '
-
-      # Maintain a 5-second poll rate per device
-      sleep 5
-    done
-  ) &
-done
-
-# Wait for all background loops
-wait
+      # run the poll and CAPTURE output so we can print it as one block
+      poll_output="$(
+        pytho
