@@ -1,5 +1,5 @@
 name: "Atlas Copco MKV"
-version: "0.0.23"
+version: "0.0.24"
 slug: "atlas_copco_mkv"
 description: "Poll Atlas Copco MK5s Touch controllers and publish MQTT sensors."
 arch:

@@ -571,7 +571,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 key = r.get("Key") or "0000.00"
 
                 display_name = f"{device_name}_{device_type}_{metric_name}"
-                object_id = slugify(display_name)
+                object_id = slugify(f"{device_type}_{metric_name}")  # shorter ID; HA prefixes device name automatically
                 unique_id = slugify(f"{host}_{key}_{display_name}")
 
                 state_topic = f"{mqtt_cfg.state_base}/{object_id}/state"
@@ -583,6 +583,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 cfg_payload = {
                     "name": display_name,
                     "unique_id": unique_id,
+                        "object_id": object_id,
                     "state_topic": state_topic,
                     "unit_of_measurement": unit or None,
                     "device": ha_device,
