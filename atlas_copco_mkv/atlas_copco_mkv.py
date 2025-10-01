@@ -574,7 +574,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 object_id = slugify(f"{device_type}_{metric_name}")  # shorter ID; HA prefixes device name automatically
                 unique_id = slugify(f"{host}_{key}_{display_name}")
 
-                state_topic = f"{mqtt_cfg.state_base}/{object_id}/state"
+                state_topic = f"{mqtt_cfg.state_base}/{slugify(device_name)}/{object_id}/state"
                 config_topic = f"{mqtt_cfg.discovery_prefix}/sensor/{object_id}/config"
 
                 device_class = guess_device_class(metric_name, unit)
