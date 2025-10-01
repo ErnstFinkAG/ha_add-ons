@@ -1,0 +1,36 @@
+name: Atlas Copco MKV
+version: 0.0.0.1
+slug: atlas_copco_mkv
+description: "Poll Atlas Copco MK5s Touch controllers and publish MQTT sensors. Supports multiple hosts via CSV config."
+arch:
+  - amd64
+  - aarch64
+startup: services
+init: false
+host_network: true
+homeassistant_api: false
+options:
+  ip_list: "10.60.23.11,10.60.23.12"
+  name_list: "eftool-bw-b2-f3-air11,eftool-bw-b2-f3-air12"
+  interval_list: "10,10"
+  timeout_list: "5,5"
+  verbose_list: "true,true"
+  type: "GA15VP13,GA15VS23A"
+  mqtt_host: "localhost"
+  mqtt_port: 1883
+  mqtt_user: "mqtt_user"
+  mqtt_password: "mqtt_password"
+  discovery_prefix: "homeassistant"
+schema:
+  ip_list: str
+  name_list: str
+  interval_list: str
+  timeout_list: str
+  verbose_list: str
+  question: str
+  question_list: str?
+  mqtt_host: str
+  mqtt_port: int
+  mqtt_user: str
+  mqtt_password: str
+  discovery_prefix: str
