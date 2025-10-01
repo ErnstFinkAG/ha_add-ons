@@ -24,29 +24,33 @@ if [[ $count -eq 0 ]]; then
   exit 1
 fi
 
-log_info "Configured $count device(s). Starting continuous polling loop..."
+log_info "Configured $count device(s). Starting parallel polling loops..."
 
-while true; do
-  for ((i=0; i<count; i++)); do
-    IP="${IP_ARR[$i]}"
-    NAME="${NAME_ARR[$i]:-Device$i}"
-    TYPE="${TYPE_ARR[$i]:-}"
-    TIMEOUT="${TOUT_ARR[$i]:-5}"
+for ((i=0; i<count; i++)); do
+  IP="${IP_ARR[$i]}"
+  NAME="${NAME_ARR[$i]:-Device$i}"
+  TYPE="${TYPE_ARR[$i]:-}"
+  TIMEOUT="${TOUT_ARR[$i]:-5}"
 
-    if [[ -z "$IP" || -z "$TYPE" ]]; then
-      log_error "Skipping index $i: missing ip or type"
-      continue
-    fi
+  if [[ -z "$IP" || -z "$TYPE" ]]; then
+    log_error "Skipping index $i: missing ip or type"
+    continue
+  fi
 
-    log_info "Polling '$NAME' ($IP) with question set '$TYPE', timeout ${TIMEOUT}s"
+  (
+    while true; do
+      log_info "Polling '$NAME' ($IP) with question set '$TYPE', timeout ${TIMEOUT}s"
 
-    python3 /atlas_copco_mkv.py \
-      --question-set "$TYPE" \
-      --controller-host "$IP" \
-      --device-name "$NAME" \
-      --timeout "$TIMEOUT"
+      python3 /atlas_copco_mkv.py \
+        --question-set "$TYPE" \
+        --controller-host "$IP" \
+        --device-name "$NAME" \
+        --timeout "$TIMEOUT"
 
-    log_info "Waiting 5 seconds before next poll..."
-    sleep 5
-  done
+      sleep 5
+    done
+  ) &
 done
+
+# Wait for all background loops forever
+wait
