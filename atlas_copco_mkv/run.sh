@@ -49,4 +49,35 @@ for ((i=0; i<count; i++)); do
 
       # run the poll and CAPTURE output so we can print it as one block
       poll_output="$(
-        pytho
+        python3 /atlas_copco_mkv.py \
+          --question-set "$TYPE" \
+          --controller-host "$IP" \
+          --device-name "$NAME" \
+          --timeout "$TIMEOUT" 2>&1
+      )"
+      rc=$?
+
+      end_ns=$(date +%s%N || echo "$start_ns")
+      (( dur_ms = (end_ns - start_ns) / 1000000 ))
+
+      # print START → RESULTS → FINISH as one atomic block
+      {
+        echo "[$(ts)] [INFO ] Polling '$NAME' ($IP) with question set '$TYPE', timeout ${TIMEOUT}s"
+        echo "[$(ts)] [DIAG ] Polling started for device '$NAME' ($IP)"
+        # the python results:
+        printf '%s\n' "$poll_output"
+        echo "[$(ts)] [DIAG ] Polling finished for device '$NAME' ($IP) in ${dur_ms}ms (rc=${rc})"
+      } | (
+        # take an exclusive lock for the duration of this block
+        exec 9>>"$LOCK_FILE"
+        flock -x 9
+        cat
+      )
+
+      # maintain a 5-second poll interval per device
+      sleep 5
+    done
+  ) &
+done
+
+wait
