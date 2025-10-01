@@ -571,7 +571,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 key = r.get("Key") or "0000.00"
 
                 display_name = f"{device_name}_{device_type}_{metric_name}"
-                object_id = slugify(f"{device_type}_{metric_name}")  # shorter ID; HA prefixes device name automatically
+                object_id = slugify(f"{device_name}_{metric_name}")  # include device for uniqueness
                 unique_id = slugify(f"{host}_{key}_{display_name}")
 
                 state_topic = f"{mqtt_cfg.state_base}/{slugify(device_name)}/{object_id}/state"
