@@ -1,24 +1,13 @@
-FROM ghcr.io/home-assistant/amd64-base:latest
+ARG BUILD_FROM=ghcr.io/hassio-addons/base-python:13.2.2
+FROM $BUILD_FROM
 
-# Keep Python tools in a virtualenv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Install Python and create venv
-RUN apk add --no-cache python3 py3-pip bash curl && python3 -m venv /opt/venv
-
-# Work dir for the app
-WORKDIR /usr/src/app
+# Copy files
+COPY run.sh /run.sh
+COPY atlas_copco_mkv.py /atlas_copco_mkv.py
 
 # Install Python dependencies
-COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /tmp/requirements.txt && \
-    rm -f /tmp/requirements.txt
+RUN pip3 install --no-cache-dir requests paho-mqtt
 
-# Copy app code and runtime
-COPY atlas_copco_parser.py ./
-COPY run.sh /run.sh
-RUN chmod +x /run.sh
+RUN chmod a+x /run.sh
 
-# Start the add-on
 CMD ["/run.sh"]

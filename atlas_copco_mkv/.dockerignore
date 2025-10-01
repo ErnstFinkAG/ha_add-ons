@@ -1,8 +1,0 @@
-*
-!Dockerfile
-!config.yaml
-!requirements.txt
-!atlas_copco_parser.py
-!run.sh
-!README.md
-!.dockerignore
