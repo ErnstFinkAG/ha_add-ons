@@ -4,6 +4,7 @@ set -Eeuo pipefail
 ts() { date '+%Y-%m-%d %H:%M:%S%z (%Z)'; }
 log_info()  { echo "[$(ts)] [INFO ] $*"; }
 log_error() { echo "[$(ts)] [ERROR] $*" >&2; }
+log_diag()  { echo "[$(ts)] [DIAG ] $*"; }
 
 log_info "Starting Atlas Copco MKV add-on"
 
@@ -40,6 +41,7 @@ for ((i=0; i<count; i++)); do
   (
     while true; do
       log_info "Polling '$NAME' ($IP) with question set '$TYPE', timeout ${TIMEOUT}s"
+      log_diag "Polling started for device '$NAME' ($IP)"
 
       python3 /atlas_copco_mkv.py \
         --question-set "$TYPE" \
@@ -47,6 +49,7 @@ for ((i=0; i<count; i++)); do
         --device-name "$NAME" \
         --timeout "$TIMEOUT"
 
+      log_diag "Polling finished for device '$NAME' ($IP)"
       sleep 5
     done
   ) &
