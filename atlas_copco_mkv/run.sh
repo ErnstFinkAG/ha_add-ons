@@ -25,6 +25,16 @@ NAMES="$(bashio::config 'name_list')"
 TYPES="$(bashio::config 'type')"
 TOUTS="$(bashio::config 'timeout_list')"
 
+# NEW: MQTT settings
+MQTT_HOST="$(bashio::config 'mqtt_host')"
+MQTT_PORT="$(bashio::config 'mqtt_port')"
+MQTT_USER="$(bashio::config 'mqtt_username')"
+# fallback to mqtt_user if provided
+: "${MQTT_USER:=$(bashio::config 'mqtt_user')}"
+MQTT_PASS="$(bashio::config 'mqtt_password')"
+DISC_PREFIX="$(bashio::config 'discovery_prefix')"
+STATE_BASE="$(bashio::config 'state_base_topic')"
+
 IFS=',' read -r -a IP_ARR   <<< "${IPS:-}"
 IFS=',' read -r -a NAME_ARR <<< "${NAMES:-}"
 IFS=',' read -r -a TYPE_ARR <<< "${TYPES:-}"
@@ -63,7 +73,13 @@ for ((i=0; i<count; i++)); do
           --question-set "$TYPE" \
           --controller-host "$IP" \
           --device-name "$NAME" \
-          --timeout "$TIMEOUT" 2>&1
+          --timeout "$TIMEOUT" \
+          --mqtt-host "${MQTT_HOST:-}" \
+          --mqtt-port "${MQTT_PORT:-1883}" \
+          --mqtt-username "${MQTT_USER:-}" \
+          --mqtt-password "${MQTT_PASS:-}" \
+          --discovery-prefix "${DISC_PREFIX:-homeassistant}" \
+          --state-base-topic "${STATE_BASE:-atlas_copco}" 2>&1
       )"
       rc=$?
 

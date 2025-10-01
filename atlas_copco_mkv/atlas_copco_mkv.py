@@ -8,6 +8,15 @@ import sys
 import textwrap
 from typing import Dict, List, Tuple, Any, Optional, Iterable, Set
 
+import json
+import socket
+from dataclasses import dataclass
+
+try:
+    import paho.mqtt.client as mqtt
+except Exception:
+    mqtt = None
+
 # --- HTTP helper -------------------------------------------------------------
 
 try:
@@ -284,6 +293,67 @@ def interactive_select() -> str:
     return ["GA15VS23A", "GA15VP13", "Custom"][int(sel)]
 
 
+def slugify(s: str) -> str:
+    return re.sub(r"[^a-z0-9_]+", "_", s.strip().lower().replace(" ", "_"))
+
+def guess_device_class(name: str, unit: str) -> Optional[str]:
+    unit = (unit or "").strip()
+    n = (name or "").lower()
+    if unit == "°C":
+        return "temperature"
+    if unit in ("bar","Pa","kPa","hPa","psi","mmHg","inHg"):
+        return "pressure"
+    if unit == "A":
+        return "current"
+    if unit == "%":
+        if "humidity" in n:
+            return "humidity"
+        return None
+    if unit == "rpm":
+        return None
+    if unit == "h":
+        return None
+    if unit == "m3":
+        return None
+    return None
+
+def guess_state_class(name: str, unit: str) -> Optional[str]:
+    if unit in ("°C","bar","A","%","rpm"):
+        return "measurement"
+    if unit in ("h","m3","count"):
+        return "total_increasing"
+    return None
+
+@dataclass
+class MqttCfg:
+    host: str
+    port: int
+    username: Optional[str]
+    password: Optional[str]
+    discovery_prefix: str
+    state_base: str
+
+def mqtt_connect(cfg: MqttCfg) -> Optional['mqtt.Client']:
+    if mqtt is None or not cfg or not cfg.host:
+        return None
+    client = mqtt.Client()
+    if cfg.username or cfg.password:
+        client.username_pw_set(cfg.username or "", cfg.password or "")
+    try:
+        client.connect(cfg.host, cfg.port, keepalive=30)
+        client.loop_start()
+        return client
+    except Exception:
+        return None
+
+def mqtt_publish(client: Optional['mqtt.Client'], topic: str, payload: str, retain: bool=False):
+    if client is None:
+        return
+    try:
+        client.publish(topic, payload, qos=0, retain=retain)
+    except Exception:
+        pass
+
 # --- Main --------------------------------------------------------------------
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -303,6 +373,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--custom-question-hex", default="")
     parser.add_argument("--controller-host", default=None)
     parser.add_argument("--device-name", default=None)
+    parser.add_argument("--mqtt-host", default=None)
+    parser.add_argument("--mqtt-port", type=int, default=1883)
+    parser.add_argument("--mqtt-username", default=None)
+    parser.add_argument("--mqtt-password", default=None)
+    parser.add_argument("--discovery-prefix", default="homeassistant")
+    parser.add_argument("--state-base-topic", default="atlas_copco")
     args = parser.parse_args(argv)
 
     qset = args.question_set or interactive_select()

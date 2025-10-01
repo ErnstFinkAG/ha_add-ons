@@ -21,6 +21,7 @@ options:
   mqtt_user: "mqtt_user"
   mqtt_password: "mqtt_password"
   discovery_prefix: "homeassistant"
+  state_base_topic: "atlas_copco"
 schema:
   ip_list: str
   name_list: str
