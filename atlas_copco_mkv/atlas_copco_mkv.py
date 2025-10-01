@@ -8,6 +8,23 @@ import sys
 import textwrap
 from typing import Dict, List, Tuple, Any, Optional, Iterable, Set
 
+# --- Add-on options loader (use config.yaml -> /data/options.json) -----------
+def load_addon_options() -> Dict[str, Any]:
+    candidates = ["/data/options.json", "/config/addons_config/atlas_copco_mkv/options.json"]
+    for p in candidates:
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            continue
+    return {}
+
+def get_opt(options: Dict[str, Any], *keys, default=None):
+    for k in keys:
+        if k in options and options[k] not in (None, ""):
+            return options[k]
+    return default
+
 import json
 import socket
 from dataclasses import dataclass
@@ -399,6 +416,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--mqtt-password", default=None)
     parser.add_argument("--discovery-prefix", default="homeassistant")
     parser.add_argument("--state-base-topic", default="atlas_copco")
+    opts = load_addon_options()
+    # Prefer CLI > env > options.json > defaults
+    # Fill parser defaults from options
+    if opts:
+        parser.set_defaults(
+            controller_host=get_opt(opts, 'controller_host', default=None),
+            device_name=get_opt(opts, 'device_name', default=None),
+            mqtt_host=get_opt(opts, 'mqtt_host', default=None),
+            mqtt_port=int(get_opt(opts, 'mqtt_port', default=1883)),
+            mqtt_username=get_opt(opts, 'mqtt_username', 'mqtt_user', default=None),
+            mqtt_password=get_opt(opts, 'mqtt_password', default=None),
+            discovery_prefix=get_opt(opts, 'discovery_prefix', default='homeassistant'),
+            state_base_topic=get_opt(opts, 'state_base_topic', default='atlas_copco'),
+        )
     args = parser.parse_args(argv)
 
     qset = args.question_set or interactive_select()

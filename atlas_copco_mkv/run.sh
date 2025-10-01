@@ -73,13 +73,7 @@ for ((i=0; i<count; i++)); do
           --question-set "$TYPE" \
           --controller-host "$IP" \
           --device-name "$NAME" \
-          --timeout "$TIMEOUT" \
-          --mqtt-host "${MQTT_HOST:-}" \
-          --mqtt-port "${MQTT_PORT:-1883}" \
-          --mqtt-username "${MQTT_USER:-}" \
-          --mqtt-password "${MQTT_PASS:-}" \
-          --discovery-prefix "${DISC_PREFIX:-homeassistant}" \
-          --state-base-topic "${STATE_BASE:-atlas_copco}" 2>&1
+          --timeout "$TIMEOUT" 2>&1
       )"
       rc=$?
 
