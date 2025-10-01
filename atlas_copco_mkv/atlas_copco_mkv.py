@@ -540,68 +540,69 @@ def main(argv: Optional[List[str]] = None) -> int:
                 }
             )
 
+    
     rows_to_print = [r for r in rows if r.get("Name") and r.get("Name") != "?"]
 
-# --- MQTT discovery + state ---
-if getattr(args, "mqtt_host", None):
-    host_only = re.sub(r"^mqtts?://", "", args.mqtt_host or "", flags=re.I)
-    mqtt_cfg = MqttCfg(
-        host=host_only or "127.0.0.1",
-        port=getattr(args, "mqtt_port", 1883),
-        username=getattr(args, "mqtt_username", None),
-        password=getattr(args, "mqtt_password", None),
-        discovery_prefix=(getattr(args, "discovery_prefix", "homeassistant") or "homeassistant").strip().strip("/"),
-        state_base=(getattr(args, "state_base_topic", "atlas_copco") or "atlas_copco").strip().strip("/"),
-    )
-    client, connected_host = mqtt_connect_with_fallback(mqtt_cfg) if mqtt_cfg else (None, None)
+    # --- MQTT discovery + state ---
+    if getattr(args, "mqtt_host", None):
+        host_only = re.sub(r"^mqtts?://", "", args.mqtt_host or "", flags=re.I)
+        mqtt_cfg = MqttCfg(
+            host=host_only or "127.0.0.1",
+            port=getattr(args, "mqtt_port", 1883),
+            username=getattr(args, "mqtt_username", None),
+            password=getattr(args, "mqtt_password", None),
+            discovery_prefix=(getattr(args, "discovery_prefix", "homeassistant") or "homeassistant").strip().strip("/"),
+            state_base=(getattr(args, "state_base_topic", "atlas_copco") or "atlas_copco").strip().strip("/"),
+        )
+        client, connected_host = mqtt_connect_with_fallback(mqtt_cfg) if mqtt_cfg else (None, None)
 
-    if client:
-        ha_device = {
-            "identifiers": [f"atlas_copco_{host}"],
-            "name": device_name,
-            "manufacturer": "Atlas Copco",
-            "model": device_type,
-            "sw_version": "MK5s Touch",
-        }
-        for r in rows_to_print:
-            metric_name = r.get("Name") or "Metric"
-            unit = r.get("Unit") or ""
-            value = r.get("Value")
-            key = r.get("Key") or "0000.00"
-
-            display_name = f"{device_name}_{device_type}_{metric_name}"
-            object_id = slugify(display_name)
-            unique_id = slugify(f"{host}_{key}_{display_name}")
-
-            state_topic = f"{mqtt_cfg.state_base}/{object_id}/state"
-            config_topic = f"{mqtt_cfg.discovery_prefix}/sensor/{object_id}/config"
-
-            device_class = guess_device_class(metric_name, unit)
-            state_class = guess_state_class(metric_name, unit)
-
-            cfg_payload = {
-                "name": display_name,
-                "unique_id": unique_id,
-                "state_topic": state_topic,
-                "unit_of_measurement": unit or None,
-                "device": ha_device,
+        if client:
+            ha_device = {
+                "identifiers": [f"atlas_copco_{host}"],
+                "name": device_name,
+                "manufacturer": "Atlas Copco",
+                "model": device_type,
+                "sw_version": "MK5s Touch",
             }
-            if device_class:
-                cfg_payload["device_class"] = device_class
-            if state_class:
-                cfg_payload["state_class"] = state_class
+            for r in rows_to_print:
+                metric_name = r.get("Name") or "Metric"
+                unit = r.get("Unit") or ""
+                value = r.get("Value")
+                key = r.get("Key") or "0000.00"
 
-            print(f"[DIAG ] MQTT DISCOVERY -> {config_topic}")
-            mqtt_publish(client, config_topic, json.dumps({k: v for k, v in cfg_payload.items() if v is not None}), retain=True)
-            if value is not None:
-                print(f"[DIAG ] MQTT STATE -> {state_topic} = {value}")
-                mqtt_publish(client, state_topic, str(value), retain=True)
+                display_name = f"{device_name}_{device_type}_{metric_name}"
+                object_id = slugify(display_name)
+                unique_id = slugify(f"{host}_{key}_{display_name}")
 
-        client.loop_stop()
-        try:
-            client.disconnect()
-        except Exception:
-            pass
+                state_topic = f"{mqtt_cfg.state_base}/{object_id}/state"
+                config_topic = f"{mqtt_cfg.discovery_prefix}/sensor/{object_id}/config"
+
+                device_class = guess_device_class(metric_name, unit)
+                state_class = guess_state_class(metric_name, unit)
+
+                cfg_payload = {
+                    "name": display_name,
+                    "unique_id": unique_id,
+                    "state_topic": state_topic,
+                    "unit_of_measurement": unit or None,
+                    "device": ha_device,
+                }
+                if device_class:
+                    cfg_payload["device_class"] = device_class
+                if state_class:
+                    cfg_payload["state_class"] = state_class
+
+                print(f"[DIAG ] MQTT DISCOVERY -> {config_topic}")
+                mqtt_publish(client, config_topic, json.dumps({k: v for k, v in cfg_payload.items() if v is not None}), retain=True)
+                if value is not None:
+                    print(f"[DIAG ] MQTT STATE -> {state_topic} = {value}")
+                    mqtt_publish(client, state_topic, str(value), retain=True)
+
+            client.loop_stop()
+            try:
+                client.disconnect()
+            except Exception:
+                pass
 
     cols = [
         "Device",
