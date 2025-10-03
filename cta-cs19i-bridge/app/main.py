@@ -205,7 +205,9 @@ async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass, 
             _, rows = parse_content(info)
             rueck = next((r for r in rows if r["name"] == "Rücklauf"), None)
             if not rueck: return
-            num, _ = extract_number(rueck["value"]); if num is None: return
+            num, _ = extract_number(rueck["value"])
+            if num is None:
+                return
             target = num + float(delta_c)
             te = await cta.get_page(p_temp_set["id"], "Temperaturen")
             _, rows = parse_content(te)
