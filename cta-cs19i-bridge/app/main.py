@@ -207,13 +207,29 @@ class CTAClient:
             await asyncio.sleep(poll_ms/1000)
         raise RuntimeError(f"Timed out waiting for Content of {title} ({page_id}). Last:\n{last}")
 
-async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass, poll_interval, delta_c, prefix):
+async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass, poll_interval, delta_c, prefix, log_values=False):
     mqttb = MqttBridge(mqtt_host, mqtt_port, mqtt_user, mqtt_pass, prefix)
     mqttb.connect_async()
     mqttb.pub_button_start()
 
+    log_values = log_values
+
+    log_values = False
+
+
     cta = CTAClient(host, port, password)
     await cta.connect()
+
+    # Print navigation once like the PowerShell script
+    try:
+        nav0 = await cta.get_navigation()
+        leaves0 = list(walk_nav_leaves(nav0, []))
+        print("\n=== Navigation ===")
+        for leaf in leaves0:
+            print(f"- {leaf['path']}  [{leaf['id']}]")
+    except Exception as e:
+        print(f"[nav print] {e}")
+
 
     async def start_heating():
         try:
@@ -271,9 +287,13 @@ async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass, 
 
             leaves = list(walk_nav_leaves(nav, []))
             for leaf in leaves:
+                if log_values:
+                    print(f"\nFetching {leaf['path']} [{leaf['id']}] ...")
                 try:
                     page = await cta.get_page(leaf["id"], leaf["name"])
                     title, rows = parse_content(page)
+                    if log_values:
+                        print(f"=== {title} ===\n" + fmt_table(rows))
                     for r in rows:
                         mqttb.pub_sensor(title, r, leaf["id"])
                 except Exception as e:
@@ -283,6 +303,18 @@ async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass, 
     finally:
         await cta.close()
         mqttb.stop()
+
+def fmt_table(rows):
+    # simple aligned table like PowerShell output
+    name_w = max([len(r['name']) for r in rows] + [4])
+    val_w  = max([len(r['value']) for r in rows] + [5])
+    header = f"{'Name'.ljust(name_w)} {'Value'.ljust(val_w)} Id"
+    sep    = f"{'-'*4:<{name_w}} {'-'*5:<{val_w}} --"
+    lines = [header, sep]
+    for r in rows:
+        lines.append(f"{r['name'].ljust(name_w)} {r['value'].ljust(val_w)} {r['id']}")
+    return "\n".join(lines)
+
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -296,6 +328,7 @@ def parse_args():
     p.add_argument("--poll-interval", type=int, default=30)
     p.add_argument("--demand-delta", type=float, default=5.0)
     p.add_argument("--mqtt-prefix", default="cta_cs19i")
+    p.add_argument("--log-values", action="store_true")
     return p.parse_args()
 
 if __name__ == "__main__":
@@ -305,6 +338,7 @@ if __name__ == "__main__":
             args.host, args.port, args.password,
             args.mqtt_host, args.mqtt_port, args.mqtt_user, args.mqtt_pass,
             args.poll_interval, args.demand_delta, args.mqtt_prefix
-        ))
+        ),
+        )
     except KeyboardInterrupt:
         pass
