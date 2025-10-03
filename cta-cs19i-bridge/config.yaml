@@ -1,5 +1,5 @@
 name: CTA CS19i Bridge
-version: "0.1.2"
+version: "0.2.0"
 slug: cta_cs19i_bridge
 description: CTA CS19i → MQTT bridge (sensors + Start Heating button) + log tables
 arch:
@@ -12,21 +12,29 @@ boot: auto
 init: false
 homeassistant: true
 options:
-  host: 10.80.21.11
-  port: 8214
-  password: "999990"
+  hostname: 10.80.21.11          # controller host/IP
+  controller_port: 8214
+  controller_password: "999990"
   poll_interval: 30
   demand_delta_c: 5.0
-  mqtt_prefix: cta_cs19i
+  discovery_prefix: homeassistant # MQTT discovery root
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password: ""
+  state_base_topic: cta_cs19i     # base for states/commands
   log_pages: true
   log_changes_only: false
 schema:
-  host: str
-  port: int
-  password: str
+  hostname: str
+  controller_port: int
+  controller_password: str
   poll_interval: int
   demand_delta_c: float
-  mqtt_prefix: str
+  discovery_prefix: str
+  mqtt_port: int
+  mqtt_username: str
+  mqtt_password: str
+  state_base_topic: str
   log_pages: bool
   log_changes_only: bool
 services:

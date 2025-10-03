@@ -1,4 +1,4 @@
-import asyncio, json, re, time, argparse
+import asyncio, json, re, argparse, time
 import websockets
 import xml.etree.ElementTree as ET
 from paho.mqtt import client as mqtt
@@ -63,7 +63,6 @@ def parse_content(root: ET.Element):
     return title, rows
 
 def print_table(title: str, rows: list[dict], page_path: str):
-    # widths
     name_w = max([4] + [len(r["name"]) for r in rows])
     val_w  = max([5] + [len(r["value"]) for r in rows])
     id_w   = max([2] + [len(r["id"]) for r in rows])
@@ -75,20 +74,23 @@ def print_table(title: str, rows: list[dict], page_path: str):
     print("", flush=True)
 
 class MqttBridge:
-    def __init__(self, host, port, user, pw, prefix):
-        self.prefix = prefix.rstrip("/")
-        self.client = mqtt.Client(client_id=f"{self.prefix}_bridge")
+    def __init__(self, host, port, user, pw, discovery_prefix, state_base_topic):
+        self.discovery = discovery_prefix.rstrip("/")
+        self.state_base = state_base_topic.rstrip("/")
+        client_id = f"cs19i_bridge_{int(time.time())}"
+        self.client = mqtt.Client(client_id=client_id)
         if user:
             self.client.username_pw_set(user, pw)
-        self.client.will_set(f"{self.prefix}/status", "offline", retain=True)
         self.on_press_start = None
 
         def on_connect(c, u, flags, rc):
-            c.publish(f"{self.prefix}/status", "online", retain=True)
-            c.subscribe(f"homeassistant/button/{self.prefix}_start_heating/press")
+            # availability
+            c.publish(f"{self.state_base}/status", "online", retain=True)
+            # listen for button press on command topic
+            c.subscribe(f"{self.state_base}/command/start_heating")
 
         def on_message(c, u, msg):
-            if msg.topic.endswith("/press") and self.on_press_start:
+            if msg.topic.endswith("/command/start_heating") and self.on_press_start:
                 asyncio.get_event_loop().create_task(self.on_press_start())
 
         self.client.on_connect = on_connect
@@ -101,30 +103,42 @@ class MqttBridge:
 
     def stop(self):
         try:
-            self.client.publish(f"{self.prefix}/status", "offline", retain=True)
+            self.client.publish(f"{self.state_base}/status", "offline", retain=True)
             self.client.loop_stop()
             self.client.disconnect()
         except Exception:
             pass
 
     def device(self):
-        return {"identifiers": [self.prefix], "name": "CTA CS19i", "manufacturer": "CTA", "model": "CS19i"}
+        return {"identifiers": [self.state_base], "name": "CTA CS19i", "manufacturer": "CTA", "model": "CS19i"}
 
     def pub_sensor(self, page, row, page_id):
-        uniq_part = re.sub(r'[^a-zA-Z0-9_]', '_', page_id)
-        item_part = re.sub(r'[^a-zA-Z0-9_]', '_', row['id'])
-        uniq = f"{self.prefix}_{uniq_part}_{item_part}"
-        st_topic = f"{self.prefix}/state/{uniq_part}/{item_part}"
-        cfg_topic = f"homeassistant/sensor/{uniq}/config"
+        import re as _re
+        pid = _re.sub(r'[^a-zA-Z0-9_]', '_', page_id)
+        iid = _re.sub(r'[^a-zA-Z0-9_]', '_', row['id'])
+        uniq = f"{pid}_{iid}"
+        st_topic = f"{self.state_base}/{pid}/{iid}"
+        cfg_topic = f"{self.discovery}/sensor/{self.state_base}_{uniq}/config"
         num, unit = extract_number(row["value"])
-        payload = {"name": f"{page}: {row['name']}", "unique_id": uniq, "state_topic": st_topic, "unit_of_measurement": unit, "device": self.device()}
+        payload = {
+            "name": f"{page}: {row['name']}",
+            "unique_id": f"{self.state_base}_{uniq}",
+            "state_topic": st_topic,
+            "unit_of_measurement": unit,
+            "device": self.device(),
+        }
         self.client.publish(cfg_topic, json.dumps(payload), retain=True)
         self.client.publish(st_topic, row["value"], retain=False)
 
     def pub_button_start(self):
-        uniq = f"{self.prefix}_start_heating"
-        cfg_topic = f"homeassistant/button/{uniq}/config"
-        payload = {"name": "CTA Start Heating", "unique_id": uniq, "command_topic": f"homeassistant/button/{uniq}/press", "payload_press": "PRESS", "device": self.device()}
+        cfg_topic = f"{self.discovery}/button/{self.state_base}_start_heating/config"
+        payload = {
+            "name": "CTA Start Heating",
+            "unique_id": f"{self.state_base}_start_heating",
+            "command_topic": f"{self.state_base}/command/start_heating",
+            "payload_press": "PRESS",
+            "device": self.device(),
+        }
         self.client.publish(cfg_topic, json.dumps(payload), retain=True)
 
 class CTAClient:
@@ -185,9 +199,9 @@ class CTAClient:
             await asyncio.sleep(poll_ms/1000)
         raise RuntimeError(f"Timed out waiting for Content of {title} ({page_id}). Last:\n{last}")
 
-async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass, poll_interval, delta_c, prefix, log_pages, log_changes_only):
+async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass, poll_interval, delta_c, discovery_prefix, state_base_topic, log_pages, log_changes_only):
     prev = {}
-    mqttb = MqttBridge(mqtt_host, mqtt_port, mqtt_user, mqtt_pass, prefix)
+    mqttb = MqttBridge(mqtt_host, mqtt_port, mqtt_user, mqtt_pass, discovery_prefix, state_base_topic)
     mqttb.connect_async()
     mqttb.pub_button_start()
 
@@ -206,8 +220,7 @@ async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass, 
             rueck = next((r for r in rows if r["name"] == "Rücklauf"), None)
             if not rueck: return
             num, _ = extract_number(rueck["value"])
-            if num is None:
-                return
+            if num is None: return
             target = num + float(delta_c)
             te = await cta.get_page(p_temp_set["id"], "Temperaturen")
             _, rows = parse_content(te)
@@ -217,7 +230,8 @@ async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass, 
                 cnum, _ = extract_number(cap["value"])
                 if cnum is not None and target > cnum: target = cnum
             if minr:
-                cur, _ = extract_number(minr["value"]); div = minr.get("div", 1.0) if isinstance(minr.get("div", 1.0), (int, float)) else 1.0
+                cur, _ = extract_number(minr["value"])
+                div = minr.get("div", 1.0) if isinstance(minr.get("div", 1.0), (int, float)) else 1.0
                 if (cur is None) or (cur < target - 0.05):
                     raw = int(round(target * div))
                     await cta.send(f"SET;{minr['id']};{raw}")
@@ -246,6 +260,7 @@ async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass, 
                         mqttb.pub_sensor(title, r, leaf["id"])
 
                     if log_pages:
+                        from sys import stdout
                         if log_changes_only:
                             changed = []
                             for r in rows:
@@ -276,7 +291,8 @@ def parse_args():
     p.add_argument("--mqtt-pass", default="")
     p.add_argument("--poll-interval", type=int, default=30)
     p.add_argument("--demand-delta", type=float, default=5.0)
-    p.add_argument("--mqtt-prefix", default="cta_cs19i")
+    p.add_argument("--discovery-prefix", default="homeassistant")
+    p.add_argument("--state-base-topic", default="cta_cs19i")
     p.add_argument("--log-pages", action="store_true")
     p.add_argument("--log-changes-only", action="store_true")
     return p.parse_args()
@@ -287,7 +303,7 @@ if __name__ == "__main__":
         asyncio.run(run(
             args.host, args.port, args.password,
             args.mqtt_host, args.mqtt_port, args.mqtt_user, args.mqtt_pass,
-            args.poll_interval, args.demand_delta, args.mqtt_prefix,
+            args.poll_interval, args.demand_delta, args.discovery_prefix, args.state_base_topic,
             args.log_pages, args.log_changes_only
         ))
     except KeyboardInterrupt:

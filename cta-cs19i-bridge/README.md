@@ -1,12 +1,13 @@
-# CTA CS19i Bridge (Home Assistant add-on)
+# CTA CS19i Bridge (Home Assistant add-on) — v0.2.0
 
-Now logs each page as a table in the add-on log.
+New configuration:
+- `hostname` (controller host/IP), `controller_port`, `controller_password`
+- `discovery_prefix` (MQTT discovery, default `homeassistant`)
+- `mqtt_port`, `mqtt_username`, `mqtt_password` (server fixed to `localhost`)
+- `state_base_topic` for state/command topics
+- `log_pages`, `log_changes_only`
 
-## Configure
-Set in the add-on options:
-```yaml
-log_pages: true
-log_changes_only: false  # set true to only log changed rows
-```
-
-Then restart the add-on and check the **Logs** tab.
+The add-on publishes MQTT Discovery to `<discovery_prefix>/sensor/.../config`
+and state under `<state_base_topic>/<pageId>/<itemId>`.
+It also exposes a button via discovery and listens for commands at
+`<state_base_topic>/command/start_heating`.
