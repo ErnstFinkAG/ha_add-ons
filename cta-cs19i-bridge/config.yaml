@@ -1,7 +1,7 @@
 name: CTA CS19i Bridge
-version: "0.0.2"
+version: "0.1.1"
 slug: cta_cs19i_bridge
-description: CTA CS19i → MQTT bridge (sensors + Start Heating button)
+description: CTA CS19i → MQTT bridge (sensors + Start Heating button) + log tables
 arch:
   - aarch64
   - amd64
@@ -18,7 +18,8 @@ options:
   poll_interval: 30
   demand_delta_c: 5.0
   mqtt_prefix: cta_cs19i
-  log_values: false
+  log_pages: true
+  log_changes_only: false
 schema:
   host: str
   port: int
@@ -26,6 +27,7 @@ schema:
   poll_interval: int
   demand_delta_c: float
   mqtt_prefix: str
-  log_values: bool
+  log_pages: bool
+  log_changes_only: bool
 services:
   - mqtt:need
