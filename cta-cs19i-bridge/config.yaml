@@ -1,0 +1,29 @@
+name: CTA CS19i Bridge
+version: "0.1.0"
+slug: cta_cs19i_bridge
+description: CTA CS19i → MQTT bridge (sensors + Start Heating button)
+arch:
+  - aarch64
+  - amd64
+  - armv7
+  - i386
+startup: services
+boot: auto
+init: false
+homeassistant: true
+options:
+  host: 10.80.21.11
+  port: 8214
+  password: "999990"
+  poll_interval: 30
+  demand_delta_c: 5.0
+  mqtt_prefix: cta_cs19i
+schema:
+  host: str
+  port: int
+  password: str
+  poll_interval: int
+  demand_delta_c: float
+  mqtt_prefix: str
+services:
+  - mqtt:need
