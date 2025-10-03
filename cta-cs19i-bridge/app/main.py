@@ -1,4 +1,4 @@
-import asyncio, json, re, argparse, time
+import asyncio, json, re, argparse, time, unicodedata
 import websockets
 import xml.etree.ElementTree as ET
 from paho.mqtt import client as mqtt
@@ -62,6 +62,34 @@ def parse_content(root: ET.Element):
         rows.append({"name": name, "value": value, "id": item_id, "unit": unit, "raw": raw, "div": div, "options": opts})
     return title, rows
 
+def slug(s: str, keep_slash=False):
+    # Lowercase, map German umlauts, strip accents, keep alnum/_ and (optional) /
+    s = (s or "").lower().strip()
+    # Umlaut mapping first for clarity
+    s = s.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+    # Normalize accents
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    allowed = "abcdefghijklmnopqrstuvwxyz0123456789_/"
+    out = []
+    for ch in s:
+        if ch in allowed or ch == ' ':
+            out.append(ch)
+        elif ch in "-.":
+            out.append("_")
+        else:
+            if keep_slash and ch == "/":
+                out.append("/")
+            elif ch.isalnum():
+                out.append(ch)
+            else:
+                out.append("_")
+    s = "".join(out).replace(" ", "_")
+    # Collapse consecutive underscores or slashes
+    s = re.sub(r"_+", "_", s)
+    s = re.sub(r"/+", "/", s)
+    return s.strip("_/")
+
 def print_table(title: str, rows: list[dict], page_path: str):
     name_w = max([4] + [len(r["name"]) for r in rows])
     val_w  = max([5] + [len(r["value"]) for r in rows])
@@ -84,13 +112,8 @@ class MqttBridge:
         self.on_press_start = None
 
         def on_connect(c, u, flags, rc):
-            try:
-                print(f"[mqtt] on_connect rc={rc}", flush=True)
-            except Exception:
-                pass
-            # availability
+            print(f"[mqtt] on_connect rc={rc}", flush=True)
             c.publish(f"{self.state_base}/status", "online", retain=True)
-            # listen for button press on command topic
             c.subscribe(f"{self.state_base}/command/start_heating")
 
         def on_message(c, u, msg):
@@ -116,18 +139,21 @@ class MqttBridge:
     def device(self):
         return {"identifiers": [self.state_base], "name": "CTA CS19i", "manufacturer": "CTA", "model": "CS19i"}
 
-    def pub_sensor(self, page, row, page_id):
-        import re as _re
-        pid = _re.sub(r'[^a-zA-Z0-9_]', '_', page_id)
-        iid = _re.sub(r'[^a-zA-Z0-9_]', '_', row['id'])
-        uniq = f"{pid}_{iid}"
-        st_topic = f"{self.state_base}/{pid}/{iid}"
-        cfg_topic = f"{self.discovery}/sensor/{self.state_base}_{uniq}/config"
+    def pub_sensor(self, page_title: str, row: dict, page_path: str):
+        # Stable keys from page path + row name
+        page_slug = slug(page_path, keep_slash=True).replace("/", "_")
+        name_slug = slug(row['name'])
+        uniq = f"{self.state_base}_{page_slug}_{name_slug}"
+        st_topic = f"{self.state_base}/{slug(page_path, keep_slash=True)}/{name_slug}"
+        cfg_topic = f"{self.discovery}/sensor/{uniq}/config"
+
         num, unit = extract_number(row["value"])
         payload = {
-            "name": f"{page}: {row['name']}",
-            "unique_id": f"{self.state_base}_{uniq}",
+            "name": f"{page_title}: {row['name']}",
+            "unique_id": uniq,
+            "object_id": uniq,
             "state_topic": st_topic,
+            "availability_topic": f"{self.state_base}/status",
             "unit_of_measurement": unit,
             "device": self.device(),
         }
@@ -135,12 +161,15 @@ class MqttBridge:
         self.client.publish(st_topic, row["value"], retain=False)
 
     def pub_button_start(self):
-        cfg_topic = f"{self.discovery}/button/{self.state_base}_start_heating/config"
+        uniq = f"{self.state_base}_start_heating"
+        cfg_topic = f"{self.discovery}/button/{uniq}/config"
         payload = {
             "name": "CTA Start Heating",
-            "unique_id": f"{self.state_base}_start_heating",
+            "unique_id": uniq,
+            "object_id": uniq,
             "command_topic": f"{self.state_base}/command/start_heating",
             "payload_press": "PRESS",
+            "availability_topic": f"{self.state_base}/status",
             "device": self.device(),
         }
         self.client.publish(cfg_topic, json.dumps(payload), retain=True)
@@ -261,21 +290,21 @@ async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass, 
                     page = await cta.get_page(leaf["id"], leaf["name"])
                     title, rows = parse_content(page)
                     for r in rows:
-                        mqttb.pub_sensor(title, r, leaf["id"])
+                        mqttb.pub_sensor(title, r, leaf["path"])
 
                     if log_pages:
-                        from sys import stdout
                         if log_changes_only:
                             changed = []
                             for r in rows:
-                                key = (leaf["id"], r["id"]); val = r["value"]
+                                key = (slug(leaf["path"]), r["name"])
+                                val = r["value"]
                                 if prev.get(key) != val:
                                     changed.append(r); prev[key] = val
                             if changed:
                                 print_table(title, changed, leaf["path"])
                         else:
                             print_table(title, rows, leaf["path"])
-                            for r in rows: prev[(leaf["id"], r["id"])] = r["value"]
+                            for r in rows: prev[(slug(leaf["path"]), r["name"])] = r["value"]
 
                 except Exception as e:
                     print(f"[page {leaf['path']}] {e}", flush=True)

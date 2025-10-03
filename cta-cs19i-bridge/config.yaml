@@ -1,5 +1,5 @@
 name: CTA CS19i Bridge
-version: "0.2.2"
+version: "0.2.4"
 slug: cta_cs19i_bridge
 description: CTA CS19i → MQTT bridge (sensors + Start Heating button) + log tables
 arch:
