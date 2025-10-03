@@ -24,20 +24,21 @@ POLL="$(jget poll_interval)"
 DELTA="$(jget demand_delta_c)"
 
 DISCOVERY="$(jget discovery_prefix)"
+MQTTHOST="$(jget mqtt_host)"
 MQTTPORT="$(jget mqtt_port)"
 MQTTUSER="$(jget mqtt_username)"
 MQTTPASS="$(jget mqtt_password)"
 STATEBASE="$(jget state_base_topic)"
 
-# MQTT server fixed to localhost as requested
-MQTT_HOST="127.0.0.1"
-
 LOGP="$(jget log_pages)"
 LOGC="$(jget log_changes_only)"
 
+echo "[startup] MQTT -> host=${MQTTHOST} port=${MQTTPORT} user=${MQTTUSER}"
+echo "[startup] Controller -> ${HOSTNAME}:${CTRLP}"
+
 ARGS=(
   --host "$HOSTNAME" --port "$CTRLP" --password "$CTRLPASS"
-  --mqtt-host "$MQTT_HOST" --mqtt-port "$MQTTPORT"
+  --mqtt-host "$MQTTHOST" --mqtt-port "$MQTTPORT"
   --mqtt-user "$MQTTUSER" --mqtt-pass "$MQTTPASS"
   --discovery-prefix "$DISCOVERY"
   --state-base-topic "$STATEBASE"

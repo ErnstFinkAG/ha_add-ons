@@ -84,6 +84,10 @@ class MqttBridge:
         self.on_press_start = None
 
         def on_connect(c, u, flags, rc):
+            try:
+                print(f"[mqtt] on_connect rc={rc}", flush=True)
+            except Exception:
+                pass
             # availability
             c.publish(f"{self.state_base}/status", "online", retain=True)
             # listen for button press on command topic
