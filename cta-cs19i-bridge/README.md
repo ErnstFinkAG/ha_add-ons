@@ -1,13 +1,7 @@
-# CTA CS19i Bridge (Home Assistant add-on) — v0.2.0
+# CTA CS19i Bridge — v0.2.3
 
-New configuration:
-- `hostname` (controller host/IP), `controller_port`, `controller_password`
-- `discovery_prefix` (MQTT discovery, default `homeassistant`)
-- `mqtt_port`, `mqtt_username`, `mqtt_password` (server fixed to `localhost`)
-- `state_base_topic` for state/command topics
-- `log_pages`, `log_changes_only`
+- Stable MQTT IDs (page path + item name)
+- Numeric-only MQTT state payloads when unit is set (fixes HA 'unknown')
+- Logs page tables to the add-on log
 
-The add-on publishes MQTT Discovery to `<discovery_prefix>/sensor/.../config`
-and state under `<state_base_topic>/<pageId>/<itemId>`.
-It also exposes a button via discovery and listens for commands at
-`<state_base_topic>/command/start_heating`.
+See `config.yaml` for options.

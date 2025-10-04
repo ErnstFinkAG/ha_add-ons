@@ -63,34 +63,24 @@ def parse_content(root: ET.Element):
     return title, rows
 
 def slug(s: str, keep_slash=False):
-    # Lowercase, map German umlauts, strip accents, keep alnum/_ and (optional) /
     s = (s or "").lower().strip()
-    # Umlaut mapping first for clarity
     s = s.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
-    # Normalize accents
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    allowed = "abcdefghijklmnopqrstuvwxyz0123456789_/"
     out = []
     for ch in s:
-        if ch in allowed or ch == ' ':
+        if ch.isalnum() or ch in ("_", " ", "/", "-"):
             out.append(ch)
-        elif ch in "-.":
-            out.append("_")
         else:
-            if keep_slash and ch == "/":
-                out.append("/")
-            elif ch.isalnum():
-                out.append(ch)
-            else:
-                out.append("_")
-    s = "".join(out).replace(" ", "_")
-    # Collapse consecutive underscores or slashes
+            out.append("_")
+    s = "".join(out).replace(" ", "_").replace("-", "_")
     s = re.sub(r"_+", "_", s)
+    if not keep_slash:
+        s = s.replace("/", "_")
     s = re.sub(r"/+", "/", s)
     return s.strip("_/")
 
-def print_table(title: str, rows: list[dict], page_path: str):
+def print_table(title: str, rows, page_path: str):
     name_w = max([4] + [len(r["name"]) for r in rows])
     val_w  = max([5] + [len(r["value"]) for r in rows])
     id_w   = max([2] + [len(r["id"]) for r in rows])
@@ -140,7 +130,6 @@ class MqttBridge:
         return {"identifiers": [self.state_base], "name": "CTA CS19i", "manufacturer": "CTA", "model": "CS19i"}
 
     def pub_sensor(self, page_title: str, row: dict, page_path: str):
-        # Stable keys from page path + row name
         page_slug = slug(page_path, keep_slash=True).replace("/", "_")
         name_slug = slug(row['name'])
         uniq = f"{self.state_base}_{page_slug}_{name_slug}"
@@ -148,17 +137,39 @@ class MqttBridge:
         cfg_topic = f"{self.discovery}/sensor/{uniq}/config"
 
         num, unit = extract_number(row["value"])
+        state_payload = None
+        device_class = None
+        state_class = None
+
+        if num is not None and unit:
+            state_payload = f"{num}"
+            u = (unit or '').strip()
+            if u in ("°C", "C", "degC"):
+                device_class = "temperature"
+            elif u in ("V", "Volt", "volts"):
+                device_class = "voltage"
+            state_class = "measurement"
+        else:
+            state_payload = row["value"]
+            unit = None
+
         payload = {
             "name": f"{page_title}: {row['name']}",
             "unique_id": uniq,
             "object_id": uniq,
             "state_topic": st_topic,
             "availability_topic": f"{self.state_base}/status",
-            "unit_of_measurement": unit,
             "device": self.device(),
         }
+        if unit:
+            payload["unit_of_measurement"] = unit
+        if device_class:
+            payload["device_class"] = device_class
+        if state_class:
+            payload["state_class"] = state_class
+
         self.client.publish(cfg_topic, json.dumps(payload), retain=True)
-        self.client.publish(st_topic, row["value"], retain=False)
+        self.client.publish(st_topic, state_payload, retain=False)
 
     def pub_button_start(self):
         uniq = f"{self.state_base}_start_heating"
@@ -196,7 +207,7 @@ class CTAClient:
         if self.ws is None: return
         await self.ws.send(text)
 
-    async def recv_once(self, timeout: float) -> str | None:
+    async def recv_once(self, timeout: float):
         if self.ws is None: return None
         try: return await asyncio.wait_for(self.ws.recv(), timeout=timeout)
         except asyncio.TimeoutError: return None
@@ -281,7 +292,9 @@ async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass, 
                 nav = await cta.get_navigation()
             except Exception as e:
                 print(f"[nav] {e}", flush=True)
-                await cta.close(); await asyncio.sleep(2); await cta.connect()
+                await cta.close()
+                await asyncio.sleep(2)
+                await cta.connect()
                 continue
 
             leaves = list(walk_nav_leaves(nav, []))
@@ -304,14 +317,16 @@ async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass, 
                                 print_table(title, changed, leaf["path"])
                         else:
                             print_table(title, rows, leaf["path"])
-                            for r in rows: prev[(slug(leaf["path"]), r["name"])] = r["value"]
+                            for r in rows:
+                                prev[(slug(leaf["path"]), r["name"])] = r["value"]
 
                 except Exception as e:
                     print(f"[page {leaf['path']}] {e}", flush=True)
                 await asyncio.sleep(0.15)
             await asyncio.sleep(int(poll_interval))
     finally:
-        await cta.close(); mqttb.stop()
+        await cta.close()
+        mqttb.stop()
 
 def parse_args():
     p = argparse.ArgumentParser()
