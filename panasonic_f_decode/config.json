@@ -1,12 +1,14 @@
 {
   "name": "Panasonic F-Series Heatpump Decoder",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "slug": "panasonic_f_decode",
-  "description": "Panasonic Aquarea F-series CH9121 decoder with MQTT + HA auto-discovery",
+  "description": "Panasonic Aquarea F-series CH9121 decoder with MQTT",
   "arch": [
-    "amd64"
+    "amd64",
+    "aarch64",
+    "armv7"
   ],
-  "startup": "services",
+  "startup": "application",
   "boot": "auto",
   "options": {
     "hp_ip": "10.80.255.221",
@@ -15,13 +17,7 @@
     "mqtt_port": 1883,
     "mqtt_user": "mqtt",
     "mqtt_password": "mqtt",
-    "mqtt_prefix": "panasonic_f",
-    "poll_interval": 1,
-    "scale_water": 100,
-    "scale_indoor": 100,
-    "scale_tank": 100,
-    "scale_r1": 100,
-    "log_level": "info"
+    "mqtt_prefix": "panasonic_f"
   },
   "schema": {
     "hp_ip": "str",
@@ -30,12 +26,6 @@
     "mqtt_port": "int",
     "mqtt_user": "str",
     "mqtt_password": "str",
-    "mqtt_prefix": "str",
-    "poll_interval": "int",
-    "scale_water": "int",
-    "scale_indoor": "int",
-    "scale_tank": "int",
-    "scale_r1": "int",
-    "log_level": "list(info|debug)"
+    "mqtt_prefix": "str"
   }
 }
