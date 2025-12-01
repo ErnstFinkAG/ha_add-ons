@@ -1,5 +1,5 @@
 name: "Panasonic F-Series Heatpump"
-version: "2.0.0.3"
+version: "2.1.0.3"
 slug: "panasonic_f_heatpump"
 description: "Decode Panasonic Aquarea F-series via CH9121 and publish MQTT sensors."
 arch:
