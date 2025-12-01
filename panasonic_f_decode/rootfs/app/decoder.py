@@ -6,7 +6,7 @@ import paho.mqtt.client as mqtt
 
 HP_IP = os.getenv("HP_IP")
 HP_PORT = int(os.getenv("HP_PORT", "2000") or "2000")
-MQTT_HOST = os.getenv("MQTT_HOST") or "homeassistant.local"
+MQTT_HOST = os.getenv("MQTT_HOST") or "localhost"
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883") or "1883")
 MQTT_USER = os.getenv("MQTT_USER") or None
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD") or None
@@ -32,6 +32,7 @@ def ad_to_temp(value, scale):
         return None
 
 def make_mqtt_client():
+    log("info", f"Connecting to MQTT at {MQTT_HOST}:{MQTT_PORT}")
     client = mqtt.Client()
     if MQTT_USER is not None:
         client.username_pw_set(MQTT_USER, MQTT_PASSWORD)

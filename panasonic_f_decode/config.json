@@ -1,6 +1,6 @@
 {
   "name": "Panasonic F-Series Heatpump Decoder",
-  "version": "1.0.0.8",
+  "version": "2.0.0",
   "slug": "panasonic_f_decode",
   "description": "Panasonic Aquarea F-series CH9121 decoder with MQTT + HA auto-discovery",
   "arch": [
@@ -11,7 +11,7 @@
   "options": {
     "hp_ip": "10.80.255.221",
     "hp_port": 2000,
-    "mqtt_host": "homeassistant.local",
+    "mqtt_host": "localhost",
     "mqtt_port": 1883,
     "mqtt_user": "mqtt",
     "mqtt_password": "mqtt",
