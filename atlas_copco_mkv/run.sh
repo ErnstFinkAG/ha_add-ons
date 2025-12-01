@@ -6,72 +6,37 @@ log_info()  { echo "[$(ts)] [INFO ] $*"; }
 log_error() { echo "[$(ts)] [ERROR] $*" >&2; }
 log_diag()  { echo "[$(ts)] [DIAG ] $*"; }
 
-# --- simple portable lock using a directory (no external flock needed) ---
-LOCK_DIR="/tmp/mkv_mainlog.lockdir"
-lock_acquire() {
-  while ! mkdir "$LOCK_DIR" 2>/dev/null; do
-    sleep 0.05
-  done
-}
-lock_release() {
-  rmdir "$LOCK_DIR" 2>/dev/null || true
-}
+HP_IP="$(bashio::config 'hp_ip')"
+HP_PORT="$(bashio::config 'hp_port')"
+DEVICE_NAME="$(bashio::config 'device_name')"
+POLL_INTERVAL="$(bashio::config 'poll_interval')"
+CONNECT_TIMEOUT="$(bashio::config 'connect_timeout')"
+MQTT_HOST="$(bashio::config 'mqtt_host')"
+MQTT_PORT="$(bashio::config 'mqtt_port')"
+MQTT_USER="$(bashio::config 'mqtt_username')"
+MQTT_PASS="$(bashio::config 'mqtt_password')"
+MQTT_DISCOVERY_PREFIX="$(bashio::config 'discovery_prefix')"
+MQTT_STATE_BASE="$(bashio::config 'state_base_topic')"
 
-# --- read config into arrays ---
-IPS="$(bashio::config 'ip_list')"
-NAMES="$(bashio::config 'name_list')"
-TYPES="$(bashio::config 'type')"
-TOUTS="$(bashio::config 'timeout_list')"
+log_info "Starting Panasonic F decoder"
+log_info "HP_IP=${HP_IP} HP_PORT=${HP_PORT} MQTT_HOST=${MQTT_HOST}:${MQTT_PORT} interval=${POLL_INTERVAL}s timeout=${CONNECT_TIMEOUT}s"
 
-IFS=',' read -r -a IP_ARR   <<< "${IPS:-}"
-IFS=',' read -r -a NAME_ARR <<< "${NAMES:-}"
-IFS=',' read -r -a TYPE_ARR <<< "${TYPES:-}"
-IFS=',' read -r -a TOUT_ARR <<< "${TOUTS:-}"
+while true; do
+  start_s=$(date +%s || echo 0)
 
-count="${#IP_ARR[@]}"
-if [[ $count -eq 0 ]]; then
-  log_error "No devices found in ip_list"
-  exit 1
-fi
+  output="$(
+    set +e
+    python3 /panasonic_f_decoder.py       --hp-ip "${HP_IP}"       --hp-port "${HP_PORT}"       --device-name "${DEVICE_NAME}"       --timeout "${CONNECT_TIMEOUT}"       --mqtt-host "${MQTT_HOST}"       --mqtt-port "${MQTT_PORT}"       --mqtt-username "${MQTT_USER}"       --mqtt-password "${MQTT_PASS}"       --discovery-prefix "${MQTT_DISCOVERY_PREFIX}"       --state-base-topic "${MQTT_STATE_BASE}" 2>&1
+    echo $? > /tmp/panasonic_f_rc.$$
+  )"
+  rc=$(cat /tmp/panasonic_f_rc.$$ || echo 1; rm -f /tmp/panasonic_f_rc.$$ || true)
 
-log_info "Configured $count device(s). Starting parallel 5s polling loops..."
+  end_s=$(date +%s || echo "$start_s")
+  dur_ms=$(( (end_s - start_s) * 1000 ))
 
-for ((i=0; i<count; i++)); do
-  IP="${IP_ARR[$i]}"
-  NAME="${NAME_ARR[$i]:-Device$i}"
-  TYPE="${TYPE_ARR[$i]:-}"
-  TIMEOUT="${TOUT_ARR[$i]:-5}"
+  log_diag "Poll finished in ${dur_ms}ms (rc=${rc})"
+  printf '%s
+' "$output"
 
-  (
-    while true; do
-      start_s=$(date +%s || echo 0)
-
-      poll_output="$(
-        set +e
-        python3 /atlas_copco_mkv.py \
-          --question-set "$TYPE" \
-          --controller-host "$IP" \
-          --device-name "$NAME" \
-          --timeout "$TIMEOUT" 2>&1
-        echo $? > /tmp/mkv_rc.$$
-      )"
-      rc=$(cat /tmp/mkv_rc.$$ || echo 1; rm -f /tmp/mkv_rc.$$ || true)
-
-      end_s=$(date +%s || echo "$start_s")
-      dur_ms=$(( (end_s - start_s) * 1000 ))
-
-      lock_acquire
-      {
-        echo "[$(ts)] [INFO ] Polling '$NAME' ($IP) with question set '$TYPE', timeout ${TIMEOUT}s"
-        echo "[$(ts)] [DIAG ] Polling started for device '$NAME' ($IP)"
-        printf '%s\n' "$poll_output"
-        echo "[$(ts)] [DIAG ] Polling finished for device '$NAME' ($IP) in ${dur_ms}ms (rc=${rc})"
-      }
-      lock_release
-
-      sleep 5
-    done
-  ) &
+  sleep "${POLL_INTERVAL}"
 done
-
-wait
