@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/hassio-addons/base:14.2.3
+ARG BUILD_FROM=ghcr.io/hassio-addons/addon-base:14.2.3
 FROM ${BUILD_FROM}
 
 RUN apk add --no-cache python3 py3-paho-mqtt
