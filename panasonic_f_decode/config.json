@@ -1,9 +1,13 @@
 {
   "name": "Panasonic F-Series Heatpump Decoder",
-  "version": "1.0.0.3",
+  "version": "1.0.0.4",
   "slug": "panasonic_f_decode",
-  "description": "Reads Panasonic Aquarea F-series debug output via CH9121 and publishes decoded data to MQTT",
-  "arch": ["amd64", "aarch64", "armv7"],
+  "description": "Panasonic Aquarea F-series CH9121 decoder with MQTT",
+  "arch": [
+    "amd64",
+    "aarch64",
+    "armv7"
+  ],
   "startup": "services",
   "boot": "auto",
   "options": {

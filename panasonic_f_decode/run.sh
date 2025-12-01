@@ -1,4 +1,5 @@
-#!/usr/bin/env bash
+#!/usr/bin/with-contenv bashio
+
 export HP_IP=$(bashio::config 'hp_ip')
 export HP_PORT=$(bashio::config 'hp_port')
 export MQTT_HOST=$(bashio::config 'mqtt_host')
@@ -13,5 +14,6 @@ export SCALE_TANK=$(bashio::config 'scale_tank')
 export SCALE_R1=$(bashio::config 'scale_r1')
 export LOG_LEVEL=$(bashio::config 'log_level')
 
+echo "[INFO] HP_IP=$HP_IP HP_PORT=$HP_PORT MQTT_HOST=$MQTT_HOST"
 echo "[INFO] Starting Panasonic F decoder add-on"
 exec python3 /app/decoder.py

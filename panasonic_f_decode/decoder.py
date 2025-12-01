@@ -21,8 +21,7 @@ SCALE_R1 = int(os.getenv("SCALE_R1", "100"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "info").lower()
 
 def log(level, msg):
-    levels = ["debug", "info"]
-    if level == "debug" and LOG_LEVEL != "debug":
+    if LOG_LEVEL != "debug" and level == "debug":
         return
     print(f"[{level.upper()}] {msg}", flush=True)
 
@@ -58,7 +57,6 @@ def autodiscover(sensor, name, unit=""):
     import json
     mqttc.publish(topic, json.dumps(payload), retain=True)
 
-# Main useful sensors
 SENSORS = [
     ("mode", "Heatpump Mode", ""),
     ("water_temp", "Water Temperature", "°C"),
@@ -82,7 +80,6 @@ SENSORS = [
     ("tank_power", "Tank Power", "W"),
 ]
 
-# Some debug/diagnostic sensors
 DEBUG_SENSORS = [
     ("raw_rmode", "Raw R_MODE Line", ""),
     ("raw_cmp", "Raw CMP_REQ Line", ""),
