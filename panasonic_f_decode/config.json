@@ -1,13 +1,11 @@
 {
   "name": "Panasonic F-Series Heatpump Decoder",
-  "version": "1.0.0",
+  "version": "1.0.0.1",
   "slug": "panasonic_f_decode",
   "description": "Reads Panasonic Aquarea F-series debug output via CH9121 and publishes decoded data to MQTT",
   "arch": ["amd64", "aarch64", "armv7"],
   "startup": "services",
   "boot": "auto",
-  "ports": {},
-  "ports_description": {},
   "options": {
     "hp_ip": "10.80.255.221",
     "hp_port": 2000,
@@ -36,12 +34,6 @@
     "scale_indoor": "int",
     "scale_tank": "int",
     "scale_r1": "int",
-    "log_level": "list(info|debug|warning)"
-  },
-  "webui": null,
-  "host_network": false,
-  "homeassistant_api": false,
-  "docker_api": false,
-  "stdin": false,
-  "hassio_role": "default"
+    "log_level": "list(info|debug)"
+  }
 }
