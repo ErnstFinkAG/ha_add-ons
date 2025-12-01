@@ -1,22 +1,32 @@
-#!/usr/bin/with-contenv bashio
-# shellcheck shell=bash
+#!/bin/sh
 
-HP_IP=$(bashio::config 'hp_ip')
-HP_PORT=$(bashio::config 'hp_port')
-MQTT_HOST=$(bashio::config 'mqtt_host')
-MQTT_PORT=$(bashio::config 'mqtt_port')
-MQTT_USER=$(bashio::config 'mqtt_user')
-MQTT_PASSWORD=$(bashio::config 'mqtt_password')
-MQTT_PREFIX=$(bashio::config 'mqtt_prefix')
-POLL_INTERVAL=$(bashio::config 'poll_interval')
-SCALE_WATER=$(bashio::config 'scale_water')
-SCALE_INDOOR=$(bashio::config 'scale_indoor')
-SCALE_TANK=$(bashio::config 'scale_tank')
-SCALE_R1=$(bashio::config 'scale_r1')
-LOG_LEVEL=$(bashio::config 'log_level')
+OPTIONS_FILE="/data/options.json"
 
-export HP_IP HP_PORT MQTT_HOST MQTT_PORT MQTT_USER MQTT_PASSWORD MQTT_PREFIX
-export POLL_INTERVAL SCALE_WATER SCALE_INDOOR SCALE_TANK SCALE_R1 LOG_LEVEL
+get_opt() {
+  python3 - "$1" "$OPTIONS_FILE" << 'EOF'
+import sys, json
+key = sys.argv[1]
+path = sys.argv[2]
+with open(path, "r") as f:
+    data = json.load(f)
+v = data.get(key, "")
+print(v)
+EOF
+}
+
+export HP_IP=$(get_opt hp_ip)
+export HP_PORT=$(get_opt hp_port)
+export MQTT_HOST=$(get_opt mqtt_host)
+export MQTT_PORT=$(get_opt mqtt_port)
+export MQTT_USER=$(get_opt mqtt_user)
+export MQTT_PASSWORD=$(get_opt mqtt_password)
+export MQTT_PREFIX=$(get_opt mqtt_prefix)
+export POLL_INTERVAL=$(get_opt poll_interval)
+export SCALE_WATER=$(get_opt scale_water)
+export SCALE_INDOOR=$(get_opt scale_indoor)
+export SCALE_TANK=$(get_opt scale_tank)
+export SCALE_R1=$(get_opt scale_r1)
+export LOG_LEVEL=$(get_opt log_level)
 
 echo "[INFO] Starting Panasonic F decoder"
 echo "[INFO] HP_IP=$HP_IP HP_PORT=$HP_PORT MQTT_HOST=$MQTT_HOST"

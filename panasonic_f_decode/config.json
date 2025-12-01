@@ -1,6 +1,6 @@
 {
   "name": "Panasonic F-Series Heatpump Decoder",
-  "version": "1.0.0.6",
+  "version": "1.0.0.7",
   "slug": "panasonic_f_decode",
   "description": "Panasonic Aquarea F-series CH9121 decoder with MQTT + HA auto-discovery",
   "arch": [
