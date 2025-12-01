@@ -3,14 +3,18 @@
 OPTIONS_FILE="/data/options.json"
 
 get_opt() {
-  python3 - "$1" "$OPTIONS_FILE" << 'EOF'
+  key="$1"
+  python3 - "$key" "$OPTIONS_FILE" << 'EOF'
 import sys, json
 key = sys.argv[1]
 path = sys.argv[2]
-with open(path, "r") as f:
-    data = json.load(f)
-v = data.get(key, "")
-print(v)
+try:
+    with open(path, "r") as f:
+        data = json.load(f)
+    v = data.get(key, "")
+    print(v)
+except FileNotFoundError:
+    print("")
 EOF
 }
 

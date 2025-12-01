@@ -5,20 +5,20 @@ import socket
 import paho.mqtt.client as mqtt
 
 HP_IP = os.getenv("HP_IP")
-HP_PORT = int(os.getenv("HP_PORT", "2000"))
-MQTT_HOST = os.getenv("MQTT_HOST")
-MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+HP_PORT = int(os.getenv("HP_PORT", "2000") or "2000")
+MQTT_HOST = os.getenv("MQTT_HOST") or "homeassistant.local"
+MQTT_PORT = int(os.getenv("MQTT_PORT", "1883") or "1883")
 MQTT_USER = os.getenv("MQTT_USER") or None
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD") or None
 MQTT_PREFIX = os.getenv("MQTT_PREFIX", "panasonic_f")
-POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "1"))
+POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "1") or "1")
 
-SCALE_WATER = int(os.getenv("SCALE_WATER", "100"))
-SCALE_INDOOR = int(os.getenv("SCALE_INDOOR", "100"))
-SCALE_TANK = int(os.getenv("SCALE_TANK", "100"))
-SCALE_R1 = int(os.getenv("SCALE_R1", "100"))
+SCALE_WATER = int(os.getenv("SCALE_WATER", "100") or "100")
+SCALE_INDOOR = int(os.getenv("SCALE_INDOOR", "100") or "100")
+SCALE_TANK = int(os.getenv("SCALE_TANK", "100") or "100")
+SCALE_R1 = int(os.getenv("SCALE_R1", "100") or "100")
 
-LOG_LEVEL = os.getenv("LOG_LEVEL", "info").lower()
+LOG_LEVEL = (os.getenv("LOG_LEVEL") or "info").lower()
 
 def log(level, msg):
     if LOG_LEVEL != "debug" and level == "debug":
