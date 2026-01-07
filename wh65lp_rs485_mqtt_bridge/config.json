@@ -1,6 +1,6 @@
 {
   "name": "WH65LP RS485 to MQTT",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "slug": "wh65lp_rs485_mqtt_bridge",
   "description": "Publishes WH65LP weather station data from RS485/TCP to MQTT with Home Assistant discovery.",
   "arch": ["amd64", "aarch64", "armv7"],
@@ -16,8 +16,7 @@
     "discovery_prefix": "homeassistant",
     "unique_prefix": "efimmo-bw-b2-f4-ws1",
     "ws_host": "10.80.24.101",
-    "ws_port": 502,
-    "packet_size": 25
+    "ws_port": 502
   },
   "schema": {
     "mqtt_host": "str",
@@ -28,7 +27,6 @@
     "discovery_prefix": "str",
     "unique_prefix": "str",
     "ws_host": "str",
-    "ws_port": "int",
-    "packet_size": "int"
+    "ws_port": "int"
   }
 }
