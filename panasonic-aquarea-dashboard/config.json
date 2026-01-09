@@ -1,6 +1,6 @@
 {
   "name": "Panasonic Aquarea Dashboard (TCP)",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "slug": "panasonic_aquarea_dashboard_tcp",
   "description": "Connects to a TCP stream (e.g. RS485 bridge / Telnet) and prints the Panasonic Aquarea dashboard into the add-on log.",
   "arch": ["aarch64", "amd64", "armv7", "armhf", "i386"],

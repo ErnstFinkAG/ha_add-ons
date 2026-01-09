@@ -1,3 +1,17 @@
+# /app/main.py
+#
+# Panasonic Aquarea TCP dashboard reader (10.80.30.70:23 etc.)
+# - Reads ANSI "status screen" stream over TCP
+# - Detects full screens by clear-screen boundaries (ESC[...J)
+# - Prints raw dashboard
+# - Prints an additional "HUMAN VALUES" table with proper decoding
+#
+# Fix included:
+# - Temperature line is NOT a simple header/value zip. It contains extra status bytes.
+#   We now parse the first value line as:
+#     R_MODE MODE  (word,status)x5  OUT(raw,status,disp)
+#   This fixes wrong temps like 0.46°C that came from mistakenly decoding status bytes.
+
 import os
 import re
 import sys
@@ -41,7 +55,7 @@ def connect(host: str, port: int, timeout_sec: int) -> socket.socket:
 
 
 def looks_like_dashboard(text: str) -> bool:
-    # Your full screens contain at least R_MODE and/or ER_CODE headings.
+    # Your full screens contain at least these headings.
     return ("R_MODE" in text) and ("ER_CODE" in text)
 
 
@@ -51,8 +65,6 @@ def _hex_to_int(token: str) -> Optional[int]:
     token = token.strip()
     if not token:
         return None
-    # tokens in your screen are hex without 0x
-    # (but sometimes there can be non-hex garbage; ignore)
     if not re.fullmatch(r"[0-9A-Fa-f]+", token):
         return None
     return int(token, 16)
@@ -72,14 +84,13 @@ def q88_temp_c(word_hex: str) -> Optional[float]:
 
 def parse_screen_tables(screen_text: str) -> Dict[str, str]:
     """
-    Parses header/value tables from the screen.
-    Returns a dict mapping FIELD_NAME -> token (hex string).
-    If a field appears multiple times, last one wins.
+    Generic parser: header line -> next value line mapping.
+    NOTE: The first temperature line is NOT parsed correctly by this method (it has extra status bytes),
+    so we parse that separately in extract_temp_line().
     """
     lines = [ln.strip() for ln in screen_text.split("\n") if ln.strip()]
     out: Dict[str, str] = {}
 
-    # A header line looks like: ER_CODE O_STATUS O_PIPE ...
     header_re = re.compile(r"^(?:[A-Z0-9_]+(?:\s+|$)){2,}$")
 
     i = 0
@@ -87,7 +98,6 @@ def parse_screen_tables(screen_text: str) -> Dict[str, str]:
         header = lines[i]
         if header_re.match(header) and "DASHBOARD" not in header:
             headers = header.split()
-            # Find next line with enough tokens
             j = i + 1
             while j < len(lines):
                 vals = lines[j].split()
@@ -102,117 +112,71 @@ def parse_screen_tables(screen_text: str) -> Dict[str, str]:
     return out
 
 
-def decode_human(kv: Dict[str, str]) -> List[Tuple[str, str, str]]:
+def extract_temp_line(clean_screen_text: str) -> Optional[dict]:
     """
-    Return rows: (name, value, unit)
+    Parses the first dashboard value line:
+      R_MODE MODE (word status)* for each *_TMP_AD, and OUT_TEMP as (raw status disp)
+
+    Expected token layout on the values line:
+      R_MODE MODE
+      WATER_TMP_WORD WATER_TMP_STATUS
+      WATER2_TMP_WORD WATER2_TMP_STATUS
+      IN_TMP_WORD IN_TMP_STATUS
+      R1_TMP_WORD R1_TMP_STATUS
+      TANK_TMP_WORD TANK_TMP_STATUS
+      OUT_RAW OUT_STATUS OUT_DISP
+
+    Total tokens: 2 + (5*2) + 3 = 15
     """
-    rows: List[Tuple[str, str, str]] = []
-
-    def add(name: str, value: Optional[float], unit: str, fmt: str = "{:.2f}"):
-        if value is None:
-            return
-        rows.append((name, fmt.format(value), unit))
-
-    def add_int(name: str, value: Optional[int], unit: str):
-        if value is None:
-            return
-        rows.append((name, str(value), unit))
-
-    def add_bool(name: str, token: Optional[str]):
-        if token is None:
-            return
-        v = _hex_to_int(token)
-        if v is None:
-            return
-        rows.append((name, "ON" if v != 0 else "OFF", ""))
-
-    # Temperatures (Q8.8)
-    add("Flow temp (WATER_TMP)", q88_temp_c(kv.get("WATER_TMP_AD", "")), "°C")
-    add("Return temp (WATER2_TMP)", q88_temp_c(kv.get("WATER2_TMP_AD", "")), "°C")
-    add("Indoor/internal temp (IN_TMP)", q88_temp_c(kv.get("IN_TMP_AD", "")), "°C")
-    add("Zone/loop temp (R1_TMP)", q88_temp_c(kv.get("R1_TMP_AD", "")), "°C")
-    add("Tank temp (TANK_TMP)", q88_temp_c(kv.get("TANK_TMP_AD", "")), "°C")
-
-    # Setpoints
-    # REMO_SET appears to be integer °C; IN_SET is Q8.8
-    remo = _hex_to_int(kv.get("REMO_SET", ""))
-    if remo is not None:
-        rows.append(("Remote setpoint (REMO_SET)", f"{remo}", "°C"))
-    add("Internal setpoint (IN_SET)", q88_temp_c(kv.get("IN_SET", "")), "°C")
-
-    # Outdoor temp special: your screen shows OUT_TEMP as 3 tokens after it.
-    # Our table parser only captures the first token (it maps OUT_TEMP -> "EC00").
-    # So for OUT_TEMP we need to re-parse from the raw screen, but we can approximate:
-    # We use these keys if they exist (future-proof if you later add explicit parsing),
-    # otherwise we leave outdoor temp blank.
-    #
-    # Recommendation: we’ll derive it by scanning for the OUT_TEMP line pattern in the raw screen
-    # in print_screen_with_human().
-    #
-    # Compressor/Pump
-    add_bool("Compressor requested (CMP_REQ)", kv.get("CMP_REQ"))
-    add_bool("Water pump (W_PUMP)", kv.get("W_PUMP"))
-
-    # Compressor frequency and power
-    comphz = _hex_to_int(kv.get("COMPHZ", ""))
-    if comphz is not None:
-        rows.append(("Compressor frequency (COMPHZ)", str(comphz), "Hz"))
-
-    hpower = _hex_to_int(kv.get("HPOWER", ""))
-    if hpower is not None:
-        rows.append(("Electrical power (HPOWER)", str(hpower), "W"))
-
-    # Modes
-    hot = _hex_to_int(kv.get("HOT", ""))
-    cool = _hex_to_int(kv.get("COOL", ""))
-    freeze = _hex_to_int(kv.get("FREEZE", ""))
-    if hot is not None:
-        rows.append(("HOT state", f"0x{hot:02X}", ""))
-    if cool is not None:
-        rows.append(("COOL state", f"0x{cool:02X}", ""))
-    if freeze is not None:
-        rows.append(("FREEZE state", f"0x{freeze:02X}", ""))
-
-    # Error code
-    # ER_CODE is two bytes displayed as two tokens in the screen; our parser captures ER_CODE -> first token.
-    # We'll leave detailed ER_CODE handling to the raw scan (same as OUT_TEMP) for correctness.
-
-    return rows
-
-
-def extract_outdoor_triplet(clean_screen_text: str) -> Optional[Tuple[str, str, str]]:
-    """
-    Finds the OUT_TEMP triplet that appears at end of the first data line:
-    ... EC00 FF 03
-    Returns (raw_word, status, display) as hex strings.
-    """
-    # Look for a line containing OUT_TEMP header then the next line with values.
     lines = [ln.strip() for ln in clean_screen_text.split("\n") if ln.strip()]
     for idx, ln in enumerate(lines):
         if ln.startswith("R_MODE") and "OUT_TEMP" in ln:
-            # next non-empty line should be values
-            if idx + 1 < len(lines):
-                vals = lines[idx + 1].split()
-                # We expect: R_MODE MODE (then 5 temps with status each = 10 tokens) then OUT raw status display (3 tokens)
-                # Total expected tokens: 2 + 10 + 3 = 15
-                if len(vals) >= 15:
-                    raw_word = vals[-3]
-                    status = vals[-2]
-                    disp = vals[-1]
-                    if _hex_to_int(raw_word) is not None and _hex_to_int(status) is not None and _hex_to_int(disp) is not None:
-                        return raw_word, status, disp
+            if idx + 1 >= len(lines):
+                return None
+            vals = lines[idx + 1].split()
+            if len(vals) < 15:
+                return None
+
+            r_mode = vals[0]
+            mode = vals[1]
+            t = vals[2:]
+
+            water_word, water_status = t[0], t[1]
+            water2_word, water2_status = t[2], t[3]
+            in_word, in_status = t[4], t[5]
+            r1_word, r1_status = t[6], t[7]
+            tank_word, tank_status = t[8], t[9]
+
+            out_raw, out_status, out_disp = t[10], t[11], t[12]
+
+            return {
+                "r_mode": r_mode,
+                "mode": mode,
+                "water_word": water_word,
+                "water_status": water_status,
+                "water2_word": water2_word,
+                "water2_status": water2_status,
+                "in_word": in_word,
+                "in_status": in_status,
+                "r1_word": r1_word,
+                "r1_status": r1_status,
+                "tank_word": tank_word,
+                "tank_status": tank_status,
+                "out_raw": out_raw,
+                "out_status": out_status,
+                "out_disp": out_disp,
+            }
     return None
 
 
 def extract_er_code_pair(clean_screen_text: str) -> Optional[Tuple[str, str]]:
     """
-    Finds ER_CODE two-token value from ER_CODE table.
+    ER_CODE appears as two tokens on the ER_CODE row.
     Returns (major, minor) as hex strings.
     """
     lines = [ln.strip() for ln in clean_screen_text.split("\n") if ln.strip()]
     for idx, ln in enumerate(lines):
         if ln.startswith("ER_CODE") and "TPOWER" in ln:
-            # next non-empty line should be values
             if idx + 1 < len(lines):
                 vals = lines[idx + 1].split()
                 if len(vals) >= 2:
@@ -224,37 +188,91 @@ def extract_er_code_pair(clean_screen_text: str) -> Optional[Tuple[str, str]]:
 
 def print_human_table(clean_screen_text: str) -> None:
     kv = parse_screen_tables(clean_screen_text)
-    rows = decode_human(kv)
+    rows: List[Tuple[str, str, str]] = []
 
-    # OUT_TEMP triplet -> add derived outdoor temp and raw/status fields
-    out_trip = extract_outdoor_triplet(clean_screen_text)
-    if out_trip:
-        raw_word, status, disp = out_trip
-        rows.append(("Outdoor raw word", f"0x{raw_word.upper()}", ""))
-        rows.append(("Outdoor raw status", f"0x{status.upper()}", ""))
-        disp_i = _hex_to_int(disp)
-        if disp_i is not None:
-            rows.append(("Outdoor temperature (rounded)", str(disp_i), "°C"))
+    def add_row(name: str, val: str, unit: str = ""):
+        rows.append((name, val, unit))
 
-        # If someday status becomes valid (not FF), show decoded Q8.8 too
-        st_i = _hex_to_int(status)
-        if st_i is not None and st_i != 0xFF:
-            t = q88_temp_c(raw_word)
-            if t is not None:
-                rows.append(("Outdoor temperature (raw decoded)", f"{t:.2f}", "°C"))
+    def add_temp(label: str, word_hex: str, status_hex: str):
+        t = q88_temp_c(word_hex)
+        if t is not None:
+            add_row(label, f"{t:.2f}", "°C")
+        add_row(label + " status", f"0x{status_hex.upper()}", "")
 
-    # ER_CODE pair
+    # ---- Temperatures: parse from first line with (word,status) pairs ----
+    temp = extract_temp_line(clean_screen_text)
+    if temp:
+        add_temp("Flow temp (WATER_TMP)", temp["water_word"], temp["water_status"])
+        add_temp("Return temp (WATER2_TMP)", temp["water2_word"], temp["water2_status"])
+        add_temp("Indoor/internal temp (IN_TMP)", temp["in_word"], temp["in_status"])
+        add_temp("Zone/loop temp (R1_TMP)", temp["r1_word"], temp["r1_status"])
+        add_temp("Tank temp (TANK_TMP)", temp["tank_word"], temp["tank_status"])
+
+        # Outdoor: use rounded display byte when raw is invalid (status FF)
+        add_row("Outdoor raw word", f"0x{temp['out_raw'].upper()}", "")
+        add_row("Outdoor raw status", f"0x{temp['out_status'].upper()}", "")
+
+        st = _hex_to_int(temp["out_status"])
+        disp = _hex_to_int(temp["out_disp"])
+        if st == 0xFF and disp is not None:
+            add_row("Outdoor temperature (rounded)", str(disp), "°C")
+        else:
+            t_out = q88_temp_c(temp["out_raw"])
+            if t_out is not None:
+                add_row("Outdoor temperature (raw decoded)", f"{t_out:.2f}", "°C")
+
+    # ---- Setpoints ----
+    remo = _hex_to_int(kv.get("REMO_SET", ""))
+    if remo is not None:
+        add_row("Remote setpoint (REMO_SET)", str(remo), "°C")
+
+    in_set = q88_temp_c(kv.get("IN_SET", ""))
+    if in_set is not None:
+        add_row("Internal setpoint (IN_SET)", f"{in_set:.2f}", "°C")
+
+    # ---- Compressor / pump ----
+    cmp_req = _hex_to_int(kv.get("CMP_REQ", ""))
+    if cmp_req is not None:
+        add_row("Compressor requested (CMP_REQ)", "ON" if cmp_req != 0 else "OFF")
+
+    w_pump = _hex_to_int(kv.get("W_PUMP", ""))
+    if w_pump is not None:
+        add_row("Water pump (W_PUMP)", "ON" if w_pump != 0 else "OFF")
+
+    # ---- Compressor frequency & power ----
+    comphz = _hex_to_int(kv.get("COMPHZ", ""))
+    if comphz is not None:
+        add_row("Compressor frequency (COMPHZ)", str(comphz), "Hz")
+
+    hpower = _hex_to_int(kv.get("HPOWER", ""))
+    if hpower is not None:
+        add_row("Electrical power (HPOWER)", str(hpower), "W")
+
+    # ---- Mode flags ----
+    hot = _hex_to_int(kv.get("HOT", ""))
+    if hot is not None:
+        add_row("HOT state", f"0x{hot:02X}")
+
+    cool = _hex_to_int(kv.get("COOL", ""))
+    if cool is not None:
+        add_row("COOL state", f"0x{cool:02X}")
+
+    freeze = _hex_to_int(kv.get("FREEZE", ""))
+    if freeze is not None:
+        add_row("FREEZE state", f"0x{freeze:02X}")
+
+    # ---- Errors ----
     er = extract_er_code_pair(clean_screen_text)
     if er:
         a, b = er
-        rows.append(("Error code (ER_CODE)", f"{a.upper()} {b.upper()}", ""))
+        add_row("Error code (ER_CODE)", f"{a.upper()} {b.upper()}")
 
     if not rows:
         return
 
-    # Pretty print as a table
     name_w = max(len(r[0]) for r in rows)
     val_w = max(len(r[1]) for r in rows)
+
     print("[HUMAN VALUES]")
     print("-" * (name_w + val_w + 10))
     for name, val, unit in rows:
@@ -264,13 +282,11 @@ def print_human_table(clean_screen_text: str) -> None:
 
 
 def print_screen_with_human(screen_text: str, ts_fmt: str, do_strip: bool) -> None:
-    # Always keep a clean version for parsing (ANSI stripped)
     clean = strip_ansi(screen_text)
     clean = normalize_text(clean)
     if not clean:
         return
 
-    # Print the raw dashboard (optionally stripped) like before
     shown = clean if do_strip else normalize_text(screen_text)
     timestamp = time.strftime(ts_fmt, time.localtime())
 
@@ -278,7 +294,6 @@ def print_screen_with_human(screen_text: str, ts_fmt: str, do_strip: bool) -> No
     print(f"[DASHBOARD] {timestamp}")
     print(shown)
     print()
-    # Add human readable table
     print_human_table(clean)
     print("=" * 60 + "\n")
     sys.stdout.flush()
@@ -295,7 +310,7 @@ def main():
     max_buffer_kb = int(opt.get("max_buffer_kb", 256))
     ts_fmt = opt.get("timestamp_format", "%Y-%m-%d %H:%M:%S")
 
-    max_chars = max_buffer_kb * 1024  # decoded text, count chars
+    max_chars = max_buffer_kb * 1024
 
     print("[INFO] Panasonic Aquarea TCP dashboard reader")
     print(f"[INFO] Connecting to {host}:{port}")
@@ -346,7 +361,7 @@ def main():
                 stream_buf = parts[-1]
 
             else:
-                # No clear seen yet, avoid runaway
+                # No clear seen yet; prevent runaway
                 if len(stream_buf) > (max_chars // 2):
                     current_screen += stream_buf
                     stream_buf = ""
