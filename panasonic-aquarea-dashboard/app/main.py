@@ -8,15 +8,11 @@
 #   that includes *every* value from the dashboard tables
 #   in raw hex + decimal + decoded human form (when known).
 #
-# Key protocol fixes:
-# 1) First temperature line is NOT a simple header/value row.
-#    It contains extra status bytes per temperature.
-#    We parse it structurally:
-#       R_MODE MODE (temp_word temp_status)*N OUT_raw OUT_status OUT_disp
-#    where N can vary (commonly 4 or 5).
-#
-# 2) ER_CODE is displayed as TWO tokens (e.g. "00 00") but header has one column ER_CODE.
-#    We realign that table so O_STATUS..TPOWER map correctly.
+# Fixes:
+# - Header regex now supports tokens with ":" (e.g. SHIFT:OUT_AIR) so DIFF row is parsed correctly.
+# - Small sanity check: only treat a line as values if it looks like hex tokens (prevents mispairing).
+# - Temp line parsed structurally (word+status pairs + OUT triplet)
+# - ER_CODE row realigned (two-byte ER_CODE)
 
 import os
 import re
@@ -28,6 +24,12 @@ from typing import Dict, List, Tuple, Optional
 
 ANSI_CSI_RE = re.compile(r"\x1B\[[0-9;?]*[A-Za-z]")
 CLEAR_RE = re.compile(r"\x1B\[[0-9;?]*J")
+
+# Header tokens on your screen can contain ":" (SHIFT:OUT_AIR). Allow ":" and "-" too.
+HEADER_TOKEN_RE = re.compile(r"^[A-Z0-9_:-]+$")
+HEADER_LINE_RE = re.compile(r"^(?:[A-Z0-9_:-]+(?:\s+|$)){2,}$")
+
+HEX_TOKEN_RE = re.compile(r"^[0-9A-Fa-f]+$")
 
 
 # -------------------- basic helpers --------------------
@@ -69,7 +71,7 @@ def _hex_to_int(token: str) -> Optional[int]:
     token = token.strip()
     if not token:
         return None
-    if not re.fullmatch(r"[0-9A-Fa-f]+", token):
+    if not HEX_TOKEN_RE.fullmatch(token):
         return None
     return int(token, 16)
 
@@ -91,6 +93,17 @@ def q88_temp_c(word_hex: str) -> Optional[float]:
     return _int16_signed(x) / 256.0
 
 
+def _looks_like_values(tokens: List[str]) -> bool:
+    """
+    A values line is mostly hex tokens (e.g. 00, 0014, F8).
+    Accept if at least half of tokens are hex.
+    """
+    if not tokens:
+        return False
+    ok = sum(1 for t in tokens if HEX_TOKEN_RE.fullmatch(t))
+    return ok >= max(1, len(tokens) // 2)
+
+
 # -------------------- parsing --------------------
 
 def parse_screen_rows(clean_screen_text: str) -> List[Tuple[List[str], List[str]]]:
@@ -101,20 +114,29 @@ def parse_screen_rows(clean_screen_text: str) -> List[Tuple[List[str], List[str]
     NOTE: The first temperature line is parsed separately (extract_temp_line()).
     """
     lines = [ln.strip() for ln in clean_screen_text.split("\n") if ln.strip()]
-    header_re = re.compile(r"^(?:[A-Z0-9_]+(?:\s+|$)){2,}$")
-
     rows: List[Tuple[List[str], List[str]]] = []
+
     i = 0
     while i < len(lines):
-        hdr = lines[i]
-        if header_re.match(hdr) and "DASHBOARD" not in hdr:
-            headers = hdr.split()
+        hdr_line = lines[i]
+        if HEADER_LINE_RE.match(hdr_line) and "DASHBOARD" not in hdr_line:
+            headers = hdr_line.split()
+
+            # Ensure header tokens are sane (all tokens match allowed set)
+            if not all(HEADER_TOKEN_RE.fullmatch(h) for h in headers):
+                i += 1
+                continue
 
             # next non-empty line is values
             j = i + 1
             while j < len(lines):
                 vals = lines[j].split()
                 if not vals:
+                    j += 1
+                    continue
+
+                # sanity check so we don't pair wrong lines
+                if not _looks_like_values(vals):
                     j += 1
                     continue
 
@@ -131,6 +153,7 @@ def parse_screen_rows(clean_screen_text: str) -> List[Tuple[List[str], List[str]
                     break
 
                 j += 1
+
         i += 1
 
     return rows
@@ -162,8 +185,6 @@ def extract_temp_line(clean_screen_text: str) -> Optional[dict]:
             tail = vals[2:]
 
             # last 3 tokens are OUT_TEMP triplet
-            if len(tail) < 3:
-                return None
             out_raw, out_status, out_disp = tail[-3], tail[-2], tail[-1]
             temp_tokens = tail[:-3]
 
@@ -177,7 +198,7 @@ def extract_temp_line(clean_screen_text: str) -> Optional[dict]:
             return {
                 "r_mode": r_mode,
                 "mode": mode,
-                "pairs": pairs,  # ordered pairs as seen
+                "pairs": pairs,
                 "out_raw": out_raw,
                 "out_status": out_status,
                 "out_disp": out_disp,
@@ -190,14 +211,10 @@ def extract_temp_line(clean_screen_text: str) -> Optional[dict]:
 def decode_field(name: str, raw: str) -> Tuple[str, str, str]:
     """
     Returns (raw_hex, decimal, human)
-
-    - raw_hex: printable raw, e.g. "0x0014" or "00 00" for ER_CODE
-    - decimal: best-effort decimal (signed where appropriate when known)
-    - human: decoded text including units where known; otherwise blank or "raw/enum"
     """
     raw = raw.strip()
 
-    # ER_CODE is two tokens already joined "AA BB"
+    # ER_CODE joined as "AA BB"
     if name == "ER_CODE":
         raw_hex = raw.upper()
         human = "No error" if raw_hex == "00 00" else "Fault"
@@ -210,66 +227,55 @@ def decode_field(name: str, raw: str) -> Tuple[str, str, str]:
     raw_hex = f"0x{raw.upper()}"
     dec_u = str(x)
 
-    # Known Q8.8 temperatures (16-bit signed)
+    # Known Q8.8 temps (16-bit signed)
     if name in {"WATER_TMP_AD", "WATER2_TMP_AD", "IN_TMP_AD", "R1_TMP_AD", "TANK_TMP_AD", "IN_SET"}:
         t = _int16_signed(x) / 256.0
         return (raw_hex, dec_u, f"{t:.2f} °C")
 
-    # Common integer temperature setpoints
+    # Integer °C setpoints
     if name in {"REMO_SET", "TANK_SET", "STERTMP"}:
         return (raw_hex, dec_u, f"{x} °C")
 
-    # Compressor frequency
-    if name == "COMPHZ":
-        return (raw_hex, dec_u, f"{x} Hz")
-
-    # Power (you confirmed HPOWER = Watts)
-    if name in {"HPOWER", "CPOWER", "TPOWER"}:
-        return (raw_hex, dec_u, f"{x} W ({x/1000.0:.3f} kW)")
+    # DIFF: signed 8-bit
+    if name == "DIFF":
+        s = _int8_signed(x)
+        return (raw_hex, dec_u, f"{s} (signed)")
 
     # Pump duty
     if name == "PM_DUTY":
         return (raw_hex, dec_u, f"{x} %")
 
-    # Signed 8-bit control delta
-    if name == "DIFF":
-        s = _int8_signed(x)
-        return (raw_hex, dec_u, f"{s} (signed)")
+    # Compressor frequency
+    if name == "COMPHZ":
+        return (raw_hex, dec_u, f"{x} Hz")
+
+    # Power values (you confirmed HPOWER=W)
+    if name in {"HPOWER", "CPOWER", "TPOWER"}:
+        return (raw_hex, dec_u, f"{x} W ({x/1000.0:.3f} kW)")
 
     # Booleans
     if name in {"CMP_REQ", "W_PUMP", "COOL", "FREEZE"}:
         return (raw_hex, dec_u, "ON" if x != 0 else "OFF")
 
-    # HOT is an enum/state
-    if name == "HOT":
-        return (raw_hex, dec_u, f"state {x}")
-
     # Bitfields
     if name in {"OUTPUT", "INPUT", "FLAG0", "FLAG1", "FLAG2", "FLAG3"}:
         return (raw_hex, dec_u, "bitfield")
 
-    # Raw/enums we haven't scaled yet
+    # Otherwise unknown/enum
     if name in {
         "OD_LPT", "OD_HPT", "WT_LPT", "WT_HPT", "HOFF", "HEATOD",
+        "C_SET", "F_SEL", "H_TIME", "T_TIME", "TDELAY", "STERTM",
         "O_STATUS", "O_PIPE", "O_CUR", "O_DISC", "O_VAL",
-        "PM_TAP", "C_SET", "F_SEL", "H_TIME", "T_TIME", "TDELAY", "STERTM",
-        "SHIFT:OUT_AIR", "STARTUP"
+        "PM_TAP", "STARTUP", "SHIFT:OUT_AIR"
     }:
         return (raw_hex, dec_u, "raw/enum")
 
-    # Default fallback
     return (raw_hex, dec_u, "")
 
 
 # -------------------- output --------------------
 
 def print_human_table(clean_screen_text: str) -> None:
-    """
-    Prints a human table with ALL fields.
-    Includes:
-      - Special parsed temperature line (pairs + OUT_TEMP triplet)
-      - Every other table row parsed and decoded field-by-field
-    """
     out_rows: List[Tuple[str, str, str, str]] = []  # name, raw_hex, dec, human
 
     def add(name: str, raw_hex: str, dec: str, human: str):
@@ -279,16 +285,8 @@ def print_human_table(clean_screen_text: str) -> None:
     temp = extract_temp_line(clean_screen_text)
     if temp:
         pairs = temp["pairs"]
-        # Map the ordered pairs to named channels in the header order:
-        # WATER, WATER2, IN, R1, TANK are the header names you display.
-        # Some systems show only 4 pairs; your stream often duplicates IN as R1.
-        #
-        # Strategy:
-        # - Pair 0 -> WATER
-        # - Pair 1 -> WATER2
-        # - Pair 2 -> IN
-        # - If 5 pairs: Pair 3 -> R1, Pair 4 -> TANK
-        # - If 4 pairs: R1 mirrors IN, Pair 3 -> TANK
+
+        # Map ordered pairs to named channels
         named: Dict[str, Tuple[str, str]] = {}
         if len(pairs) >= 1:
             named["WATER_TMP_AD"] = pairs[0]
@@ -301,23 +299,24 @@ def print_human_table(clean_screen_text: str) -> None:
             named["R1_TMP_AD"] = pairs[3]
             named["TANK_TMP_AD"] = pairs[4]
         elif len(pairs) == 4:
-            named["R1_TMP_AD"] = pairs[2]   # mirror IN
+            named["R1_TMP_AD"] = pairs[2]  # mirror IN
             named["TANK_TMP_AD"] = pairs[3]
-        elif len(pairs) >= 4:
-            named["R1_TMP_AD"] = pairs[3]
-        if len(pairs) >= 5 and "TANK_TMP_AD" not in named:
-            named["TANK_TMP_AD"] = pairs[4]
+        else:
+            if len(pairs) >= 4:
+                named["R1_TMP_AD"] = pairs[3]
+            if len(pairs) >= 5:
+                named["TANK_TMP_AD"] = pairs[4]
 
         for field in ["WATER_TMP_AD", "WATER2_TMP_AD", "IN_TMP_AD", "R1_TMP_AD", "TANK_TMP_AD"]:
             if field in named:
                 word, status = named[field]
                 rh, dec, human = decode_field(field, word)
                 add(field, rh, dec, human)
-                # Status byte (always 1 byte)
+
                 st_i = _hex_to_int(status)
                 add(field + "_STATUS", f"0x{status.upper()}", str(st_i) if st_i is not None else "", "status/quality")
 
-        # OUT_TEMP triplet (special on your unit)
+        # OUT_TEMP triplet
         out_raw = temp["out_raw"]
         out_status = temp["out_status"]
         out_disp = temp["out_disp"]
@@ -332,20 +331,13 @@ def print_human_table(clean_screen_text: str) -> None:
         if os_i == 0xFF and od_i is not None:
             add("OUT_TEMP_DISPLAY", f"0x{out_disp.upper()}", str(od_i), f"{od_i} °C (rounded)")
         else:
-            # If it ever becomes valid, try decoding Q8.8
             t_out = q88_temp_c(out_raw)
             if t_out is not None:
                 add("OUT_TEMP_DECODED", f"0x{out_raw.upper()}", str(or_i) if or_i is not None else "", f"{t_out:.2f} °C")
 
-        # Also include R_MODE/MODE from this line (as raw)
-        rm_i = _hex_to_int(temp["r_mode"])
-        md_i = _hex_to_int(temp["mode"])
-        add("R_MODE", f"0x{temp['r_mode'].upper()}", str(rm_i) if rm_i is not None else "", "raw/enum")
-        add("MODE", f"0x{temp['mode'].upper()}", str(md_i) if md_i is not None else "", "raw/enum")
-
-    # ---- 2) All other rows ----
+    # ---- 2) All other rows (everything) ----
     for headers, values in parse_screen_rows(clean_screen_text):
-        # Skip the temp header row; we already handled it properly
+        # Skip the temp row header; we already handled it properly
         if headers and headers[0] == "R_MODE" and "OUT_TEMP" in headers:
             continue
 
@@ -445,14 +437,12 @@ def main():
                         if synced:
                             print_screen_with_human(current_screen, ts_fmt, do_strip_ansi)
                         else:
-                            # drop first partial screen after connect
                             synced = True
 
                     current_screen = ""
 
                 stream_buf = parts[-1]
             else:
-                # no clear yet; keep a bounded buffer
                 if len(stream_buf) > (max_chars // 2):
                     current_screen += stream_buf
                     stream_buf = ""
