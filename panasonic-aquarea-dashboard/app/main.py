@@ -8,14 +8,16 @@
 #
 # FIXES INCLUDED:
 # 1) Temperature line parsing:
-#    The first temperature value line contains extra status bytes not present in the header.
+#    First dashboard value line contains extra status bytes not present in the header.
 #    We parse it structurally as:
-#       R_MODE MODE (word,status)*N  OUT(raw,status,disp)
+#       R_MODE MODE (temp_word temp_status)*N  OUT_raw OUT_status OUT_disp
 #    with N usually 4 or 5 depending on configuration.
 #
 # 2) ER_CODE table alignment:
-#    ER_CODE is displayed as TWO tokens ("00 00"), but header has one column "ER_CODE".
-#    We detect this and realign all subsequent fields so COMPHZ/HPOWER/etc decode correctly.
+#    ER_CODE is displayed as TWO tokens ("00 00") but header has one column "ER_CODE".
+#    We detect and realign so O_STATUS..TPOWER are mapped correctly.
+#
+# 3) Human table now includes COMPHZ/HPOWER/etc.
 
 import os
 import re
@@ -105,7 +107,6 @@ def parse_screen_tables(screen_text: str) -> Dict[str, str]:
         if header_re.match(header) and "DASHBOARD" not in header:
             headers = header.split()
 
-            # find next non-empty line
             j = i + 1
             while j < len(lines):
                 vals = lines[j].split()
@@ -113,11 +114,9 @@ def parse_screen_tables(screen_text: str) -> Dict[str, str]:
                     j += 1
                     continue
 
-                # --- Special case: ER_CODE row has 1 extra token (two-byte ER_CODE) ---
+                # ER_CODE is printed as two tokens, so values are one token longer than headers
                 if headers and headers[0] == "ER_CODE" and len(vals) == len(headers) + 1:
-                    # Join first two tokens as "ER_CODE" pair (keep as "AA BB")
                     out["ER_CODE"] = f"{vals[0].upper()} {vals[1].upper()}"
-                    # Shift remaining tokens to remaining headers
                     shifted = vals[2:]
                     for h, v in zip(headers[1:], shifted):
                         out[h] = v
@@ -142,8 +141,10 @@ def extract_temp_line(clean_screen_text: str) -> Optional[dict]:
     """
     Dynamically parses the first dashboard value line.
 
-    Value line format (typical):
+    Value line format:
       R_MODE MODE  (temp_word temp_status)*N   OUT_raw OUT_status OUT_disp
+
+    OUT_disp is the rounded outdoor °C when OUT_status == FF (observed on your system).
 
     Returns dict with keys:
       r_mode, mode,
@@ -153,8 +154,6 @@ def extract_temp_line(clean_screen_text: str) -> Optional[dict]:
       r1_word, r1_status,
       tank_word, tank_status,
       out_raw, out_status, out_disp
-
-    Missing sensors are returned as empty strings.
     """
     lines = [ln.strip() for ln in clean_screen_text.split("\n") if ln.strip()]
     for idx, ln in enumerate(lines):
@@ -170,9 +169,6 @@ def extract_temp_line(clean_screen_text: str) -> Optional[dict]:
             mode = vals[1]
             tail = vals[2:]
 
-            # OUT triplet is last 3 tokens
-            if len(tail) < 3:
-                return None
             out_raw, out_status, out_disp = tail[-3], tail[-2], tail[-1]
             temp_tokens = tail[:-3]
 
@@ -205,8 +201,7 @@ def extract_temp_line(clean_screen_text: str) -> Optional[dict]:
                 res["r1_word"], res["r1_status"] = pairs[3]
                 res["tank_word"], res["tank_status"] = pairs[4]
             elif len(pairs) == 4:
-                # Common in your output: IN is duplicated in the raw stream for R1,
-                # and the 4th pair is actually TANK.
+                # Common in your output: IN is duplicated for R1, 4th pair is TANK
                 res["r1_word"], res["r1_status"] = pairs[2]   # mirror IN
                 res["tank_word"], res["tank_status"] = pairs[3]
             else:
@@ -235,7 +230,7 @@ def print_human_table(clean_screen_text: str) -> None:
             add_row(label, f"{t:.2f}", "°C")
         add_row(label + " status", f"0x{status_hex.upper()}", "")
 
-    # Temps
+    # ---- Temps (structural parse) ----
     temp = extract_temp_line(clean_screen_text)
     if temp:
         add_temp("Flow temp (WATER_TMP)", temp["water_word"], temp["water_status"])
@@ -244,7 +239,7 @@ def print_human_table(clean_screen_text: str) -> None:
         add_temp("Zone/loop temp (R1_TMP)", temp["r1_word"], temp["r1_status"])
         add_temp("Tank temp (TANK_TMP)", temp["tank_word"], temp["tank_status"])
 
-        # Outdoor (your confirmed behavior: raw invalid -> use display byte rounded °C)
+        # Outdoor (raw invalid -> display rounded °C)
         add_row("Outdoor raw word", f"0x{temp['out_raw'].upper()}", "")
         add_row("Outdoor raw status", f"0x{temp['out_status'].upper()}", "")
         st = _hex_to_int(temp["out_status"])
@@ -256,7 +251,7 @@ def print_human_table(clean_screen_text: str) -> None:
             if t_out is not None:
                 add_row("Outdoor temperature (raw decoded)", f"{t_out:.2f}", "°C")
 
-    # Setpoints
+    # ---- Setpoints ----
     remo = _hex_to_int(kv.get("REMO_SET", ""))
     if remo is not None:
         add_row("Remote setpoint (REMO_SET)", str(remo), "°C")
@@ -265,7 +260,7 @@ def print_human_table(clean_screen_text: str) -> None:
     if in_set is not None:
         add_row("Internal setpoint (IN_SET)", f"{in_set:.2f}", "°C")
 
-    # Compressor / pump
+    # ---- Compressor / pump ----
     cmp_req = _hex_to_int(kv.get("CMP_REQ", ""))
     if cmp_req is not None:
         add_row("Compressor requested (CMP_REQ)", "ON" if cmp_req != 0 else "OFF")
@@ -274,7 +269,7 @@ def print_human_table(clean_screen_text: str) -> None:
     if w_pump is not None:
         add_row("Water pump (W_PUMP)", "ON" if w_pump != 0 else "OFF")
 
-    # ---- Operating / compressor diagnostics ----
+    # ---- Operating / diagnostics (from ER_CODE table; now correctly aligned) ----
     o_status = _hex_to_int(kv.get("O_STATUS", ""))
     if o_status is not None:
         add_row("Operating status (O_STATUS)", f"0x{o_status:02X}")
@@ -289,7 +284,7 @@ def print_human_table(clean_screen_text: str) -> None:
 
     o_disc = _hex_to_int(kv.get("O_DISC", ""))
     if o_disc is not None:
-        add_row("Discharge temp/state (O_DISC)", str(o_disc), "raw")
+        add_row("Discharge (O_DISC)", str(o_disc), "raw")
 
     o_val = _hex_to_int(kv.get("O_VAL", ""))
     if o_val is not None:
@@ -302,7 +297,7 @@ def print_human_table(clean_screen_text: str) -> None:
     hpower = _hex_to_int(kv.get("HPOWER", ""))
     if hpower is not None:
         add_row("Electrical power (HPOWER)", str(hpower), "W")
-        add_row("Electrical power (kW)", f"{hpower/1000.0:.3f}", "kW")
+        add_row("Electrical power", f"{hpower/1000.0:.3f}", "kW")
 
     cpower = _hex_to_int(kv.get("CPOWER", ""))
     if cpower is not None:
@@ -312,17 +307,7 @@ def print_human_table(clean_screen_text: str) -> None:
     if tpower is not None:
         add_row("Total power (TPOWER)", str(tpower), "W")
 
-
-    # Frequency & power (now correct thanks to ER_CODE realignment)
-    comphz = _hex_to_int(kv.get("COMPHZ", ""))
-    if comphz is not None:
-        add_row("Compressor frequency (COMPHZ)", str(comphz), "Hz")
-
-    hpower = _hex_to_int(kv.get("HPOWER", ""))
-    if hpower is not None:
-        add_row("Electrical power (HPOWER)", str(hpower), "W")
-
-    # Error code
+    # Error code (already joined as "AA BB" by parser)
     if "ER_CODE" in kv:
         add_row("Error code (ER_CODE)", kv["ER_CODE"], "")
 
