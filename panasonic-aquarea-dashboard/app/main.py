@@ -1,16 +1,21 @@
 # /app/main.py
 #
-# Panasonic Aquarea TCP dashboard reader (10.80.30.70:23 etc.)
+# Panasonic Aquarea TCP dashboard reader (TCP stream, e.g. 10.80.30.70:23)
 # - Reads ANSI "status screen" stream over TCP
 # - Detects full screens by clear-screen boundaries (ESC[...J)
 # - Prints raw dashboard
 # - Prints an additional "HUMAN VALUES" table with proper decoding
 #
-# Fix included:
-# - Temperature line is NOT a simple header/value zip. It contains extra status bytes.
-#   We now parse the first value line as:
-#     R_MODE MODE  (word,status)x5  OUT(raw,status,disp)
-#   This fixes wrong temps like 0.46°C that came from mistakenly decoding status bytes.
+# IMPORTANT FIX (v2):
+# The first temperature value line contains extra status bytes that are NOT in the header.
+# Also, depending on configuration, the line may contain either:
+#   - 5 temp pairs (word+status) + OUT triplet (raw+status+disp)
+#   - OR only 4 temp pairs + OUT triplet (some units omit one sensor, or mirror IN/R1)
+#
+# We now parse it dynamically:
+#   - Take last 3 tokens as OUT triplet
+#   - Remaining tokens after R_MODE/MODE are temp (word,status) pairs
+#   - Map pairs to WATER, WATER2, IN, R1, TANK with heuristics when only 4 pairs are present
 
 import os
 import re
@@ -20,10 +25,7 @@ import json
 import socket
 from typing import Dict, List, Tuple, Optional
 
-# ANSI CSI sequences like ESC[2J, ESC[0K, ESC[H, etc.
 ANSI_CSI_RE = re.compile(r"\x1B\[[0-9;?]*[A-Za-z]")
-
-# "Clear screen" CSI ... J (ESC[2J, ESC[J, etc.)
 CLEAR_RE = re.compile(r"\x1B\[[0-9;?]*J")
 
 
@@ -50,12 +52,11 @@ def connect(host: str, port: int, timeout_sec: int) -> socket.socket:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout_sec)
     sock.connect((host, port))
-    sock.settimeout(None)  # blocking recv
+    sock.settimeout(None)
     return sock
 
 
 def looks_like_dashboard(text: str) -> bool:
-    # Your full screens contain at least these headings.
     return ("R_MODE" in text) and ("ER_CODE" in text)
 
 
@@ -114,66 +115,112 @@ def parse_screen_tables(screen_text: str) -> Dict[str, str]:
 
 def extract_temp_line(clean_screen_text: str) -> Optional[dict]:
     """
-    Parses the first dashboard value line:
-      R_MODE MODE (word status)* for each *_TMP_AD, and OUT_TEMP as (raw status disp)
+    Dynamically parses the first dashboard value line.
 
-    Expected token layout on the values line:
-      R_MODE MODE
-      WATER_TMP_WORD WATER_TMP_STATUS
-      WATER2_TMP_WORD WATER2_TMP_STATUS
-      IN_TMP_WORD IN_TMP_STATUS
-      R1_TMP_WORD R1_TMP_STATUS
-      TANK_TMP_WORD TANK_TMP_STATUS
-      OUT_RAW OUT_STATUS OUT_DISP
+    Value line format (typical):
+      R_MODE MODE  (temp_word temp_status)*N   OUT_raw OUT_status OUT_disp
 
-    Total tokens: 2 + (5*2) + 3 = 15
+    Where N is usually 5, but sometimes 4 depending on configuration.
+    OUT_disp is the integer rounded outdoor °C when OUT_status == FF (observed on your system).
+
+    Returns dict with keys:
+      r_mode, mode,
+      water_word, water_status,
+      water2_word, water2_status,
+      in_word, in_status,
+      r1_word, r1_status,
+      tank_word, tank_status,
+      out_raw, out_status, out_disp
+
+    Missing sensors are returned as empty strings.
     """
     lines = [ln.strip() for ln in clean_screen_text.split("\n") if ln.strip()]
     for idx, ln in enumerate(lines):
         if ln.startswith("R_MODE") and "OUT_TEMP" in ln:
             if idx + 1 >= len(lines):
                 return None
+
             vals = lines[idx + 1].split()
-            if len(vals) < 15:
+            if len(vals) < 2 + 3:
                 return None
 
             r_mode = vals[0]
             mode = vals[1]
-            t = vals[2:]
+            tail = vals[2:]
 
-            water_word, water_status = t[0], t[1]
-            water2_word, water2_status = t[2], t[3]
-            in_word, in_status = t[4], t[5]
-            r1_word, r1_status = t[6], t[7]
-            tank_word, tank_status = t[8], t[9]
+            # OUT triplet is last 3 tokens
+            if len(tail) < 3:
+                return None
+            out_raw, out_status, out_disp = tail[-3], tail[-2], tail[-1]
+            temp_tokens = tail[:-3]
 
-            out_raw, out_status, out_disp = t[10], t[11], t[12]
+            # temp_tokens are pairs (word,status)
+            if len(temp_tokens) < 2 or (len(temp_tokens) % 2) != 0:
+                # not enough / malformed
+                return None
 
-            return {
+            pairs: List[Tuple[str, str]] = []
+            for i in range(0, len(temp_tokens), 2):
+                pairs.append((temp_tokens[i], temp_tokens[i + 1]))
+
+            # Default empty mapping
+            res = {
                 "r_mode": r_mode,
                 "mode": mode,
-                "water_word": water_word,
-                "water_status": water_status,
-                "water2_word": water2_word,
-                "water2_status": water2_status,
-                "in_word": in_word,
-                "in_status": in_status,
-                "r1_word": r1_word,
-                "r1_status": r1_status,
-                "tank_word": tank_word,
-                "tank_status": tank_status,
-                "out_raw": out_raw,
-                "out_status": out_status,
-                "out_disp": out_disp,
+                "water_word": "", "water_status": "",
+                "water2_word": "", "water2_status": "",
+                "in_word": "", "in_status": "",
+                "r1_word": "", "r1_status": "",
+                "tank_word": "", "tank_status": "",
+                "out_raw": out_raw, "out_status": out_status, "out_disp": out_disp,
             }
+
+            # Map common cases
+            if len(pairs) >= 1:
+                res["water_word"], res["water_status"] = pairs[0]
+            if len(pairs) >= 2:
+                res["water2_word"], res["water2_status"] = pairs[1]
+            if len(pairs) >= 3:
+                res["in_word"], res["in_status"] = pairs[2]
+
+            if len(pairs) == 5:
+                # WATER, WATER2, IN, R1, TANK
+                res["r1_word"], res["r1_status"] = pairs[3]
+                res["tank_word"], res["tank_status"] = pairs[4]
+            elif len(pairs) == 4:
+                # Heuristic:
+                # Many systems without an R1 sensor display IN twice (IN and R1 identical),
+                # leaving the 4th pair as TANK.
+                # Example you posted:
+                #   ... IN_TMP 1D97 72  R1_TMP 1D97 72  TANK 145A 8D ...
+                #
+                # We detect "IN duplicated" by comparing pair2 and pair3.
+                in_pair = pairs[2]
+                p3 = pairs[3]
+
+                # If pair3 equals pair2 (word+status), treat as R1 mirror and TANK missing (rare),
+                # but more often the duplication is already present in the stream and the 4th is TANK.
+                # Your observed 4-pair case was:
+                #   pairs[2]=IN, pairs[3]=TANK, while IN==R1 was shown via duplicated tokens earlier.
+                #
+                # So we do:
+                #   - set R1 = IN (mirror)
+                #   - set TANK = pairs[3]
+                res["r1_word"], res["r1_status"] = in_pair
+                res["tank_word"], res["tank_status"] = p3
+            else:
+                # Fallback: fill sequentially as far as we can
+                if len(pairs) >= 4:
+                    res["r1_word"], res["r1_status"] = pairs[3]
+                if len(pairs) >= 5:
+                    res["tank_word"], res["tank_status"] = pairs[4]
+
+            return res
+
     return None
 
 
 def extract_er_code_pair(clean_screen_text: str) -> Optional[Tuple[str, str]]:
-    """
-    ER_CODE appears as two tokens on the ER_CODE row.
-    Returns (major, minor) as hex strings.
-    """
     lines = [ln.strip() for ln in clean_screen_text.split("\n") if ln.strip()]
     for idx, ln in enumerate(lines):
         if ln.startswith("ER_CODE") and "TPOWER" in ln:
@@ -194,12 +241,13 @@ def print_human_table(clean_screen_text: str) -> None:
         rows.append((name, val, unit))
 
     def add_temp(label: str, word_hex: str, status_hex: str):
-        t = q88_temp_c(word_hex)
-        if t is not None:
-            add_row(label, f"{t:.2f}", "°C")
-        add_row(label + " status", f"0x{status_hex.upper()}", "")
+        if word_hex and status_hex:
+            t = q88_temp_c(word_hex)
+            if t is not None:
+                add_row(label, f"{t:.2f}", "°C")
+            add_row(label + " status", f"0x{status_hex.upper()}", "")
 
-    # ---- Temperatures: parse from first line with (word,status) pairs ----
+    # ---- Temps ----
     temp = extract_temp_line(clean_screen_text)
     if temp:
         add_temp("Flow temp (WATER_TMP)", temp["water_word"], temp["water_status"])
@@ -208,7 +256,7 @@ def print_human_table(clean_screen_text: str) -> None:
         add_temp("Zone/loop temp (R1_TMP)", temp["r1_word"], temp["r1_status"])
         add_temp("Tank temp (TANK_TMP)", temp["tank_word"], temp["tank_status"])
 
-        # Outdoor: use rounded display byte when raw is invalid (status FF)
+        # Outdoor
         add_row("Outdoor raw word", f"0x{temp['out_raw'].upper()}", "")
         add_row("Outdoor raw status", f"0x{temp['out_status'].upper()}", "")
 
@@ -361,7 +409,6 @@ def main():
                 stream_buf = parts[-1]
 
             else:
-                # No clear seen yet; prevent runaway
                 if len(stream_buf) > (max_chars // 2):
                     current_screen += stream_buf
                     stream_buf = ""
