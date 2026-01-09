@@ -109,9 +109,8 @@ def _looks_like_values(tokens: List[str]) -> bool:
 def parse_screen_rows(clean_screen_text: str) -> List[Tuple[List[str], List[str]]]:
     """
     Returns ordered list of (headers[], values[]) pairs for each table row found.
-    Applies ER_CODE 2-token alignment fix so the rest of the row maps correctly.
-
-    NOTE: The first temperature line is parsed separately (extract_temp_line()).
+    - Skips "headers" that are actually pure-hex value lines (e.g. '23 04 80 ...' or 'D0D0 D68E ...')
+    - Fixes ER_CODE being two tokens in the values line
     """
     lines = [ln.strip() for ln in clean_screen_text.split("\n") if ln.strip()]
     rows: List[Tuple[List[str], List[str]]] = []
@@ -119,15 +118,21 @@ def parse_screen_rows(clean_screen_text: str) -> List[Tuple[List[str], List[str]
     i = 0
     while i < len(lines):
         hdr_line = lines[i]
+
+        # header must look like a header AND must NOT be "all hex tokens"
         if HEADER_LINE_RE.match(hdr_line) and "DASHBOARD" not in hdr_line:
             headers = hdr_line.split()
 
-            # Ensure header tokens are sane (all tokens match allowed set)
+            # reject accidental headers that are actually value lines
+            if all(HEX_TOKEN_RE.fullmatch(h) for h in headers):
+                i += 1
+                continue
+
+            # ensure tokens are sane
             if not all(HEADER_TOKEN_RE.fullmatch(h) for h in headers):
                 i += 1
                 continue
 
-            # next non-empty line is values
             j = i + 1
             while j < len(lines):
                 vals = lines[j].split()
@@ -135,7 +140,7 @@ def parse_screen_rows(clean_screen_text: str) -> List[Tuple[List[str], List[str]
                     j += 1
                     continue
 
-                # sanity check so we don't pair wrong lines
+                # values line must look hex-ish
                 if not _looks_like_values(vals):
                     j += 1
                     continue
@@ -157,6 +162,7 @@ def parse_screen_rows(clean_screen_text: str) -> List[Tuple[List[str], List[str]
         i += 1
 
     return rows
+
 
 
 def extract_temp_line(clean_screen_text: str) -> Optional[dict]:
