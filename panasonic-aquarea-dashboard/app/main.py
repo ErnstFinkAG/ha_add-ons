@@ -274,6 +274,45 @@ def print_human_table(clean_screen_text: str) -> None:
     if w_pump is not None:
         add_row("Water pump (W_PUMP)", "ON" if w_pump != 0 else "OFF")
 
+    # ---- Operating / compressor diagnostics ----
+    o_status = _hex_to_int(kv.get("O_STATUS", ""))
+    if o_status is not None:
+        add_row("Operating status (O_STATUS)", f"0x{o_status:02X}")
+
+    o_pipe = _hex_to_int(kv.get("O_PIPE", ""))
+    if o_pipe is not None:
+        add_row("Pipe state (O_PIPE)", f"0x{o_pipe:02X}")
+
+    o_cur = _hex_to_int(kv.get("O_CUR", ""))
+    if o_cur is not None:
+        add_row("Compressor current (O_CUR)", str(o_cur), "raw")
+
+    o_disc = _hex_to_int(kv.get("O_DISC", ""))
+    if o_disc is not None:
+        add_row("Discharge temp/state (O_DISC)", str(o_disc), "raw")
+
+    o_val = _hex_to_int(kv.get("O_VAL", ""))
+    if o_val is not None:
+        add_row("Expansion valve (O_VAL)", str(o_val), "steps")
+
+    comphz = _hex_to_int(kv.get("COMPHZ", ""))
+    if comphz is not None:
+        add_row("Compressor frequency (COMPHZ)", str(comphz), "Hz")
+
+    hpower = _hex_to_int(kv.get("HPOWER", ""))
+    if hpower is not None:
+        add_row("Electrical power (HPOWER)", str(hpower), "W")
+        add_row("Electrical power (kW)", f"{hpower/1000.0:.3f}", "kW")
+
+    cpower = _hex_to_int(kv.get("CPOWER", ""))
+    if cpower is not None:
+        add_row("Cooling power (CPOWER)", str(cpower), "W")
+
+    tpower = _hex_to_int(kv.get("TPOWER", ""))
+    if tpower is not None:
+        add_row("Total power (TPOWER)", str(tpower), "W")
+
+
     # Frequency & power (now correct thanks to ER_CODE realignment)
     comphz = _hex_to_int(kv.get("COMPHZ", ""))
     if comphz is not None:
