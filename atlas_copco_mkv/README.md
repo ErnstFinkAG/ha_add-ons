@@ -1,26 +1,27 @@
-# Panasonic F-Series Heatpump (Home Assistant Add-on)
+# Atlas Copco MKV (Home Assistant Add-on)
 
-This add-on connects to a Panasonic Aquarea F-series heatpump via a CH9121
-TCP-to-serial adapter and publishes decoded values to MQTT with Home Assistant
-discovery.
+Poll Atlas Copco MK5s Touch controllers and print a parsed table to the add-on logs.
+This package contains a minimal working setup; it reads the first entry of each CSV
+(`ip_list`, `name_list`, `type`, `timeout_list`) and runs a single poll.
 
-Based on your working Atlas Copco MKV add-on structure.
+> Tip: We can extend this to loop over all entries and publish via MQTT if desired.
 
-## Configuration
+## Options
+- `ip_list`: CSV of controller IPs
+- `name_list`: CSV of device names
+- `interval_list`: Poll intervals (future use)
+- `timeout_list`: Request timeouts (seconds)
+- `verbose_list`: Verbose logging (future use)
+- `type`: Controller types (GA15VP13, GA15VS23A)
+- `mqtt_*`: MQTT connection details (reserved for future use)
+- `discovery_prefix`: MQTT discovery prefix (reserved)
 
-All fields are editable in the add-on UI:
+## Install
+1. Copy the `atlas_copco_mkv` folder into your Home Assistant `/addons` directory.
+2. In HA UI, go to **Settings → Add-ons → Add-on Store → ⋮ → Repositories →** add local folder.
+3. Find **Atlas Copco MKV** under *Local add-ons*, install, configure, and start.
 
-- `hp_ip` : IP of the CH9121 (e.g. `10.80.255.221`)
-- `hp_port` : TCP port (e.g. `2000`)
-- `device_name` : Friendly name used for MQTT topics
-- `poll_interval` : Seconds between polls
-- `connect_timeout` : Socket timeout in seconds
-- `mqtt_host` : MQTT broker host (e.g. `localhost`)
-- `mqtt_port` : MQTT broker port (default 1883)
-- `mqtt_username` / `mqtt_password` : optional credentials
-- `discovery_prefix` : Home Assistant MQTT discovery prefix (default `homeassistant`)
-- `state_base_topic` : Base topic for state messages (default `panasonic_f`)
-
-The add-on runs in `host_network: true`, so `localhost` will point at the
-Home Assistant host and can be used for the MQTT broker just like in your
-other add-ons.
+## Roadmap
+- Iterate over all CSV entries
+- Publish to MQTT discovery and state topics
+- Health metrics and retries

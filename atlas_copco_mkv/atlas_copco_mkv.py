@@ -8,32 +8,6 @@ import sys
 import textwrap
 from typing import Dict, List, Tuple, Any, Optional, Iterable, Set
 
-# --- Add-on options loader (use config.yaml -> /data/options.json) -----------
-def load_addon_options() -> Dict[str, Any]:
-    candidates = ["/data/options.json", "/config/addons_config/atlas_copco_mkv/options.json"]
-    for p in candidates:
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            continue
-    return {}
-
-def get_opt(options: Dict[str, Any], *keys, default=None):
-    for k in keys:
-        if k in options and options[k] not in (None, ""):
-            return options[k]
-    return default
-
-import json
-import socket
-from dataclasses import dataclass
-
-try:
-    import paho.mqtt.client as mqtt
-except Exception:
-    mqtt = None
-
 # --- HTTP helper -------------------------------------------------------------
 
 try:
@@ -310,87 +284,6 @@ def interactive_select() -> str:
     return ["GA15VS23A", "GA15VP13", "Custom"][int(sel)]
 
 
-def slugify(s: str) -> str:
-    return re.sub(r"[^a-z0-9_]+", "_", s.strip().lower().replace(" ", "_"))
-
-def guess_device_class(name: str, unit: str) -> Optional[str]:
-    unit = (unit or "").strip()
-    n = (name or "").lower()
-    if unit == "°C":
-        return "temperature"
-    if unit in ("bar","Pa","kPa","hPa","psi","mmHg","inHg"):
-        return "pressure"
-    if unit == "A":
-        return "current"
-    if unit == "%":
-        if "humidity" in n:
-            return "humidity"
-        return None
-    if unit == "rpm":
-        return None
-    if unit == "h":
-        return None
-    if unit == "m3":
-        return None
-    return None
-
-def guess_state_class(name: str, unit: str) -> Optional[str]:
-    if unit in ("°C","bar","A","%","rpm"):
-        return "measurement"
-    if unit in ("h","m3","count"):
-        return "total_increasing"
-    return None
-
-@dataclass
-class MqttCfg:
-    host: str
-    port: int
-    username: Optional[str]
-    password: Optional[str]
-    discovery_prefix: str
-    state_base: str
-
-def mqtt_connect(cfg: MqttCfg) -> Optional['mqtt.Client']:
-    if mqtt is None or not cfg or not cfg.host:
-        return None
-    client = mqtt.Client()
-    if cfg.username or cfg.password:
-        client.username_pw_set(cfg.username or "", cfg.password or "")
-    try:
-        client.connect(cfg.host, cfg.port, keepalive=30)
-        client.loop_start()
-        return client
-    except Exception:
-        return None
-
-def mqtt_publish(client: Optional['mqtt.Client'], topic: str, payload: str, retain: bool=False):
-    if client is None:
-        return
-    try:
-        client.publish(topic, payload, qos=0, retain=retain)
-    except Exception:
-        pass
-
-
-def mqtt_connect_with_fallback(cfg: MqttCfg):
-    # Try host as-given, then common fallbacks for HA add-on host_network
-    candidates = []
-    if cfg.host:
-        candidates.append(cfg.host)
-    candidates += ["127.0.0.1", "localhost", "core-mosquitto"]
-    tried = []
-    for h in candidates:
-        if h in tried:
-            continue
-        tried.append(h)
-        c = MqttCfg(h, cfg.port, cfg.username, cfg.password, cfg.discovery_prefix, cfg.state_base)
-        client = mqtt_connect(c)
-        if client:
-            print(f"[DIAG ] MQTT connected to {h}:{cfg.port}")
-            return client, h
-        else:
-            print(f"[DIAG ] MQTT connect failed to {h}:{cfg.port}")
-    return None, None
 # --- Main --------------------------------------------------------------------
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -410,26 +303,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--custom-question-hex", default="")
     parser.add_argument("--controller-host", default=None)
     parser.add_argument("--device-name", default=None)
-    parser.add_argument("--mqtt-host", default=None)
-    parser.add_argument("--mqtt-port", type=int, default=1883)
-    parser.add_argument("--mqtt-username", default=None)
-    parser.add_argument("--mqtt-password", default=None)
-    parser.add_argument("--discovery-prefix", default="homeassistant")
-    parser.add_argument("--state-base-topic", default="atlas_copco")
-    opts = load_addon_options()
-    # Prefer CLI > env > options.json > defaults
-    # Fill parser defaults from options
-    if opts:
-        parser.set_defaults(
-            controller_host=get_opt(opts, 'controller_host', default=None),
-            device_name=get_opt(opts, 'device_name', default=None),
-            mqtt_host=get_opt(opts, 'mqtt_host', default=None),
-            mqtt_port=int(get_opt(opts, 'mqtt_port', default=1883)),
-            mqtt_username=get_opt(opts, 'mqtt_username', 'mqtt_user', default=None),
-            mqtt_password=get_opt(opts, 'mqtt_password', default=None),
-            discovery_prefix=get_opt(opts, 'discovery_prefix', default='homeassistant'),
-            state_base_topic=get_opt(opts, 'state_base_topic', default='atlas_copco'),
-        )
     args = parser.parse_args(argv)
 
     qset = args.question_set or interactive_select()
@@ -540,71 +413,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 }
             )
 
-    
     rows_to_print = [r for r in rows if r.get("Name") and r.get("Name") != "?"]
-
-    # --- MQTT discovery + state ---
-    if getattr(args, "mqtt_host", None):
-        host_only = re.sub(r"^mqtts?://", "", args.mqtt_host or "", flags=re.I)
-        mqtt_cfg = MqttCfg(
-            host=host_only or "127.0.0.1",
-            port=getattr(args, "mqtt_port", 1883),
-            username=getattr(args, "mqtt_username", None),
-            password=getattr(args, "mqtt_password", None),
-            discovery_prefix=(getattr(args, "discovery_prefix", "homeassistant") or "homeassistant").strip().strip("/"),
-            state_base=(getattr(args, "state_base_topic", "atlas_copco") or "atlas_copco").strip().strip("/"),
-        )
-        client, connected_host = mqtt_connect_with_fallback(mqtt_cfg) if mqtt_cfg else (None, None)
-
-        if client:
-            ha_device = {
-                "identifiers": [f"atlas_copco_{host}"],
-                "name": device_name,
-                "manufacturer": "Atlas Copco",
-                "model": device_type,
-                "sw_version": "MK5s Touch",
-            }
-            for r in rows_to_print:
-                metric_name = r.get("Name") or "Metric"
-                unit = r.get("Unit") or ""
-                value = r.get("Value")
-                key = r.get("Key") or "0000.00"
-
-                display_name = f"{device_name}_{device_type}_{metric_name}"
-                object_id = slugify(f"{device_name}_{metric_name}")  # include device for uniqueness
-                unique_id = slugify(f"{host}_{key}_{display_name}")
-
-                state_topic = f"{mqtt_cfg.state_base}/{slugify(device_name)}/{object_id}/state"
-                config_topic = f"{mqtt_cfg.discovery_prefix}/sensor/{object_id}/config"
-
-                device_class = guess_device_class(metric_name, unit)
-                state_class = guess_state_class(metric_name, unit)
-
-                cfg_payload = {
-                    "name": display_name,
-                    "unique_id": unique_id,
-                        "object_id": object_id,
-                    "state_topic": state_topic,
-                    "unit_of_measurement": unit or None,
-                    "device": ha_device,
-                }
-                if device_class:
-                    cfg_payload["device_class"] = device_class
-                if state_class:
-                    cfg_payload["state_class"] = state_class
-
-                print(f"[DIAG ] MQTT DISCOVERY -> {config_topic}")
-                mqtt_publish(client, config_topic, json.dumps({k: v for k, v in cfg_payload.items() if v is not None}), retain=True)
-                if value is not None:
-                    print(f"[DIAG ] MQTT STATE -> {state_topic} = {value}")
-                    mqtt_publish(client, state_topic, str(value), retain=True)
-
-            client.loop_stop()
-            try:
-                client.disconnect()
-            except Exception:
-                pass
-
     cols = [
         "Device",
         "Type",

@@ -1,7 +1,7 @@
-name: "Panasonic F-Series Heatpump"
-version: "2.1.0.3"
-slug: "panasonic_f_heatpump"
-description: "Decode Panasonic Aquarea F-series via CH9121 and publish MQTT sensors."
+name: "Atlas Copco MKV"
+version: "0.0.14"
+slug: "atlas_copco_mkv"
+description: "Poll Atlas Copco MK5s Touch controllers and publish MQTT sensors."
 arch:
   - amd64
   - aarch64
@@ -10,26 +10,26 @@ init: false
 host_network: true
 homeassistant_api: false
 options:
-  hp_ip: "10.80.255.221"
-  hp_port: 2000
-  device_name: "panasonic_f"
-  poll_interval: 5
-  connect_timeout: 5
+  ip_list: "10.60.23.11,10.60.23.12"
+  name_list: "eftool-bw-b2-f3-air11,eftool-bw-b2-f3-air12"
+  interval_list: "10,10"
+  timeout_list: "5,5"
+  verbose_list: "true,true"
+  type: "GA15VP13,GA15VS23A"
   mqtt_host: "localhost"
   mqtt_port: 1883
-  mqtt_username: ""
-  mqtt_password: ""
+  mqtt_user: "mqtt_user"
+  mqtt_password: "mqtt_password"
   discovery_prefix: "homeassistant"
-  state_base_topic: "panasonic_f"
 schema:
-  hp_ip: str
-  hp_port: int
-  device_name: str
-  poll_interval: int
-  connect_timeout: int
+  ip_list: str
+  name_list: str
+  interval_list: str
+  timeout_list: str
+  verbose_list: str
+  type: str
   mqtt_host: str
   mqtt_port: int
-  mqtt_username: str
+  mqtt_user: str
   mqtt_password: str
   discovery_prefix: str
-  state_base_topic: str
