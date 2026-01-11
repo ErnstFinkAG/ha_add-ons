@@ -11,5 +11,5 @@ This package contains a minimal working setup; it reads the first entry of each 
 - `timeout_list`: Request timeouts (seconds)
 - `verbose_list`: Verbose logging (future use)
 - `type`: Controller types (GA15VP13, GA15VS23A)
-- `mqtt_*`: MQTT connection details (reserved for future use)
-- `discovery_prefix`: MQTT discovery prefix (reserved)
+- `mqtt_*`: MQTT connection details
+- `discovery_prefix`: MQTT discovery prefix
