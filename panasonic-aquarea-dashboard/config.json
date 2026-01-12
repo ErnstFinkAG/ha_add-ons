@@ -1,6 +1,6 @@
 {
   "name": "Panasonic Aquarea Dashboard (TCP)",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "slug": "panasonic_aquarea_dashboard_tcp",
   "description": "Connects to a TCP stream (e.g. RS485 bridge / Telnet) and prints the Panasonic Aquarea dashboard into the add-on log.",
   "arch": ["aarch64", "amd64", "armv7", "armhf", "i386"],
@@ -9,21 +9,35 @@
   "init": false,
   "options": {
     "host": "10.80.30.70",
+    "hostname": "efimmo-bw-b3-f0-r7-hp1",
     "port": 23,
     "print_interval_sec": 5,
     "strip_ansi": true,
     "max_buffer_kb": 256,
     "socket_timeout_sec": 1,
-    "timestamp_format": "%Y-%m-%d %H:%M:%S"
+    "timestamp_format": "%Y-%m-%d %H:%M:%S",
+    "mqtt_host": "localhost",
+    "mqtt_port": "1883",
+    "mqtt_username": "mqtt_user",
+    "mqtt_password": "mqtt_password",
+    "discovery_prefix": "homeassistant",
+    "state_base_topic": "panasonic"
   },
   "schema": {
     "host": "str",
+    "hostname": "str",
     "port": "int",
     "print_interval_sec": "int",
     "strip_ansi": "bool",
     "max_buffer_kb": "int",
     "socket_timeout_sec": "int",
-    "timestamp_format": "str"
+    "timestamp_format": "str",
+    "mqtt_host": "str",
+    "mqtt_port": "int",
+    "mqtt_username": "str",
+    "mqtt_password": "str",
+    "discovery_prefix": "str",
+    "state_base_topic": "str"
   },
   "host_network": false
 }
