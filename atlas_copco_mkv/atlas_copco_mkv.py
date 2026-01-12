@@ -394,8 +394,19 @@ def mqtt_connect_with_fallback(cfg: MqttCfg):
 # --- Main --------------------------------------------------------------------
 
 def main(argv: Optional[List[str]] = None) -> int:
-
-@@ -410,26 +303,6 @@ def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Atlas Copco MK5s Touch poller (Python port).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent(
+            """\
+            Host auto-selection (unless overridden with --controller-host):
+              - GA15VP13  -> 10.60.23.11
+              - GA15VS23A -> 10.60.23.12
+            """
+        ),
+    )
+    parser.add_argument("--timeout", type=int, default=5)
+    parser.add_argument("--question-set", choices=["GA15VS23A", "GA15VP13", "Custom"])
     parser.add_argument("--custom-question-hex", default="")
     parser.add_argument("--controller-host", default=None)
     parser.add_argument("--device-name", default=None)
@@ -422,9 +433,110 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     qset = args.question_set or interactive_select()
+    if qset in ("GA15VS23A", "GA15VP13"):
+        question_hex = QUESTIONS[qset]
+    elif qset == "Custom":
+        qh = args.custom_question_hex.strip() or input("QuestionHex: ").strip()
+        if not qh:
+            print("No custom question hex provided.", file=sys.stderr)
+            return 2
+        question_hex = qh
+    else:
+        print(f"Unknown QuestionSet: {qset}", file=sys.stderr)
+        return 2
 
+    host = args.controller_host
+    if host is None:
+        host = (
+            "10.60.23.11"
+            if qset == "GA15VP13"
+            else ("10.60.23.12" if qset == "GA15VS23A" else None)
+        )
+    if host is None:
+        print("Error: --controller-host is required for Custom question set.", file=sys.stderr)
+        return 2
 
-@@ -540,91 +413,27 @@
+    device_name = args.device_name or host
+    device_type = qset
+
+    question_hex = re.sub(r"\s+", "", question_hex)
+    keys = expand_keys_from_question(question_hex)
+
+    try:
+        answer_raw = post_question(host, question_hex, args.timeout)
+    except Exception as e:
+        print(f"Error contacting controller at {host}: {e}", file=sys.stderr)
+        return 3
+
+    ans_hex = hex_sanitize(answer_raw)
+
+    # Validate length vs expected (4 bytes per key => 8 hex chars per key)
+    expected_hex_len = len(keys) * 8
+    if len(ans_hex) < expected_hex_len:
+        print(
+            f"Warning: response shorter than expected. Got {len(ans_hex)} hex chars, expected {expected_hex_len}.",
+            file=sys.stderr,
+        )
+    elif len(ans_hex) > expected_hex_len and len(ans_hex) % 8 == 0:
+        print(
+            f"Info: response contains extra data ({len(ans_hex) - expected_hex_len} hex chars). Truncating to expected length.",
+            file=sys.stderr,
+        )
+    ans_hex = ans_hex[:expected_hex_len]
+
+    meta = META_VP13 if qset == "GA15VP13" else META_VS23A
+    meta_lookup = build_meta_lookup(meta)
+
+    key_to_u32: Dict[str, Optional[int]] = {}
+    key_to_lo: Dict[str, Optional[int]] = {}
+    key_to_hi: Dict[str, Optional[int]] = {}
+
+    for i, k in enumerate(keys):
+        nk = normalize_key(k)
+        raw = hex_slice(ans_hex, i * 8, 8)
+        u32 = hex_to_uint32_be(raw)
+        key_to_u32[nk] = u32
+        key_to_lo[nk] = lo_u16(u32)
+        key_to_hi[nk] = hi_u16(u32)
+
+    rows: List[dict] = []
+    unknown_keys: Set[str] = set()
+
+    for idx, k in enumerate(keys):
+        key = normalize_key(k)
+        raw = hex_slice(ans_hex, idx * 8, 8)
+        u32, lo, hi = key_to_u32.get(key), key_to_lo.get(key), key_to_hi.get(key)
+        metas = get_meta_for_key(meta_lookup, key)
+
+        for meta_entry in metas:
+            if (
+                meta_entry.get("Name") == "?"
+                and meta_entry.get("Encoding") == "?"
+                and meta_entry.get("Calc") == "?"
+            ):
+                unknown_keys.add(key)
+
+            calc = meta_entry.get("Calc", "?")
+            val = eval_calc(calc, u32, lo, hi, key_to_u32, key_to_lo, key_to_hi)
+            if val is not None:
+                val_out = int(val) if float(val).is_integer() else round(val, 6)
+            else:
+                val_out = None
+
+            rows.append(
+                {
+                    "Device": device_name,
+                    "Type": device_type,
+                    "Key": key,
+                    "Name": meta_entry.get("Name"),
+                    "Raw": raw,
+                    "UInt32": u32,
+                    "LoU16": lo,
+                    "HiU16": hi,
+                    "Encoding": meta_entry.get("Encoding"),
+                    "Calc": calc,
+                    "Value": val_out,
+                    "Unit": meta_entry.get("Unit"),
                 }
             )
 
