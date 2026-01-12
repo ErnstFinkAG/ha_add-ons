@@ -1,5 +1,5 @@
 name: "Atlas Copco MKV"
-version: "0.0.15"
+version: "0.0.27"
 slug: "atlas_copco_mkv"
 description: "Poll Atlas Copco MK5s Touch controllers and publish MQTT sensors."
 arch:
@@ -18,9 +18,10 @@ options:
   type: "GA15VP13,GA15VS23A"
   mqtt_host: "localhost"
   mqtt_port: 1883
-  mqtt_user: "mqtt_user"
+  mqtt_username: "mqtt_user"
   mqtt_password: "mqtt_password"
   discovery_prefix: "homeassistant"
+  state_base_topic: "atlas_copco"
 schema:
   ip_list: str
   name_list: str
@@ -30,6 +31,7 @@ schema:
   type: str
   mqtt_host: str
   mqtt_port: int
-  mqtt_user: str
+  mqtt_username: str
   mqtt_password: str
   discovery_prefix: str
+  state_base_topic: str
