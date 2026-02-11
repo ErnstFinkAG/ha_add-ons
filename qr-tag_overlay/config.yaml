@@ -1,7 +1,7 @@
 name: "QR Tag Overlay"
 slug: qr-tag_overlay
 description: "Reads QR codes via ZBar from a Home Assistant camera entity and serves an annotated snapshot + MJPEG stream."
-version: "0.1.0"
+version: "0.1.1"
 url: "https://github.com/ErnstFinkAG/ha_add-ons"
 
 arch:

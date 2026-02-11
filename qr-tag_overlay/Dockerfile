@@ -1,15 +1,25 @@
-ARG BUILD_FROM
+# Default is only for linting; Supervisor will override BUILD_FROM
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM $BUILD_FROM
 
+# ZBar + font + build deps for Pillow wheels when needed
 RUN apk add --no-cache \
-    python3 py3-pip \
+    python3 \
     zbar \
     ttf-dejavu \
-    jpeg-dev zlib-dev
+    jpeg-dev \
+    zlib-dev \
+    build-base \
+    libffi-dev \
+    openssl-dev
+
+# Create venv to avoid PEP 668 "externally-managed-environment"
+RUN python3 -m venv /venv && \
+    /venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel
 
 WORKDIR /app
 COPY app/requirements.txt /app/requirements.txt
-RUN pip3 install --no-cache-dir -r /app/requirements.txt
+RUN /venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app/server.py /app/server.py
 COPY run.sh /run.sh

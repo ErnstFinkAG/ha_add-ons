@@ -1,3 +1,3 @@
 #!/usr/bin/with-contenv sh
 set -eu
-python3 /app/server.py
+exec /venv/bin/python /app/server.py
