@@ -2,9 +2,9 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM $BUILD_FROM
 
-# ZBar + font + build deps for Pillow wheels when needed
 RUN apk add --no-cache \
     python3 \
+    ffmpeg \
     zbar \
     ttf-dejavu \
     jpeg-dev \
@@ -13,7 +13,6 @@ RUN apk add --no-cache \
     libffi-dev \
     openssl-dev
 
-# Create venv to avoid PEP 668 "externally-managed-environment"
 RUN python3 -m venv /venv && \
     /venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel
 

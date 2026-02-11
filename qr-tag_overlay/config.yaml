@@ -1,7 +1,7 @@
 name: "QR Tag Overlay"
 slug: qr-tag_overlay
-description: "Reads QR codes via ZBar from a Home Assistant camera entity and serves an annotated snapshot + MJPEG stream."
-version: "0.1.1"
+description: "Reads QR codes via ZBar from RTSP (or a Home Assistant camera entity) and serves an annotated snapshot + MJPEG stream."
+version: "0.2.1"
 url: "https://github.com/ErnstFinkAG/ha_add-ons"
 
 arch:
@@ -21,6 +21,8 @@ ports_description:
   8080/tcp: "HTTP (snapshot + mjpeg)"
 
 options:
+  rtsp_url: ""
+  rtsp_transport: "tcp"
   camera_entity: "camera.front_door"
   poll_interval_ms: 750
   overlay:
@@ -29,6 +31,8 @@ options:
     padding: 10
 
 schema:
+  rtsp_url: str?
+  rtsp_transport: list(tcp|udp)
   camera_entity: str
   poll_interval_ms: int(100,)
   overlay:
