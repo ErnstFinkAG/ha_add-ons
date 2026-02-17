@@ -1,8 +1,10 @@
-FROM python:3.12-alpine
+FROM python:3.11-alpine
 
-COPY run.py /run.py
-COPY requirements.txt /requirements.txt
+WORKDIR /app
 
-RUN pip install --no-cache-dir -r /requirements.txt
+COPY requirements.txt /app/
+RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python3", "/run.py"]
+COPY run.py /app/
+
+CMD ["python", "/app/run.py"]
