@@ -1,5 +1,5 @@
 {
-  "name": "WH65LP MQTT Bridge (Detailed Logging)",
+  "name": "WH65LP MQTT Bridge",
   "version": "2.0.2",
   "slug": "wh65lp_mqtt_detailed",
   "description": "Bridge WH65LP weather station to MQTT with detailed logging",
