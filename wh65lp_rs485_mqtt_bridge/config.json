@@ -1,6 +1,6 @@
 {
   "name": "WH65LP RS485 to MQTT",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "slug": "wh65lp_rs485_mqtt_bridge",
   "description": "Publishes WH65LP weather station data from RS485/TCP to MQTT with Home Assistant discovery.",
   "arch": ["amd64", "aarch64", "armv7"],
