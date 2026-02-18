@@ -238,10 +238,18 @@ def main():
                         mqtt_publish("low_battery", debug.get("low_battery"))
 
                         logging.info(
-                            f"T={temp.get('temperature_C')}°C "
-                            f"H={temp.get('humidity_percent')}% "
-                            f"WS={wind.get('windspeed_mps')}m/s "
-                            f"P={sun.get('pressure_hpa')}hPa"
+                            "T=%s°C H=%s%% WD=%s° WS=%sm/s G=%sm/s UV=%s uW/cm² L=%s lx "
+                            "P=%s hPa R=%s mm BatLow=%s",
+                            temp.get("temperature_C"),
+                            temp.get("humidity_percent"),
+                            wind.get("wind_direction_deg"),
+                            wind.get("windspeed_mps"),
+                            wind.get("gust_speed_mps"),
+                            sun.get("uv_uW_cm2"),
+                            sun.get("light_lux"),
+                            sun.get("pressure_hpa"),
+                            rain.get("rainfall_mm"),
+                            debug.get("low_battery"),
                         )
 
         except KeyboardInterrupt:
