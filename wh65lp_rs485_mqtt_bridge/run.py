@@ -211,7 +211,7 @@ def main():
     while True:
         try:
             with socket.create_connection((WS_HOST, WS_PORT), timeout=15) as s:
-                s.settimeout(15)
+                s.settimeout(30)
                 logging.info("Connected. Listening for WH65LP payloads.")
                 backoff = 1.0
                 buffer.clear()
