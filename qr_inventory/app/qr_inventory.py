@@ -8,11 +8,9 @@ from collections import deque, defaultdict
 import cv2
 import numpy as np
 
-# Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
 
-# Load options from /data/options.json
 opts_path = '/data/options.json'
 if os.path.exists(opts_path):
     with open(opts_path, 'r') as f:
@@ -24,10 +22,9 @@ else:
 interval = int(opts.get('interval_seconds', 60))
 required = int(opts.get('required_consistency', 3))
 camera_mode = opts.get('camera_mode', 'rtsps')
-stream_url = opts.get('rtsp_url')  # can be rtsp:// or rtsps://
+stream_url = opts.get('rtsp_url')
 tls_verify = bool(opts.get('tls_verify', False))
 
-# zones from config.yaml come as JSON string ("{}") or dict
 zones_raw = opts.get('zones', {})
 if isinstance(zones_raw, str):
     try:
@@ -58,15 +55,24 @@ qcd = cv2.QRCodeDetector()
 
 def get_frame_ffmpeg(url: str):
     """
-    Grab a single frame from RTSP/RTSPS using ffmpeg and decode via OpenCV.
-    This is much more reliable for rtsps:// than cv2.VideoCapture on Alpine.
+    Grab one frame via ffmpeg (works better with rtsps:// than cv2.VideoCapture).
+    Avoids -stimeout because some HA ffmpeg builds don't support it.
+    Uses subprocess timeout as the hard stop.
     """
     cmd = [
         "ffmpeg",
         "-hide_banner",
         "-loglevel", "error",
         "-rtsp_transport", "tcp",
-        "-stimeout", "5000000",  # microseconds (5s)
+        # rw_timeout is widely supported; if not, ffmpeg will error and we log it
+        "-rw_timeout", "5000000",  # microseconds (5s)
+    ]
+
+    # If RTSPS + self-signed TLS, disable verify (if supported by ffmpeg build)
+    if url.lower().startswith("rtsps://") and not tls_verify:
+        cmd += ["-tls_verify", "0"]
+
+    cmd += [
         "-i", url,
         "-an",
         "-frames:v", "1",
@@ -75,14 +81,13 @@ def get_frame_ffmpeg(url: str):
         "pipe:1",
     ]
 
-    # If ENVR uses self-signed TLS certs, disable verify unless tls_verify is true
-    if url.lower().startswith("rtsps://") and not tls_verify:
-        # ffmpeg supports these on builds with TLS; if unsupported, it will just ignore/fail with a clear error
-        cmd.insert(cmd.index("-i"), "-tls_verify")
-        cmd.insert(cmd.index("-i"), "0")
-
     try:
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=12,  # hard timeout regardless of ffmpeg flags
+        )
     except subprocess.TimeoutExpired:
         logger.error("ffmpeg timeout while reading stream")
         return None
@@ -98,7 +103,6 @@ def get_frame_ffmpeg(url: str):
         logger.error("Could not decode frame from ffmpeg output")
     return frame
 
-# Persist mapping to /data/inventory.json
 inv_path = '/data/inventory.json'
 if os.path.exists(inv_path):
     try:
@@ -147,7 +151,6 @@ while True:
             for info, pts in zip(decoded_info, points):
                 if not info or pts is None:
                     continue
-
                 pts = pts.reshape(-1, 2)
                 cx = int(pts[:, 0].mean())
                 cy = int(pts[:, 1].mean())
@@ -160,7 +163,6 @@ while True:
                     info, cx, cy, zone, list(history[info])
                 )
 
-                # Consistency check
                 if len(history[info]) >= history_maxlen and len(set(history[info])) == 1:
                     confirmed_zone = history[info][-1]
                     if confirmed_zone is not None:
