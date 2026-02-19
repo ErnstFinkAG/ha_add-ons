@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.1.5"
+version: "0.1.7"
 slug: qr_inventory
 description: "Scan multiple QR codes from an RTSP camera and map them to storage zones."
 arch:
@@ -15,12 +15,14 @@ build_from:
   aarch64: ghcr.io/home-assistant/aarch64-addon-base-python:3.11
 
 options:
+  camera_mode: rtsp
   rtsp_url: ""
   interval_seconds: 60
   required_consistency: 3
   zones: "{}"
 
 schema:
+  camera_mode: list(rtsp)
   rtsp_url: str
   interval_seconds: int
   required_consistency: int

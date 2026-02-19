@@ -12,6 +12,7 @@ WORKDIR /app
 # --- SYSTEM DEPENDENCIES FOR OPENCV ---
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        python3-venv \
         ffmpeg \
         libgl1 \
         libglib2.0-0 \
@@ -23,12 +24,12 @@ RUN apt-get update && \
 # --- PYTHON VENV ---
 RUN python3 -m venv /opt/venv
 
-# --- REQUIREMENTS ---
+# --- INSTALL REQUIREMENTS ---
 COPY requirements.txt /app/
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r /app/requirements.txt
+RUN /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
+    /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
-# --- APP FILES ---
+# --- COPY APP FILES ---
 COPY app /app
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
