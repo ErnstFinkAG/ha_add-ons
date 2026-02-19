@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/{arch}-base:latest
+ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
 ENV PYTHONUNBUFFERED=1 \
@@ -8,32 +8,32 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# --- SYSTEMPAKETE FÜR OPENCV (ALPINE) ---
-RUN apk add --no-cache \
+# --- SYSTEM PACKAGES FOR OPENCV + PYTHON ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    py3-pip \
-    build-base \
+    python3-pip \
+    python3-venv \
+    python3-dev \
+    build-essential \
     cmake \
-    linux-headers \
-    jpeg-dev \
-    zlib-dev \
+    ffmpeg \
+    libjpeg-dev \
+    zlib1g-dev \
     libpng-dev \
     libwebp-dev \
-    tiff-dev \
-    ffmpeg \
-    mesa-gl \
-    libstdc++ \
-    libgcc
+    libtiff-dev \
+    libgl1 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # --- PYTHON VENV ---
 RUN python3 -m venv /opt/venv
 
-# --- REQUIREMENTS INSTALLIEREN ---
+# --- REQUIREMENTS ---
 COPY requirements.txt /app/
-RUN /opt/venv/bin/pip install --upgrade pip setuptools wheel \
- && /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
+RUN /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
+    /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
-# --- APP KOPIEREN ---
+# --- APP FILES ---
 COPY app /app
 COPY run.sh /run.sh
 RUN chmod a+x /run.sh

@@ -4,8 +4,6 @@ slug: qr_inventory
 description: "Scan multiple QR codes from an RTSP camera and map them to storage zones."
 arch:
   - amd64
-  - armv7
-  - aarch64
 startup: services
 boot: auto
 init: false
