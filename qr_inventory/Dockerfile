@@ -10,7 +10,6 @@ ENV \
 
 WORKDIR /app
 
-# System deps + OpenCV/numpy via OS packages (no pip build on Alpine)
 RUN set -eux; \
   if command -v apk >/dev/null 2>&1; then \
     apk add --no-cache \
@@ -49,13 +48,11 @@ RUN set -eux; \
     exit 1; \
   fi
 
-# Create venv that can see system packages (cv2/numpy) + install pip deps safely (PEP668)
 COPY requirements.txt /app/requirements.txt
 RUN python3 -m venv /opt/venv --system-site-packages && \
     /opt/venv/bin/python -m pip install --upgrade pip setuptools wheel && \
     /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
-# App files
 COPY app /app
 COPY run.sh /run.sh
 RUN chmod +x /run.sh

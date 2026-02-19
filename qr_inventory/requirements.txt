@@ -1,2 +1,2 @@
-# OpenCV (cv2) + numpy come from OS packages (apk/apt) for Alpine compatibility.
+# OpenCV (cv2) + numpy are installed via OS packages (apk/apt) for Alpine compatibility.
 requests
