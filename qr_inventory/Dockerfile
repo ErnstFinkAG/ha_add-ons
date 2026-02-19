@@ -1,39 +1,34 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/{arch}-addon-base:14.1.1
+ARG BUILD_FROM=ghcr.io/home-assistant/{arch}-addon-base-python:3.11
 FROM ${BUILD_FROM}
 
-ENV PYTHONUNBUFFERED=1 \
+ENV \
+    PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PATH="/opt/venv/bin:$PATH"
+    PATH="/usr/local/bin:/opt/venv/bin:$PATH"
 
 WORKDIR /app
 
-# SYSTEM PACKAGES (ALPINE)
-RUN apk add --no-cache \
-    python3 \
-    py3-pip \
-    py3-virtualenv \
-    build-base \
-    linux-headers \
-    jpeg-dev \
-    zlib-dev \
-    libpng-dev \
-    libwebp-dev \
-    tiff-dev \
-    ffmpeg \
-    mesa-gl \
-    libstdc++ \
-    libgcc
+# --- SYSTEM DEPENDENCIES FOR OPENCV ---
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libgl1 \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender1 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# PYTHON VENV
+# --- PYTHON VENV ---
 RUN python3 -m venv /opt/venv
 
-# REQUIREMENTS
+# --- REQUIREMENTS ---
 COPY requirements.txt /app/
-RUN /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
-    /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r /app/requirements.txt
 
-# APP FILES
+# --- APP FILES ---
 COPY app /app
 COPY run.sh /run.sh
 RUN chmod +x /run.sh

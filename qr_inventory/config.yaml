@@ -1,12 +1,18 @@
 name: QR Inventory
-version: "0.1.2"
+version: "0.1.4"
 slug: qr_inventory
 description: "Scan multiple QR codes from an RTSP camera and map them to storage zones."
 arch:
   - amd64
+  - aarch64
 startup: services
 boot: auto
 init: false
+
+# Where HA gets the base Docker images for each architecture
+build_from:
+  amd64: ghcr.io/home-assistant/amd64-addon-base-python:3.11
+  aarch64: ghcr.io/home-assistant/aarch64-addon-base-python:3.11
 
 options:
   rtsp_url: ""
