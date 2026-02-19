@@ -4,16 +4,19 @@ FROM ${BUILD_FROM}
 ENV \
   PYTHONUNBUFFERED=1 \
   PIP_NO_CACHE_DIR=1 \
-  PYTHONDONTWRITEBYTECODE=1
+  PYTHONDONTWRITEBYTECODE=1 \
+  VIRTUAL_ENV=/opt/venv \
+  PATH="/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 WORKDIR /app
 
-# Install system deps (Alpine uses apk, Debian/Ubuntu uses apt-get)
+# System deps + python tooling (apk on Alpine, apt-get on Debian/Ubuntu)
 RUN set -eux; \
   if command -v apk >/dev/null 2>&1; then \
     apk add --no-cache \
       python3 \
       py3-pip \
+      py3-virtualenv \
       ffmpeg \
       mesa-gl \
       glib \
@@ -26,6 +29,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       python3 \
+      python3-venv \
       python3-pip \
       ffmpeg \
       libgl1 \
@@ -41,9 +45,11 @@ RUN set -eux; \
     exit 1; \
   fi
 
+# Create venv and install Python deps inside it (avoids PEP 668)
 COPY requirements.txt /app/requirements.txt
-RUN python3 -m pip install --upgrade pip setuptools wheel && \
-    python3 -m pip install --no-cache-dir -r /app/requirements.txt
+RUN python3 -m venv /opt/venv && \
+    /opt/venv/bin/python -m pip install --upgrade pip setuptools wheel && \
+    /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
 # App files
 COPY app /app
