@@ -1,24 +1,23 @@
 name: QR Inventory
-version: "0.1"
+version: "0.1.0"
 slug: qr_inventory
-description: "Scan multiple QR codes, map to storage slots, require 3 consistent reads."
+description: "Scan multiple QR codes from an RTSP camera and map them to storage zones."
 arch:
   - amd64
   - armv7
   - aarch64
 startup: services
 boot: auto
+init: false
+
 options:
-  camera_mode: "rtsp"
   rtsp_url: ""
-  camera_entity: ""
   interval_seconds: 60
   required_consistency: 3
   zones: {}
+
 schema:
-  camera_mode: str
   rtsp_url: str
-  camera_entity: str
   interval_seconds: int
   required_consistency: int
   zones: object
