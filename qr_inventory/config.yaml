@@ -14,10 +14,10 @@ options:
   rtsp_url: ""
   interval_seconds: 60
   required_consistency: 3
-  zones: {}
+  zones: "{}"
 
 schema:
   rtsp_url: str
   interval_seconds: int
   required_consistency: int
-  zones: object
+  zones: str
