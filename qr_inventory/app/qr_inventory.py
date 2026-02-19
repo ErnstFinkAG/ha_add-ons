@@ -1,42 +1,45 @@
-# QR Inventory Add-on Hauptskript (RTSP only)
-import time, json, os, logging
+import time
+import json
+import os
+import logging
+import subprocess
 from collections import deque, defaultdict
 
 import cv2
-import numpy as np  # noqa: F401
+import numpy as np
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
 
-# Lade Optionen aus /data/options.json
+# Load options from /data/options.json
 opts_path = '/data/options.json'
 if os.path.exists(opts_path):
     with open(opts_path, 'r') as f:
         opts = json.load(f)
 else:
-    logger.warning('options.json nicht gefunden, verwende Standardwerte')
+    logger.warning('options.json not found, using defaults')
     opts = {}
 
 interval = int(opts.get('interval_seconds', 60))
 required = int(opts.get('required_consistency', 3))
-camera_mode = opts.get('camera_mode', 'rtsp')
-rtsp_url = opts.get('rtsp_url')
+camera_mode = opts.get('camera_mode', 'rtsps')
+stream_url = opts.get('rtsp_url')  # can be rtsp:// or rtsps://
+tls_verify = bool(opts.get('tls_verify', False))
 
-# zones kommt aus config.yaml als JSON-String ("{}"), kann aber auch dict sein
+# zones from config.yaml come as JSON string ("{}") or dict
 zones_raw = opts.get('zones', {})
 if isinstance(zones_raw, str):
     try:
         zones = json.loads(zones_raw) if zones_raw.strip() else {}
     except Exception:
-        logger.warning('zones ist kein gültiges JSON, verwende {}')
+        logger.warning('zones is not valid JSON, using {}')
         zones = {}
 elif isinstance(zones_raw, dict):
     zones = zones_raw
 else:
     zones = {}
 
-# Hilfsfunktion: Zone anhand von Koordinaten bestimmen
 def centroid_to_zone(cx, cy, zones_dict):
     for name, box in zones_dict.items():
         try:
@@ -47,26 +50,55 @@ def centroid_to_zone(cx, cy, zones_dict):
             return name
     return None
 
-# Zustand: history pro Payload
 history_maxlen = required if required and required > 0 else 1
 history = defaultdict(lambda: deque(maxlen=history_maxlen))
 confirmed = {}
 
 qcd = cv2.QRCodeDetector()
 
-def get_frame_rtsp(url):
-    cap = cv2.VideoCapture(url)
-    if not cap.isOpened():
-        logger.error('RTSP Stream nicht erreichbar: %s', url)
+def get_frame_ffmpeg(url: str):
+    """
+    Grab a single frame from RTSP/RTSPS using ffmpeg and decode via OpenCV.
+    This is much more reliable for rtsps:// than cv2.VideoCapture on Alpine.
+    """
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-rtsp_transport", "tcp",
+        "-stimeout", "5000000",  # microseconds (5s)
+        "-i", url,
+        "-an",
+        "-frames:v", "1",
+        "-f", "image2pipe",
+        "-vcodec", "png",
+        "pipe:1",
+    ]
+
+    # If ENVR uses self-signed TLS certs, disable verify unless tls_verify is true
+    if url.lower().startswith("rtsps://") and not tls_verify:
+        # ffmpeg supports these on builds with TLS; if unsupported, it will just ignore/fail with a clear error
+        cmd.insert(cmd.index("-i"), "-tls_verify")
+        cmd.insert(cmd.index("-i"), "0")
+
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
+    except subprocess.TimeoutExpired:
+        logger.error("ffmpeg timeout while reading stream")
         return None
-    ret, frame = cap.read()
-    cap.release()
-    if not ret:
-        logger.error('Kein Frame vom RTSP Stream erhalten')
+
+    if proc.returncode != 0 or not proc.stdout:
+        err = proc.stderr.decode("utf-8", errors="ignore").strip()
+        logger.error("ffmpeg failed (rc=%s): %s", proc.returncode, err)
         return None
+
+    data = np.frombuffer(proc.stdout, dtype=np.uint8)
+    frame = cv2.imdecode(data, cv2.IMREAD_COLOR)
+    if frame is None:
+        logger.error("Could not decode frame from ffmpeg output")
     return frame
 
-# Persistenz: inventory.json in /data
+# Persist mapping to /data/inventory.json
 inv_path = '/data/inventory.json'
 if os.path.exists(inv_path):
     try:
@@ -85,49 +117,58 @@ def persist_mapping(payload, zone):
             json.dump(confirmed, f, indent=2)
         logger.info('Persisted mapping %s -> %s', payload, zone)
     except Exception as e:
-        logger.exception('Fehler beim Schreiben der Inventory Datei: %s', e)
+        logger.exception('Failed writing inventory.json: %s', e)
 
-# Hauptloop
-logger.info('Starte QR Inventory Add-on (RTSP only, interval=%s, required=%s)', interval, required)
+logger.info(
+    "Starting QR Inventory (mode=%s interval=%ss required=%s tls_verify=%s)",
+    camera_mode, interval, required, tls_verify
+)
+
 while True:
     try:
-        if camera_mode != 'rtsp':
-            logger.error('Nur RTSP Modus wird unterstützt. Setze camera_mode auf "rtsp".')
+        if camera_mode not in ("rtsp", "rtsps"):
+            logger.error('Unsupported camera_mode=%s (use rtsp or rtsps)', camera_mode)
             time.sleep(interval)
             continue
 
-        if not rtsp_url:
-            logger.error('rtsp_url ist leer. Bitte in den Add-on Optionen setzen.')
+        if not stream_url:
+            logger.error('rtsp_url is empty. Please set it in the add-on options.')
             time.sleep(interval)
             continue
 
-        frame = get_frame_rtsp(rtsp_url)
+        frame = get_frame_ffmpeg(stream_url)
         if frame is None:
             time.sleep(interval)
             continue
 
         retval, decoded_info, points, _ = qcd.detectAndDecodeMulti(frame)
+
         if retval and decoded_info is not None and points is not None:
             for info, pts in zip(decoded_info, points):
-                if not info:
+                if not info or pts is None:
                     continue
+
                 pts = pts.reshape(-1, 2)
                 cx = int(pts[:, 0].mean())
                 cy = int(pts[:, 1].mean())
+
                 zone = centroid_to_zone(cx, cy, zones)
                 history[info].append(zone)
+
                 logger.info(
-                    'Detected payload=%s centroid=(%d,%d) zone=%s history=%s',
+                    "Detected payload=%s centroid=(%d,%d) zone=%s history=%s",
                     info, cx, cy, zone, list(history[info])
                 )
+
+                # Consistency check
                 if len(history[info]) >= history_maxlen and len(set(history[info])) == 1:
                     confirmed_zone = history[info][-1]
                     if confirmed_zone is not None:
                         persist_mapping(info, confirmed_zone)
         else:
-            logger.debug('Keine QR Codes erkannt')
+            logger.debug("No QR codes detected")
 
     except Exception as e:
-        logger.exception('Fehler in Hauptloop: %s', e)
+        logger.exception("Error in main loop: %s", e)
 
     time.sleep(interval)

@@ -1,7 +1,7 @@
 name: QR Inventory
-version: "0.1.10"
+version: "0.2.0"
 slug: qr_inventory
-description: "Scan multiple QR codes from an RTSP camera and map them to storage zones."
+description: "Scan multiple QR codes from an RTSPS/RTSP camera and map them to storage zones."
 arch:
   - amd64
   - aarch64
@@ -11,15 +11,17 @@ boot: auto
 init: false
 
 options:
-  camera_mode: rtsp
+  camera_mode: rtsps
   rtsp_url: ""
   interval_seconds: 60
   required_consistency: 3
   zones: "{}"
+  tls_verify: false
 
 schema:
-  camera_mode: list(rtsp)
+  camera_mode: list(rtsp|rtsps)
   rtsp_url: str
   interval_seconds: int
   required_consistency: int
   zones: str
+  tls_verify: bool
