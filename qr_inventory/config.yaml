@@ -10,10 +10,6 @@ startup: services
 boot: auto
 init: false
 
-build_from:
-  amd64: ghcr.io/home-assistant/amd64-addon-base-python:3.11
-  aarch64: ghcr.io/home-assistant/aarch64-addon-base-python:3.11
-
 options:
   camera_mode: rtsp
   rtsp_url: ""
