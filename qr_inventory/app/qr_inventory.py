@@ -56,19 +56,17 @@ qcd = cv2.QRCodeDetector()
 def get_frame_ffmpeg(url: str):
     """
     Grab one frame via ffmpeg (works better with rtsps:// than cv2.VideoCapture).
-    Avoids -stimeout because some HA ffmpeg builds don't support it.
-    Uses subprocess timeout as the hard stop.
+    This build of ffmpeg does NOT support -stimeout or -rw_timeout,
+    so we rely on subprocess timeout instead.
     """
     cmd = [
         "ffmpeg",
         "-hide_banner",
         "-loglevel", "error",
         "-rtsp_transport", "tcp",
-        # rw_timeout is widely supported; if not, ffmpeg will error and we log it
-        "-rw_timeout", "5000000",  # microseconds (5s)
     ]
 
-    # If RTSPS + self-signed TLS, disable verify (if supported by ffmpeg build)
+    # Disable TLS verify for self-signed RTSPS (if supported by ffmpeg build)
     if url.lower().startswith("rtsps://") and not tls_verify:
         cmd += ["-tls_verify", "0"]
 
@@ -86,7 +84,7 @@ def get_frame_ffmpeg(url: str):
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=12,  # hard timeout regardless of ffmpeg flags
+            timeout=12,
         )
     except subprocess.TimeoutExpired:
         logger.error("ffmpeg timeout while reading stream")

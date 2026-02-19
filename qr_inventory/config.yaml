@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.2.1"
+version: "0.2.2"
 slug: qr_inventory
 description: "Scan multiple QR codes from an RTSPS/RTSP camera and map them to storage zones."
 arch:
