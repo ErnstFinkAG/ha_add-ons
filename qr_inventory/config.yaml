@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.3.2"
+version: "0.3.3"
 slug: qr_inventory
 description: "Scan multiple QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -10,7 +10,6 @@ startup: services
 boot: auto
 init: false
 
-# Expose a fixed internal port. You can change the *host* port in the add-on UI: Configuration → Network.
 ports:
   8099/tcp: 8099
 ports_description:
@@ -26,6 +25,12 @@ options:
   tls_verify: false
   overlay_png_name: overlay.png
 
+  # Accuracy tuning
+  zone_fallback: true
+  use_preprocess: true
+  roi_padding_px: 40
+  roi_scale: 2.0
+
 schema:
   camera_mode: list(rtsp|rtsps)
   rtsp_url: str
@@ -34,3 +39,9 @@ schema:
   zones: str
   tls_verify: bool
   overlay_png_name: str
+
+  # Accuracy tuning
+  zone_fallback: bool
+  use_preprocess: bool
+  roi_padding_px: int
+  roi_scale: float

@@ -25,11 +25,33 @@ else:
     logger.warning('options.json not found, using defaults')
     opts = {}
 
-interval = int(opts.get('interval_seconds', 60))
-required = int(opts.get('required_consistency', 3))
+def _opt_int(key, default):
+    try:
+        return int(opts.get(key, default))
+    except Exception:
+        return default
+
+def _opt_float(key, default):
+    try:
+        return float(opts.get(key, default))
+    except Exception:
+        return default
+
+def _opt_bool(key, default):
+    v = opts.get(key, default)
+    return bool(v)
+
+interval = _opt_int('interval_seconds', 60)
+required = _opt_int('required_consistency', 3)
 camera_mode = str(opts.get('camera_mode', 'rtsps')).lower()
 stream_url = opts.get('rtsp_url')
-tls_verify = bool(opts.get('tls_verify', False))
+tls_verify = _opt_bool('tls_verify', False)
+
+# Detection accuracy options
+zone_fallback = _opt_bool("zone_fallback", True)     # scan each zone ROI as fallback
+use_preprocess = _opt_bool("use_preprocess", True)   # CLAHE/sharpen/adaptive threshold variants
+roi_padding_px = _opt_int("roi_padding_px", 40)      # padding around zone crops
+roi_scale = _opt_float("roi_scale", 2.0)             # upscale factor for zone crops (>1 helps small/far codes)
 
 # Overlay PNG name (configurable)
 _overlay_name = str(opts.get('overlay_png_name', 'overlay.png') or 'overlay.png')
@@ -148,6 +170,151 @@ def persist_mapping(payload, zone):
         logger.exception('Failed writing inventory.json: %s', e)
 
 # ------------------------------------------------------------
+# Robust QR detection (higher accuracy)
+# ------------------------------------------------------------
+def _quad_area(pts: np.ndarray) -> float:
+    try:
+        return abs(cv2.contourArea(pts.astype(np.float32)))
+    except Exception:
+        return 0.0
+
+def _run_qr_detector(img):
+    """
+    Returns list of (payload, pts[4x2]) for successfully decoded QR codes.
+    img can be grayscale or thresholded 8-bit.
+    """
+    try:
+        retval, decoded_info, points, _ = qcd.detectAndDecodeMulti(img)
+    except Exception:
+        return []
+
+    out = []
+    if not retval or decoded_info is None or points is None:
+        return out
+
+    for payload, pts in zip(decoded_info, points):
+        if not payload or pts is None:
+            continue
+        pts = np.array(pts, dtype=np.float32).reshape(-1, 2)
+        if pts.shape[0] != 4:
+            continue
+        out.append((payload, pts))
+    return out
+
+def _preprocess_variants(frame_bgr: np.ndarray):
+    """
+    Yield images to try in the detector.
+    Keep these 8-bit single-channel where possible (works well for QR).
+    """
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    yield gray
+
+    if not use_preprocess:
+        return
+
+    # Contrast boost (helps IR / low contrast paper)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
+    yield clahe
+
+    # Unsharp mask (improves edges)
+    blur = cv2.GaussianBlur(clahe, (0, 0), 1.0)
+    sharp = cv2.addWeighted(clahe, 1.7, blur, -0.7, 0)
+    yield sharp
+
+    # Adaptive threshold (helps uneven lighting)
+    thr = cv2.adaptiveThreshold(
+        sharp, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        35, 5
+    )
+    yield thr
+
+def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict):
+    """
+    Returns detections list:
+      {payload, points, centroid, zone}
+    points are in original-frame coordinates.
+    """
+    h, w = frame_bgr.shape[:2]
+    best = {}  # payload -> {"pts": np.ndarray, "area": float}
+
+    # Pass 1: full-frame on multiple variants
+    for variant in _preprocess_variants(frame_bgr):
+        for payload, pts in _run_qr_detector(variant):
+            area = _quad_area(pts)
+            prev = best.get(payload)
+            if prev is None or area > prev["area"]:
+                best[payload] = {"pts": pts, "area": area}
+
+    # Pass 2: per-zone ROI fallback (catches small/far codes)
+    if zone_fallback and isinstance(zones_dict, dict) and zones_dict:
+        base_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+
+        scale = roi_scale if roi_scale and roi_scale > 1.0 else 1.0
+        pad = max(0, roi_padding_px)
+
+        for zname, box in zones_dict.items():
+            try:
+                x1, y1, x2, y2 = map(int, box)
+            except Exception:
+                continue
+
+            # Add padding and clamp
+            x1p = max(0, x1 - pad)
+            y1p = max(0, y1 - pad)
+            x2p = min(w - 1, x2 + pad)
+            y2p = min(h - 1, y2 + pad)
+            if x2p <= x1p or y2p <= y1p:
+                continue
+
+            roi = base_gray[y1p:y2p, x1p:x2p]
+            if roi.size == 0:
+                continue
+
+            if scale != 1.0:
+                roi_big = cv2.resize(roi, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+            else:
+                roi_big = roi
+
+            roi_imgs = [roi_big]
+            if use_preprocess:
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(roi_big)
+                blur = cv2.GaussianBlur(clahe, (0, 0), 1.0)
+                sharp = cv2.addWeighted(clahe, 1.7, blur, -0.7, 0)
+                thr = cv2.adaptiveThreshold(
+                    sharp, 255,
+                    cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                    cv2.THRESH_BINARY,
+                    35, 5
+                )
+                roi_imgs += [clahe, sharp, thr]
+
+            for img in roi_imgs:
+                for payload, pts in _run_qr_detector(img):
+                    # map ROI coords back to full-frame coords
+                    pts_full = (pts / scale) + np.array([x1p, y1p], dtype=np.float32)
+                    area = _quad_area(pts_full)
+                    prev = best.get(payload)
+                    if prev is None or area > prev["area"]:
+                        best[payload] = {"pts": pts_full, "area": area}
+
+    detections = []
+    for payload, v in best.items():
+        pts = v["pts"]
+        cx = int(np.mean(pts[:, 0]))
+        cy = int(np.mean(pts[:, 1]))
+        zone = centroid_to_zone(cx, cy, zones_dict)
+        detections.append({
+            "payload": payload,
+            "points": pts.tolist(),
+            "centroid": [cx, cy],
+            "zone": zone,
+        })
+
+    return detections
+
+# ------------------------------------------------------------
 # Overlay HTTP server
 # ------------------------------------------------------------
 STATE_LOCK = threading.Lock()
@@ -159,7 +326,8 @@ STATE = {
 }
 
 def _encode_png(img):
-    ok, buf = cv2.imencode(".png", img)
+    # PNG encoding is CPU heavy; compression 1 is usually a good speed/size compromise.
+    ok, buf = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 1])
     return buf.tobytes() if ok else None
 
 def _safe_label(s: str, max_len: int = 96) -> str:
@@ -180,13 +348,12 @@ def draw_overlay(frame, detections, zones_dict):
     out = frame.copy()
     h, w = out.shape[:2]
 
-    # --- Draw zones first (so QR boxes appear on top) ---
+    # Zones first (so QR boxes appear on top)
     ORANGE = (0, 165, 255)
     if isinstance(zones_dict, dict) and zones_dict:
         for zname, box in zones_dict.items():
             try:
-                x1, y1, x2, y2 = box
-                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                x1, y1, x2, y2 = map(int, box)
             except Exception:
                 continue
 
@@ -198,10 +365,8 @@ def draw_overlay(frame, detections, zones_dict):
             if x2 <= x1 or y2 <= y1:
                 continue
 
-            # Rectangle outline
             cv2.rectangle(out, (x1, y1), (x2, y2), ORANGE, 2)
 
-            # Zone label near top-left of the zone
             label = _safe_label(str(zname), max_len=32)
             if label:
                 font = cv2.FONT_HERSHEY_SIMPLEX
@@ -210,26 +375,21 @@ def draw_overlay(frame, detections, zones_dict):
                 (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
                 pad = 3
 
-                # Place label "inside" the zone if possible; otherwise fall back above it.
-                # Preferred: inside at (x1, y1 + th + pad*2)
-                inside_y2 = min(h - 1, y1 + th + baseline + pad * 2)
-                inside_y1 = max(0, y1)
-                lx1, ly1 = x1, inside_y1
-                lx2, ly2 = min(w - 1, x1 + tw + pad * 2), inside_y2
+                # draw label inside the zone at top-left
+                lx1, ly1 = x1, y1
+                lx2 = min(w - 1, x1 + tw + pad * 2)
+                ly2 = min(h - 1, y1 + th + baseline + pad * 2)
 
-                # Background box + text
                 cv2.rectangle(out, (lx1, ly1), (lx2, ly2), ORANGE, -1)
-                text_x = x1 + pad
-                text_y = min(h - 1, y1 + th + pad)  # baseline-ish
                 cv2.putText(
                     out, label,
-                    (text_x, text_y),
+                    (x1 + pad, min(h - 1, y1 + th + pad)),
                     font, font_scale,
                     (255, 255, 255),
                     thickness, cv2.LINE_AA
                 )
 
-    # --- Draw detected QR codes ---
+    # QR codes
     for det in detections:
         pts_list = det.get("points", [])
         if not pts_list:
@@ -238,15 +398,12 @@ def draw_overlay(frame, detections, zones_dict):
         if pts.size == 0:
             continue
 
-        # Red polygon frame
         cv2.polylines(out, [pts], isClosed=True, color=(0, 0, 255), thickness=2)
 
-        # Payload label
         label = _safe_label(det.get("payload", ""))
         if not label:
             continue
 
-        # Put label near first corner
         x, y = int(pts[0, 0, 0]), int(pts[0, 0, 1])
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.6
@@ -254,7 +411,6 @@ def draw_overlay(frame, detections, zones_dict):
         (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
         pad = 4
 
-        # Background box for readability (red)
         x1 = max(0, x)
         y1 = max(0, y - th - baseline - pad * 2)
         x2 = min(w - 1, x + tw + pad * 2)
@@ -342,8 +498,10 @@ threading.Thread(target=start_http_server, daemon=True).start()
 # Main loop
 # ------------------------------------------------------------
 logger.info(
-    "Starting QR Inventory (mode=%s interval=%ss required=%s tls_verify=%s http_port=%s overlay_png_name=%s)",
-    camera_mode, interval, required, tls_verify, HTTP_PORT, OVERLAY_PNG_NAME
+    "Starting QR Inventory (mode=%s interval=%ss required=%s tls_verify=%s overlay_png_name=%s "
+    "zone_fallback=%s use_preprocess=%s roi_padding_px=%s roi_scale=%s)",
+    camera_mode, interval, required, tls_verify, OVERLAY_PNG_NAME,
+    zone_fallback, use_preprocess, roi_padding_px, roi_scale
 )
 
 while True:
@@ -363,41 +521,27 @@ while True:
             time.sleep(interval)
             continue
 
-        retval, decoded_info, points, _ = qcd.detectAndDecodeMulti(frame)
+        # Robust, higher-accuracy detection
+        detections = detect_qr_robust(frame, zones)
 
-        detections = []
-        if retval and decoded_info is not None and points is not None:
-            for info, pts in zip(decoded_info, points):
-                if not info or pts is None:
-                    continue
+        for det in detections:
+            info = det["payload"]
+            cx, cy = det["centroid"]
+            zone = det["zone"]
 
-                pts = pts.reshape(-1, 2)
-                cx = int(pts[:, 0].mean())
-                cy = int(pts[:, 1].mean())
+            history[info].append(zone)
 
-                zone = centroid_to_zone(cx, cy, zones)
-                history[info].append(zone)
+            logger.info(
+                "Detected payload=%s centroid=(%d,%d) zone=%s history=%s",
+                info, cx, cy, zone, list(history[info])
+            )
 
-                detections.append({
-                    "payload": info,
-                    "points": pts.tolist(),   # 4 corners
-                    "centroid": [cx, cy],
-                    "zone": zone,
-                })
+            if len(history[info]) >= history_maxlen and len(set(history[info])) == 1:
+                confirmed_zone = history[info][-1]
+                if confirmed_zone is not None:
+                    persist_mapping(info, confirmed_zone)
 
-                logger.info(
-                    "Detected payload=%s centroid=(%d,%d) zone=%s history=%s",
-                    info, cx, cy, zone, list(history[info])
-                )
-
-                if len(history[info]) >= history_maxlen and len(set(history[info])) == 1:
-                    confirmed_zone = history[info][-1]
-                    if confirmed_zone is not None:
-                        persist_mapping(info, confirmed_zone)
-        else:
-            logger.debug("No QR codes detected")
-
-        # Update overlay state (serve latest frame even if no detections)
+        # Update overlay state
         overlay = draw_overlay(frame, detections, zones)
         frame_png = _encode_png(frame)
         overlay_png = _encode_png(overlay)
