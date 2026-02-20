@@ -38,8 +38,7 @@ def _opt_float(key, default):
         return default
 
 def _opt_bool(key, default):
-    v = opts.get(key, default)
-    return bool(v)
+    return bool(opts.get(key, default))
 
 def _opt_str(key, default):
     v = opts.get(key, default)
@@ -52,28 +51,30 @@ stream_url = opts.get('rtsp_url')
 tls_verify = _opt_bool('tls_verify', False)
 
 # ------------------------------------------------------------
-# Accuracy tuning (small QR improvements)
+# Accuracy / small QR tuning
 # ------------------------------------------------------------
 zone_fallback = _opt_bool("zone_fallback", True)
 use_preprocess = _opt_bool("use_preprocess", True)
 roi_padding_px = _opt_int("roi_padding_px", 60)
 
-# Backwards compat (single scale)
-roi_scale = _opt_float("roi_scale", 2.0)
-
-# New: multiple ROI scales (comma string or list), e.g. "2.0,3.0,4.0"
+roi_scale = _opt_float("roi_scale", 2.0)  # backward compat
 roi_scales_raw = opts.get("roi_scales", None)
-
-# New: how much to upscale a perspective-warped candidate patch
 warp_scale = _opt_float("warp_scale", 5.0)
-
-# New: try inverted images too
 try_invert = _opt_bool("try_invert", True)
-
-# New: cap candidates to avoid CPU spikes
 max_candidates = _opt_int("max_candidates", 160)
 
-# New: adaptive threshold block sizes (odd numbers), e.g. "21,35,51"
+# overlay candidates + score rendering
+overlay_show_candidates = _opt_bool("overlay_show_candidates", True)
+overlay_max_candidates = max(0, _opt_int("overlay_max_candidates", 40))
+overlay_show_scores = _opt_bool("overlay_show_scores", True)
+overlay_show_candidate_reason = _opt_bool("overlay_show_candidate_reason", True)
+
+# diagnostics logging (no image saving)
+debug_metrics = _opt_bool("debug_metrics", False)
+debug_log_every = max(1, _opt_int("debug_log_every", 1))
+debug_max_failed_logs = max(0, _opt_int("debug_max_failed_logs", 20))
+stream_info_interval_minutes = max(0, _opt_int("stream_info_interval_minutes", 0))  # 0=only startup
+
 abs_raw = opts.get("adaptive_block_sizes", None)
 if isinstance(abs_raw, list):
     adaptive_block_sizes = [int(x) for x in abs_raw if int(x) % 2 == 1 and int(x) >= 11]
@@ -123,36 +124,17 @@ def _parse_roi_scales(raw, fallback):
 ROI_SCALES = _parse_roi_scales(roi_scales_raw, roi_scale)
 
 # ------------------------------------------------------------
-# Debug / diagnostics options
-# ------------------------------------------------------------
-debug_metrics = _opt_bool("debug_metrics", False)          # logs candidate diagnostics + certainty
-debug_log_every = max(1, _opt_int("debug_log_every", 1))   # every N cycles
-debug_max_failed_logs = max(0, _opt_int("debug_max_failed_logs", 20))
-
-debug_save_failed = _opt_bool("debug_save_failed", False)       # save warped candidates that fail decoding
-debug_save_decoded = _opt_bool("debug_save_decoded", False)     # save warped candidates that decode
-debug_max_images_per_cycle = max(0, _opt_int("debug_max_images_per_cycle", 20))
-debug_image_format = _opt_str("debug_image_format", "jpg").lower().strip()
-if debug_image_format not in ("jpg", "jpeg", "png"):
-    debug_image_format = "jpg"
-debug_jpeg_quality = int(max(20, min(95, _opt_int("debug_jpeg_quality", 85))))
-debug_dir = _opt_str("debug_dir", "/data/debug").strip() or "/data/debug"
-
-stream_info_interval_minutes = max(0, _opt_int("stream_info_interval_minutes", 0))  # 0=only startup
-
-# ------------------------------------------------------------
 # Overlay PNG name (configurable)
 # ------------------------------------------------------------
 _overlay_name = _opt_str('overlay_png_name', 'overlay.png')
 _overlay_name = _overlay_name.strip().lstrip('/')
-_overlay_name = os.path.basename(_overlay_name)  # prevent nested paths / traversal
+_overlay_name = os.path.basename(_overlay_name)
 if not _overlay_name:
     _overlay_name = 'overlay.png'
 if not _overlay_name.lower().endswith('.png'):
     _overlay_name += '.png'
 OVERLAY_PNG_NAME = _overlay_name
 
-# HTTP server binds to a FIXED internal container port.
 HTTP_PORT = 8099
 
 # ------------------------------------------------------------
@@ -180,9 +162,6 @@ def centroid_to_zone(cx, cy, zones_dict):
             return name
     return None
 
-# ------------------------------------------------------------
-# State + persistence
-# ------------------------------------------------------------
 history_maxlen = required if required and required > 0 else 1
 history = defaultdict(lambda: deque(maxlen=history_maxlen))
 confirmed = {}
@@ -193,35 +172,24 @@ qcd = cv2.QRCodeDetector()
 # Stream info (ffprobe)
 # ------------------------------------------------------------
 def _run_ffprobe(url: str):
-    """
-    Return dict with best-effort stream metadata or None.
-    """
-    # Some ffprobe builds support -tls_verify; include if rtsps and verify disabled
     cmd = ["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-select_streams", "v:0"]
-
     if url.lower().startswith("rtsps://") and not tls_verify:
         cmd += ["-tls_verify", "0"]
-
     cmd += [url]
-
     try:
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
-    except Exception as e:
-        logger.debug("ffprobe failed: %s", e)
+    except Exception:
         return None
-
     if proc.returncode != 0 or not proc.stdout:
         return None
-
     try:
         data = json.loads(proc.stdout.decode("utf-8", errors="ignore"))
         streams = data.get("streams", [])
         if not streams:
             return None
         s = streams[0]
-        out = {
+        return {
             "codec_name": s.get("codec_name"),
-            "codec_long_name": s.get("codec_long_name"),
             "profile": s.get("profile"),
             "pix_fmt": s.get("pix_fmt"),
             "width": s.get("width"),
@@ -230,9 +198,20 @@ def _run_ffprobe(url: str):
             "avg_frame_rate": s.get("avg_frame_rate"),
             "r_frame_rate": s.get("r_frame_rate"),
         }
-        return out
     except Exception:
         return None
+
+def _fmt_rate(r):
+    if not r or r == "0/0":
+        return None
+    try:
+        a, b = r.split("/")
+        a = float(a); b = float(b)
+        if b == 0:
+            return None
+        return round(a / b, 3)
+    except Exception:
+        return r
 
 def _log_stream_info(tag: str):
     if not stream_url:
@@ -241,36 +220,16 @@ def _log_stream_info(tag: str):
     if not info:
         logger.info("%s: Stream info: (ffprobe unavailable or no metadata)", tag)
         return
-
-    def _fmt_rate(r):
-        if not r or r == "0/0":
-            return None
-        try:
-            a, b = r.split("/")
-            a = float(a); b = float(b)
-            if b == 0:
-                return None
-            return round(a / b, 3)
-        except Exception:
-            return r
-
     fps = _fmt_rate(info.get("avg_frame_rate")) or _fmt_rate(info.get("r_frame_rate"))
     br = info.get("bit_rate")
     try:
         br_kbps = round(int(br) / 1000) if br else None
     except Exception:
         br_kbps = None
-
     logger.info(
         "%s: Stream info: codec=%s profile=%s pix_fmt=%s size=%sx%s fps=%s bitrate_kbps=%s",
-        tag,
-        info.get("codec_name"),
-        info.get("profile"),
-        info.get("pix_fmt"),
-        info.get("width"),
-        info.get("height"),
-        fps,
-        br_kbps,
+        tag, info.get("codec_name"), info.get("profile"), info.get("pix_fmt"),
+        info.get("width"), info.get("height"), fps, br_kbps
     )
 
 # ------------------------------------------------------------
@@ -283,10 +242,8 @@ def get_frame_ffmpeg(url: str):
         "-loglevel", "error",
         "-rtsp_transport", "tcp",
     ]
-
     if url.lower().startswith("rtsps://") and not tls_verify:
         cmd += ["-tls_verify", "0"]
-
     cmd += [
         "-i", url,
         "-an",
@@ -295,23 +252,15 @@ def get_frame_ffmpeg(url: str):
         "-vcodec", "png",
         "pipe:1",
     ]
-
     try:
-        proc = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=12,
-        )
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
     except subprocess.TimeoutExpired:
         logger.error("ffmpeg timeout while reading stream")
         return None
-
     if proc.returncode != 0 or not proc.stdout:
         err = proc.stderr.decode("utf-8", errors="ignore").strip()
         logger.error("ffmpeg failed (rc=%s): %s", proc.returncode, err)
         return None
-
     data = np.frombuffer(proc.stdout, dtype=np.uint8)
     frame = cv2.imdecode(data, cv2.IMREAD_COLOR)
     if frame is None:
@@ -342,7 +291,7 @@ def persist_mapping(payload, zone):
         logger.exception('Failed writing inventory.json: %s', e)
 
 # ------------------------------------------------------------
-# Robust QR detection + diagnostics
+# Detection helpers + scoring
 # ------------------------------------------------------------
 def _quad_area(pts: np.ndarray) -> float:
     try:
@@ -374,13 +323,7 @@ def _contrast_std(gray: np.ndarray) -> float:
         return 0.0
 
 def _certainty_score(edge_px: float, lap_var: float, contrast: float) -> float:
-    """
-    Heuristic 0..1 certainty score based on:
-      - apparent size (edge length)
-      - sharpness (laplacian variance)
-      - contrast (std dev)
-    """
-    # Tuned for IR-ish images; feel free to tweak later.
+    # heuristic 0..1
     s_size = min(1.0, edge_px / 90.0)
     s_sharp = min(1.0, lap_var / 180.0)
     s_con = min(1.0, contrast / 45.0)
@@ -403,13 +346,10 @@ def _detect_and_decode_multi(img):
         retval, decoded_info, points, _ = qcd.detectAndDecodeMulti(img)
     except Exception:
         return decoded, candidates
-
     if not retval or points is None:
         return decoded, candidates
-
     if decoded_info is None:
         decoded_info = [""] * len(points)
-
     for payload, pts in zip(decoded_info, points):
         if pts is None:
             continue
@@ -421,7 +361,6 @@ def _detect_and_decode_multi(img):
             decoded.append((payload, pts))
         else:
             candidates.append(pts)
-
     return decoded, candidates
 
 def _detect_points(img):
@@ -444,21 +383,17 @@ def _preprocess_gray_variants(gray: np.ndarray):
     yield gray
     if try_invert:
         yield 255 - gray
-
     if not use_preprocess:
         return
-
     clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)).apply(gray)
     yield clahe
     if try_invert:
         yield 255 - clahe
-
     blur = cv2.GaussianBlur(clahe, (0, 0), 1.0)
     sharp = cv2.addWeighted(clahe, 1.8, blur, -0.8, 0)
     yield sharp
     if try_invert:
         yield 255 - sharp
-
     for bs in adaptive_block_sizes:
         thr = cv2.adaptiveThreshold(
             sharp, 255,
@@ -469,54 +404,21 @@ def _preprocess_gray_variants(gray: np.ndarray):
         yield thr
         if try_invert:
             yield 255 - thr
-
     _, otsu = cv2.threshold(sharp, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     yield otsu
     if try_invert:
         yield 255 - otsu
 
-def _ensure_debug_dir():
-    try:
-        os.makedirs(debug_dir, exist_ok=True)
-    except Exception:
-        pass
-
-def _save_debug_image(prefix: str, img_gray: np.ndarray):
-    """
-    Saves img to /data/debug/ with timestamp if enabled.
-    """
-    if not img_gray.size:
-        return
-    _ensure_debug_dir()
-    ts = time.strftime("%Y%m%d-%H%M%S")
-    fn = f"{prefix}_{ts}.{debug_image_format}"
-    path = os.path.join(debug_dir, fn)
-
-    try:
-        if debug_image_format in ("jpg", "jpeg"):
-            cv2.imwrite(path, img_gray, [cv2.IMWRITE_JPEG_QUALITY, debug_jpeg_quality])
-        else:
-            cv2.imwrite(path, img_gray, [cv2.IMWRITE_PNG_COMPRESSION, 3])
-    except Exception:
-        pass
-
 def _warp_patch(frame_gray: np.ndarray, pts_full: np.ndarray):
-    """
-    Warp the quad to a square (for decode attempts + diagnostics).
-    Returns (warp_gray, size, edge_px).
-    """
     h, w = frame_gray.shape[:2]
     pts = pts_full.astype(np.float32).copy()
     pts[:, 0] = np.clip(pts[:, 0], 0, w - 1)
     pts[:, 1] = np.clip(pts[:, 1], 0, h - 1)
-
     edge = _max_edge_len(pts)
     if edge <= 5:
         return None, 0, edge
-
     size = int(max(160, min(2400, edge * float(warp_scale))))
     dst = np.array([[0, 0], [size - 1, 0], [size - 1, size - 1], [0, size - 1]], dtype=np.float32)
-
     try:
         M = cv2.getPerspectiveTransform(pts, dst)
         warp = cv2.warpPerspective(frame_gray, M, (size, size), flags=cv2.INTER_CUBIC)
@@ -524,11 +426,7 @@ def _warp_patch(frame_gray: np.ndarray, pts_full: np.ndarray):
     except Exception:
         return None, 0, edge
 
-def _decode_warp_variants(warp: np.ndarray):
-    """
-    Try decode on multiple variants of the warped patch.
-    Returns payload or "".
-    """
+def _decode_warp_variants(warp: np.ndarray) -> str:
     for v in _preprocess_gray_variants(warp):
         try:
             payload, _, _ = qcd.detectAndDecode(v)
@@ -555,7 +453,7 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
     def add_candidate(pts):
         cx = float(np.mean(pts[:, 0]))
         cy = float(np.mean(pts[:, 1]))
-        key = (int(cx // 20), int(cy // 20))  # 20px buckets
+        key = (int(cx // 20), int(cy // 20))
         area = _quad_area(pts)
         prev = cand.get(key)
         if prev is None or area > prev["area"]:
@@ -565,13 +463,12 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
     for variant in _preprocess_gray_variants(frame_gray):
         decoded, candidates = _detect_and_decode_multi(variant)
         for payload, pts in decoded:
-            # diagnostics based on warped patch (best effort)
-            warp, _, edge = _warp_patch(frame_gray, pts)
+            warp, size, edge = _warp_patch(frame_gray, pts)
             if warp is not None:
                 lap = _laplacian_var(warp)
                 con = _contrast_std(warp)
                 score = _certainty_score(edge, lap, con)
-                diag = {"edge_px": edge, "lap_var": lap, "contrast": con}
+                diag = {"edge_px": edge, "lap_var": lap, "contrast": con, "warp_size": size}
             else:
                 score = None
                 diag = None
@@ -591,25 +488,22 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
                 x1, y1, x2, y2 = map(int, box)
             except Exception:
                 continue
-
             x1p = max(0, x1 - pad)
             y1p = max(0, y1 - pad)
             x2p = min(w - 1, x2 + pad)
             y2p = min(h - 1, y2 + pad)
             if x2p <= x1p or y2p <= y1p:
                 continue
-
             roi = frame_gray[y1p:y2p, x1p:x2p]
             if roi.size == 0:
                 continue
-
             for sc in ROI_SCALES:
                 sc = float(sc) if sc else 1.0
                 if sc <= 0:
                     sc = 1.0
-
                 roi_s = cv2.resize(roi, None, fx=sc, fy=sc, interpolation=cv2.INTER_CUBIC) if sc != 1.0 else roi
 
+                # candidates
                 for pts in _detect_points(roi_s):
                     pts_full = (pts / sc) + np.array([x1p, y1p], dtype=np.float32)
                     add_candidate(pts_full)
@@ -617,12 +511,12 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
                 decoded, candidates = _detect_and_decode_multi(roi_s)
                 for payload, pts in decoded:
                     pts_full = (pts / sc) + np.array([x1p, y1p], dtype=np.float32)
-                    warp, _, edge = _warp_patch(frame_gray, pts_full)
+                    warp, size, edge = _warp_patch(frame_gray, pts_full)
                     if warp is not None:
                         lap = _laplacian_var(warp)
                         con = _contrast_std(warp)
                         score = _certainty_score(edge, lap, con)
-                        diag = {"edge_px": edge, "lap_var": lap, "contrast": con}
+                        diag = {"edge_px": edge, "lap_var": lap, "contrast": con, "warp_size": size}
                     else:
                         score = None
                         diag = None
@@ -632,14 +526,20 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
                     pts_full = (pts / sc) + np.array([x1p, y1p], dtype=np.float32)
                     add_candidate(pts_full)
 
-    # Limit candidates
+    # Limit candidates for decode pass
     cand_items = sorted(cand.values(), key=lambda v: v["area"], reverse=True)[:max_candidates]
 
-    # Pass 3: warp-decode candidates + diagnostics
+    # Decode candidates by warping (and keep those that still fail as overlay "candidates")
     failed_logged = 0
-    saved_images = 0
+    do_debug = debug_metrics and (cycle_idx % debug_log_every == 0)
 
-    do_debug_this_cycle = debug_metrics and (cycle_idx % debug_log_every == 0)
+    overlay_candidates = []
+    decoded_buckets = set()
+
+    for payload, v in best.items():
+        pts = v["pts"]
+        cx = float(np.mean(pts[:, 0])); cy = float(np.mean(pts[:, 1]))
+        decoded_buckets.add((int(cx // 20), int(cy // 20)))
 
     for item in cand_items:
         pts = item["pts"]
@@ -655,31 +555,45 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
         payload = _decode_warp_variants(warp)
         if payload:
             add_best(payload, pts, score=score, diag={"edge_px": edge, "lap_var": lap, "contrast": con, "warp_size": size})
-            if do_debug_this_cycle and debug_save_decoded and saved_images < debug_max_images_per_cycle:
-                _save_debug_image(f"decoded_{payload.replace(' ', '_')[:24]}", warp)
-                saved_images += 1
-        else:
-            if do_debug_this_cycle and failed_logged < debug_max_failed_logs:
-                cx = int(np.mean(pts[:, 0]))
-                cy = int(np.mean(pts[:, 1]))
-                logger.debug(
-                    "QR candidate not decoded: center=(%d,%d) edge_px=%.1f warp=%d lap_var=%.1f contrast=%.1f score=%.2f reason=%s",
-                    cx, cy, edge, size, lap, con, score, reason
-                )
-                failed_logged += 1
+            continue
 
-            if do_debug_this_cycle and debug_save_failed and saved_images < debug_max_images_per_cycle:
-                _save_debug_image(f"failed_{reason}", warp)
-                saved_images += 1
+        # not decoded -> candidate output for overlay
+        cx = int(np.mean(pts[:, 0])); cy = int(np.mean(pts[:, 1]))
+        bucket = (int(cx // 20), int(cy // 20))
+        if bucket in decoded_buckets:
+            continue  # skip candidates overlapping decoded tags
 
-    # Build output
+        if do_debug and failed_logged < debug_max_failed_logs:
+            logger.debug(
+                "QR candidate not decoded: center=(%d,%d) edge_px=%.1f warp=%d lap_var=%.1f contrast=%.1f score=%.2f reason=%s",
+                cx, cy, edge, size, lap, con, score, reason
+            )
+            failed_logged += 1
+
+        overlay_candidates.append({
+            "payload": None,
+            "points": pts.tolist(),
+            "centroid": [cx, cy],
+            "zone": centroid_to_zone(cx, cy, zones_dict),
+            "score": score,
+            "reason": reason,
+            "diag": {"edge_px": edge, "lap_var": lap, "contrast": con, "warp_size": size},
+            "decoded": False,
+        })
+
+    # Sort candidates by score and cap for overlay
+    if overlay_show_candidates and overlay_max_candidates > 0 and overlay_candidates:
+        overlay_candidates.sort(key=lambda d: float(d.get("score") or 0.0), reverse=True)
+        overlay_candidates = overlay_candidates[:overlay_max_candidates]
+    else:
+        overlay_candidates = []
+
     detections = []
     for payload, v in best.items():
         pts = v["pts"]
         cx = int(np.mean(pts[:, 0]))
         cy = int(np.mean(pts[:, 1]))
         zone = centroid_to_zone(cx, cy, zones_dict)
-
         detections.append({
             "payload": payload,
             "points": pts.tolist(),
@@ -687,8 +601,10 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
             "zone": zone,
             "score": v.get("score"),
             "diag": v.get("diag"),
+            "decoded": True,
         })
 
+    detections.extend(overlay_candidates)
     return detections
 
 # ------------------------------------------------------------
@@ -713,27 +629,37 @@ def _safe_label(s: str, max_len: int = 96) -> str:
         return s[: max_len - 1] + "…"
     return s
 
+def _pct(score):
+    try:
+        if score is None:
+            return None
+        return int(round(float(score) * 100))
+    except Exception:
+        return None
+
 def draw_overlay(frame, detections, zones_dict):
     out = frame.copy()
     h, w = out.shape[:2]
 
+    # colors (BGR)
     ORANGE = (0, 165, 255)
+    RED = (0, 0, 255)
+    CAND = (255, 255, 0)  # cyan for non-decoded candidates
+
+    # Zones first
     if isinstance(zones_dict, dict) and zones_dict:
         for zname, box in zones_dict.items():
             try:
                 x1, y1, x2, y2 = map(int, box)
             except Exception:
                 continue
-
             x1 = max(0, min(x1, w - 1))
             x2 = max(0, min(x2, w - 1))
             y1 = max(0, min(y1, h - 1))
             y2 = max(0, min(y2, h - 1))
             if x2 <= x1 or y2 <= y1:
                 continue
-
             cv2.rectangle(out, (x1, y1), (x2, y2), ORANGE, 2)
-
             label = _safe_label(str(zname), max_len=32)
             if label:
                 font = cv2.FONT_HERSHEY_SIMPLEX
@@ -741,41 +667,46 @@ def draw_overlay(frame, detections, zones_dict):
                 thickness = 2
                 (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
                 pad = 3
-
                 lx1, ly1 = x1, y1
                 lx2 = min(w - 1, x1 + tw + pad * 2)
                 ly2 = min(h - 1, y1 + th + baseline + pad * 2)
-
                 cv2.rectangle(out, (lx1, ly1), (lx2, ly2), ORANGE, -1)
-                cv2.putText(
-                    out, label,
-                    (x1 + pad, min(h - 1, y1 + th + pad)),
-                    font, font_scale,
-                    (255, 255, 255),
-                    thickness, cv2.LINE_AA
-                )
+                cv2.putText(out, label, (x1 + pad, min(h - 1, y1 + th + pad)),
+                            font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
-    # QR codes
-    for det in detections:
+    decoded = [d for d in detections if d.get("decoded", True)]
+    candidates = [d for d in detections if not d.get("decoded", True)]
+
+    def _draw_item(det, color, prefix=None):
         pts_list = det.get("points", [])
         if not pts_list:
-            continue
+            return
         pts = np.array(pts_list, dtype=np.int32).reshape((-1, 1, 2))
         if pts.size == 0:
-            continue
+            return
 
-        cv2.polylines(out, [pts], isClosed=True, color=(0, 0, 255), thickness=2)
+        cv2.polylines(out, [pts], isClosed=True, color=color, thickness=2)
 
         payload = det.get("payload", "")
         score = det.get("score", None)
+        p = _pct(score) if overlay_show_scores else None
 
-        label = payload
-        if debug_metrics and score is not None:
-            label = f"{payload}  ({score:.2f})"
+        if payload:
+            label = payload
+        else:
+            label = prefix or "CAND"
+
+        if p is not None:
+            label = f"{label} {p}%"
+
+        if (not det.get("decoded", True)) and overlay_show_candidate_reason:
+            reason = det.get("reason")
+            if reason:
+                label = f"{label} {reason}"
 
         label = _safe_label(label)
         if not label:
-            continue
+            return
 
         x, y = int(pts[0, 0, 0]), int(pts[0, 0, 1])
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -789,17 +720,16 @@ def draw_overlay(frame, detections, zones_dict):
         x2 = min(w - 1, x + tw + pad * 2)
         y2 = min(h - 1, y)
 
-        cv2.rectangle(out, (x1, y1), (x2, y2), (0, 0, 255), -1)
-        cv2.putText(
-            out,
-            label,
-            (x + pad, max(0, y - pad)),
-            font,
-            font_scale,
-            (255, 255, 255),
-            thickness,
-            cv2.LINE_AA,
-        )
+        cv2.rectangle(out, (x1, y1), (x2, y2), color, -1)
+        cv2.putText(out, label, (x + pad, max(0, y - pad)),
+                    font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+    # candidates first, decoded on top
+    for det in candidates:
+        _draw_item(det, CAND, prefix="CAND")
+
+    for det in decoded:
+        _draw_item(det, RED)
 
     return out
 
@@ -829,7 +759,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
   <h3>QR Inventory Overlay</h3>
   <p>Overlay PNG: <code>/{OVERLAY_PNG_NAME}</code> (alias: <code>/overlay.png</code>)</p>
   <p>Last update: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))}</p>
-  <p>Last frame: {fi}</p>
+  <p>Last frame info: {fi}</p>
   <ul>
     <li><a href="/{OVERLAY_PNG_NAME}">/{OVERLAY_PNG_NAME}</a></li>
     <li><a href="/overlay.png">/overlay.png</a></li>
@@ -874,19 +804,18 @@ threading.Thread(target=start_http_server, daemon=True).start()
 # ------------------------------------------------------------
 logger.info(
     "Starting QR Inventory (mode=%s interval=%ss required=%s tls_verify=%s overlay_png_name=%s "
-    "zone_fallback=%s use_preprocess=%s roi_padding_px=%s ROI_SCALES=%s warp_scale=%s try_invert=%s "
-    "adaptive_block_sizes=%s max_candidates=%s debug_metrics=%s debug_save_failed=%s debug_save_decoded=%s debug_dir=%s)",
+    "ROI_SCALES=%s warp_scale=%s try_invert=%s adaptive_block_sizes=%s max_candidates=%s "
+    "overlay_show_candidates=%s overlay_max_candidates=%s overlay_show_scores=%s overlay_show_candidate_reason=%s "
+    "debug_metrics=%s)",
     camera_mode, interval, required, tls_verify, OVERLAY_PNG_NAME,
-    zone_fallback, use_preprocess, roi_padding_px, ROI_SCALES, warp_scale, try_invert,
-    adaptive_block_sizes, max_candidates,
-    debug_metrics, debug_save_failed, debug_save_decoded, debug_dir
+    ROI_SCALES, warp_scale, try_invert, adaptive_block_sizes, max_candidates,
+    overlay_show_candidates, overlay_max_candidates, overlay_show_scores, overlay_show_candidate_reason,
+    debug_metrics
 )
 
-# One-time stream info at startup
 _log_stream_info("STARTUP")
-
 cycle_idx = 0
-last_stream_info_ts = 0
+last_stream_info_ts = 0.0
 
 while True:
     cycle_idx += 1
@@ -901,7 +830,6 @@ while True:
             time.sleep(interval)
             continue
 
-        # Periodic stream info
         if stream_info_interval_minutes > 0:
             now = time.time()
             if last_stream_info_ts == 0 or (now - last_stream_info_ts) >= stream_info_interval_minutes * 60:
@@ -913,14 +841,16 @@ while True:
             time.sleep(interval)
             continue
 
-        # Capture/output quality logging
         fh, fw = frame.shape[:2]
         if debug_metrics and (cycle_idx % debug_log_every == 0):
             logger.debug("Captured frame: %dx%d", fw, fh)
 
         detections = detect_qr_robust(frame, zones, cycle_idx=cycle_idx)
 
+        # Log decoded only
         for det in detections:
+            if not det.get("decoded", True):
+                continue
             info = det["payload"]
             cx, cy = det["centroid"]
             zone = det["zone"]
@@ -931,8 +861,9 @@ while True:
 
             if debug_metrics and score is not None and diag is not None:
                 logger.info(
-                    "Detected payload=%s centroid=(%d,%d) zone=%s score=%.2f edge_px=%.1f lap_var=%.1f contrast=%.1f history=%s",
-                    info, cx, cy, zone, score,
+                    "Detected payload=%s centroid=(%d,%d) zone=%s certainty=%d%% edge_px=%.1f lap_var=%.1f contrast=%.1f history=%s",
+                    info, cx, cy, zone,
+                    int(round(float(score) * 100)),
                     float(diag.get("edge_px", 0.0)),
                     float(diag.get("lap_var", 0.0)),
                     float(diag.get("contrast", 0.0)),
@@ -958,12 +889,13 @@ while True:
             "captured_h": fh,
             "frame_png_bytes": len(frame_png) if frame_png else None,
             "overlay_png_bytes": len(overlay_png) if overlay_png else None,
-            "detections": len(detections),
+            "detections_total": len(detections),
+            "decoded": sum(1 for d in detections if d.get("decoded", True)),
+            "candidates": sum(1 for d in detections if not d.get("decoded", True)),
         }
 
         if debug_metrics and (cycle_idx % debug_log_every == 0):
-            logger.debug("Output: frame_png_bytes=%s overlay_png_bytes=%s detections=%s",
-                         fi["frame_png_bytes"], fi["overlay_png_bytes"], fi["detections"])
+            logger.debug("Output: %s", fi)
 
         with STATE_LOCK:
             STATE["ts"] = int(time.time())

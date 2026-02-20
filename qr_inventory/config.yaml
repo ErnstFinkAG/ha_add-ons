@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.3.4.1"
+version: "0.3.5"
 slug: qr_inventory
 description: "Scan multiple QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -29,7 +29,7 @@ options:
   zone_fallback: true
   use_preprocess: true
   roi_padding_px: 60
-  roi_scale: 2.0
+  roi_scale: 2.0          # backward compat
 
   # Small-QR boost
   roi_scales: "2.0,3.0,4.0"
@@ -38,17 +38,17 @@ options:
   adaptive_block_sizes: "21,35,51"
   max_candidates: 160
 
-  # Stream / debug diagnostics
+  # Overlay: show candidates + certainty %
+  overlay_show_candidates: true
+  overlay_max_candidates: 40
+  overlay_show_scores: true
+  overlay_show_candidate_reason: true
+
+  # Diagnostics (no image saving)
   stream_info_interval_minutes: 0
   debug_metrics: false
   debug_log_every: 1
   debug_max_failed_logs: 20
-  debug_save_failed: false
-  debug_save_decoded: false
-  debug_max_images_per_cycle: 20
-  debug_image_format: jpg
-  debug_jpeg_quality: 85
-  debug_dir: /data/debug
 
 schema:
   camera_mode: list(rtsp|rtsps)
@@ -72,14 +72,14 @@ schema:
   adaptive_block_sizes: str
   max_candidates: int
 
-  # Stream / debug diagnostics
+  # Overlay
+  overlay_show_candidates: bool
+  overlay_max_candidates: int
+  overlay_show_scores: bool
+  overlay_show_candidate_reason: bool
+
+  # Diagnostics
   stream_info_interval_minutes: int
   debug_metrics: bool
   debug_log_every: int
   debug_max_failed_logs: int
-  debug_save_failed: bool
-  debug_save_decoded: bool
-  debug_max_images_per_cycle: int
-  debug_image_format: str
-  debug_jpeg_quality: int
-  debug_dir: str
