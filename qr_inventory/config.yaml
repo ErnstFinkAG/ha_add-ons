@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.3.3"
+version: "0.3.4"
 slug: qr_inventory
 description: "Scan multiple QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -28,8 +28,15 @@ options:
   # Accuracy tuning
   zone_fallback: true
   use_preprocess: true
-  roi_padding_px: 40
-  roi_scale: 2.0
+  roi_padding_px: 60
+  roi_scale: 2.0          # backward compat (unused if roi_scales is set)
+
+  # Small-QR boost (recommended)
+  roi_scales: "2.0,3.0,4.0"
+  warp_scale: 5.0
+  try_invert: true
+  adaptive_block_sizes: "21,35,51"
+  max_candidates: 160
 
 schema:
   camera_mode: list(rtsp|rtsps)
@@ -45,3 +52,10 @@ schema:
   use_preprocess: bool
   roi_padding_px: int
   roi_scale: float
+
+  # Small-QR boost
+  roi_scales: str
+  warp_scale: float
+  try_invert: bool
+  adaptive_block_sizes: str
+  max_candidates: int
