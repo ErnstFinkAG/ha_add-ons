@@ -168,18 +168,72 @@ def _safe_label(s: str, max_len: int = 96) -> str:
         return s[: max_len - 1] + "…"
     return s
 
-def draw_overlay(frame, detections):
+def draw_overlay(frame, detections, zones_dict):
     """
-    Draw red frame around each detected QR code + payload text.
-    OpenCV uses BGR, so red is (0,0,255).
+    Draw:
+      - zones (orange rectangles + zone name)
+      - QR frames (red polygon) + payload text
+    OpenCV uses BGR:
+      - red    = (0, 0, 255)
+      - orange = (0, 165, 255)
     """
     out = frame.copy()
+    h, w = out.shape[:2]
 
+    # --- Draw zones first (so QR boxes appear on top) ---
+    ORANGE = (0, 165, 255)
+    if isinstance(zones_dict, dict) and zones_dict:
+        for zname, box in zones_dict.items():
+            try:
+                x1, y1, x2, y2 = box
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            except Exception:
+                continue
+
+            # Clamp to image bounds
+            x1 = max(0, min(x1, w - 1))
+            x2 = max(0, min(x2, w - 1))
+            y1 = max(0, min(y1, h - 1))
+            y2 = max(0, min(y2, h - 1))
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            # Rectangle outline
+            cv2.rectangle(out, (x1, y1), (x2, y2), ORANGE, 2)
+
+            # Zone label near top-left of the zone
+            label = _safe_label(str(zname), max_len=32)
+            if label:
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.55
+                thickness = 2
+                (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+                pad = 3
+
+                # Place label "inside" the zone if possible; otherwise fall back above it.
+                # Preferred: inside at (x1, y1 + th + pad*2)
+                inside_y2 = min(h - 1, y1 + th + baseline + pad * 2)
+                inside_y1 = max(0, y1)
+                lx1, ly1 = x1, inside_y1
+                lx2, ly2 = min(w - 1, x1 + tw + pad * 2), inside_y2
+
+                # Background box + text
+                cv2.rectangle(out, (lx1, ly1), (lx2, ly2), ORANGE, -1)
+                text_x = x1 + pad
+                text_y = min(h - 1, y1 + th + pad)  # baseline-ish
+                cv2.putText(
+                    out, label,
+                    (text_x, text_y),
+                    font, font_scale,
+                    (255, 255, 255),
+                    thickness, cv2.LINE_AA
+                )
+
+    # --- Draw detected QR codes ---
     for det in detections:
         pts_list = det.get("points", [])
         if not pts_list:
             continue
-
         pts = np.array(pts_list, dtype=np.int32).reshape((-1, 1, 2))
         if pts.size == 0:
             continue
@@ -187,28 +241,30 @@ def draw_overlay(frame, detections):
         # Red polygon frame
         cv2.polylines(out, [pts], isClosed=True, color=(0, 0, 255), thickness=2)
 
-        # Label (payload)
+        # Payload label
         label = _safe_label(det.get("payload", ""))
         if not label:
             continue
 
+        # Put label near first corner
         x, y = int(pts[0, 0, 0]), int(pts[0, 0, 1])
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.6
         thickness = 2
-
         (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
-
-        # background box for readability
         pad = 4
-        x1, y1 = x, max(0, y - th - baseline - pad * 2)
-        x2, y2 = min(out.shape[1] - 1, x + tw + pad * 2), y
 
-        cv2.rectangle(out, (x1, y1), (x2, y2), (0, 0, 255), -1)  # filled red
+        # Background box for readability (red)
+        x1 = max(0, x)
+        y1 = max(0, y - th - baseline - pad * 2)
+        x2 = min(w - 1, x + tw + pad * 2)
+        y2 = min(h - 1, y)
+
+        cv2.rectangle(out, (x1, y1), (x2, y2), (0, 0, 255), -1)
         cv2.putText(
             out,
             label,
-            (x + pad, y - pad),
+            (x + pad, max(0, y - pad)),
             font,
             font_scale,
             (255, 255, 255),
@@ -342,7 +398,7 @@ while True:
             logger.debug("No QR codes detected")
 
         # Update overlay state (serve latest frame even if no detections)
-        overlay = draw_overlay(frame, detections)
+        overlay = draw_overlay(frame, detections, zones)
         frame_png = _encode_png(frame)
         overlay_png = _encode_png(overlay)
 
