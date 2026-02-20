@@ -31,18 +31,7 @@ camera_mode = str(opts.get('camera_mode', 'rtsps')).lower()
 stream_url = opts.get('rtsp_url')
 tls_verify = bool(opts.get('tls_verify', False))
 
-# HTTP overlay options
-def _parse_port(v, default=8099):
-    try:
-        p = int(v)
-        if 1 <= p <= 65535:
-            return p
-    except Exception:
-        pass
-    return default
-
-HTTP_PORT = _parse_port(opts.get('http_port', 8099), default=8099)
-
+# Overlay PNG name (configurable)
 _overlay_name = str(opts.get('overlay_png_name', 'overlay.png') or 'overlay.png')
 _overlay_name = _overlay_name.strip().lstrip('/')
 _overlay_name = os.path.basename(_overlay_name)  # prevent nested paths / traversal
@@ -51,6 +40,10 @@ if not _overlay_name:
 if not _overlay_name.lower().endswith('.png'):
     _overlay_name += '.png'
 OVERLAY_PNG_NAME = _overlay_name
+
+# HTTP server binds to a FIXED internal container port.
+# Change the host port mapping in the add-on UI (Network tab) if you want a different external port.
+HTTP_PORT = 8099
 
 zones_raw = opts.get('zones', {})
 if isinstance(zones_raw, str):
@@ -183,7 +176,11 @@ def draw_overlay(frame, detections):
     out = frame.copy()
 
     for det in detections:
-        pts = np.array(det.get("points", []), dtype=np.int32).reshape((-1, 1, 2))
+        pts_list = det.get("points", [])
+        if not pts_list:
+            continue
+
+        pts = np.array(pts_list, dtype=np.int32).reshape((-1, 1, 2))
         if pts.size == 0:
             continue
 
@@ -273,7 +270,6 @@ class OverlayHandler(BaseHTTPRequestHandler):
         return self._send(404, "text/plain; charset=utf-8", b"not found")
 
     def log_message(self, fmt, *args):
-        # route HTTP logs into addon logger (and keep it less noisy)
         logger.debug("HTTP: " + fmt, *args)
 
 def start_http_server():

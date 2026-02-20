@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.3.0"
+version: "0.3.1"
 slug: qr_inventory
 description: "Scan multiple QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -10,8 +10,12 @@ startup: services
 boot: auto
 init: false
 
-# Uses host networking so the HTTP port can be changed via add-on options (http_port).
-host_network: true
+# Expose a fixed internal port. You can change the *host* port in the add-on UI: Configuration → Network.
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: "Overlay snapshot (/overlay.png or /<overlay_png_name>) + detections (/detections.json)"
+webui: "http://[HOST]:[PORT:8099]/"
 
 options:
   camera_mode: rtsps
@@ -20,7 +24,6 @@ options:
   required_consistency: 3
   zones: "{}"
   tls_verify: false
-  http_port: 8099
   overlay_png_name: overlay.png
 
 schema:
@@ -30,8 +33,4 @@ schema:
   required_consistency: int
   zones: str
   tls_verify: bool
-  http_port: int(1,65535)
   overlay_png_name: str
-
-# Web UI link (defaults to http_port=8099; if you change http_port, update this link accordingly)
-webui: "http://[HOST]:8099/"
