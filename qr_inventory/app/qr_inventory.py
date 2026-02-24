@@ -51,6 +51,11 @@ stream_url = opts.get('rtsp_url')
 tls_verify = _opt_bool('tls_verify', False)
 
 # ------------------------------------------------------------
+# NEW: Restrict detection/decoding to zones only
+# ------------------------------------------------------------
+restrict_to_zones = _opt_bool("restrict_to_zones", False)
+
+# ------------------------------------------------------------
 # Accuracy / small QR tuning
 # ------------------------------------------------------------
 zone_fallback = _opt_bool("zone_fallback", True)
@@ -441,16 +446,28 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
     frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     h, w = frame_gray.shape[:2]
 
+    zones_ok = isinstance(zones_dict, dict) and bool(zones_dict)
+    zone_restrict_active = bool(restrict_to_zones and zones_ok)
+
     best = {}   # payload -> {"pts": pts, "area": area, "score": score, "diag": diag}
-    cand = {}   # key bucket -> {"pts": pts, "area": area}
+    cand = {}   # bucket -> {"pts": pts, "area": area}
+
+    def zone_of_pts(pts):
+        cx = int(np.mean(pts[:, 0]))
+        cy = int(np.mean(pts[:, 1]))
+        return centroid_to_zone(cx, cy, zones_dict)
 
     def add_best(payload, pts, score=None, diag=None):
+        if zone_restrict_active and zone_of_pts(pts) is None:
+            return
         area = _quad_area(pts)
         prev = best.get(payload)
         if prev is None or area > prev["area"]:
             best[payload] = {"pts": pts, "area": area, "score": score, "diag": diag}
 
     def add_candidate(pts):
+        if zone_restrict_active and zone_of_pts(pts) is None:
+            return
         cx = float(np.mean(pts[:, 0]))
         cy = float(np.mean(pts[:, 1]))
         key = (int(cx // 20), int(cy // 20))
@@ -459,29 +476,30 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
         if prev is None or area > prev["area"]:
             cand[key] = {"pts": pts, "area": area}
 
-    # Pass 1: full-frame variants
-    for variant in _preprocess_gray_variants(frame_gray):
-        decoded, candidates = _detect_and_decode_multi(variant)
-        for payload, pts in decoded:
-            warp, size, edge = _warp_patch(frame_gray, pts)
-            if warp is not None:
-                lap = _laplacian_var(warp)
-                con = _contrast_std(warp)
-                score = _certainty_score(edge, lap, con)
-                diag = {"edge_px": edge, "lap_var": lap, "contrast": con, "warp_size": size}
-            else:
-                score = None
-                diag = None
-            add_best(payload, pts, score=score, diag=diag)
+    # PASS 1: Full-frame scan (SKIPPED when restricted-to-zones is active)
+    if not zone_restrict_active:
+        for variant in _preprocess_gray_variants(frame_gray):
+            decoded, candidates = _detect_and_decode_multi(variant)
+            for payload, pts in decoded:
+                warp, size, edge = _warp_patch(frame_gray, pts)
+                if warp is not None:
+                    lap = _laplacian_var(warp)
+                    con = _contrast_std(warp)
+                    score = _certainty_score(edge, lap, con)
+                    diag = {"edge_px": edge, "lap_var": lap, "contrast": con, "warp_size": size}
+                else:
+                    score = None
+                    diag = None
+                add_best(payload, pts, score=score, diag=diag)
 
-        for pts in candidates:
-            add_candidate(pts)
+            for pts in candidates:
+                add_candidate(pts)
 
-        for pts in _detect_points(variant):
-            add_candidate(pts)
+            for pts in _detect_points(variant):
+                add_candidate(pts)
 
-    # Pass 2: per-zone candidate harvesting (scaled)
-    if zone_fallback and isinstance(zones_dict, dict) and zones_dict:
+    # PASS 2: Per-zone harvesting (always used; also the only pass when restricted)
+    if zone_fallback and zones_ok:
         pad = max(0, int(roi_padding_px))
         for _, box in zones_dict.items():
             try:
@@ -497,6 +515,7 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
             roi = frame_gray[y1p:y2p, x1p:x2p]
             if roi.size == 0:
                 continue
+
             for sc in ROI_SCALES:
                 sc = float(sc) if sc else 1.0
                 if sc <= 0:
@@ -529,7 +548,7 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
     # Limit candidates for decode pass
     cand_items = sorted(cand.values(), key=lambda v: v["area"], reverse=True)[:max_candidates]
 
-    # Decode candidates by warping (and keep those that still fail as overlay "candidates")
+    # Decode candidates by warping (and keep failures as overlay "candidates")
     failed_logged = 0
     do_debug = debug_metrics and (cycle_idx % debug_log_every == 0)
 
@@ -557,11 +576,14 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
             add_best(payload, pts, score=score, diag={"edge_px": edge, "lap_var": lap, "contrast": con, "warp_size": size})
             continue
 
-        # not decoded -> candidate output for overlay
         cx = int(np.mean(pts[:, 0])); cy = int(np.mean(pts[:, 1]))
         bucket = (int(cx // 20), int(cy // 20))
         if bucket in decoded_buckets:
-            continue  # skip candidates overlapping decoded tags
+            continue
+
+        zone = centroid_to_zone(cx, cy, zones_dict)
+        if zone_restrict_active and zone is None:
+            continue
 
         if do_debug and failed_logged < debug_max_failed_logs:
             logger.debug(
@@ -574,14 +596,13 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
             "payload": None,
             "points": pts.tolist(),
             "centroid": [cx, cy],
-            "zone": centroid_to_zone(cx, cy, zones_dict),
+            "zone": zone,
             "score": score,
             "reason": reason,
             "diag": {"edge_px": edge, "lap_var": lap, "contrast": con, "warp_size": size},
             "decoded": False,
         })
 
-    # Sort candidates by score and cap for overlay
     if overlay_show_candidates and overlay_max_candidates > 0 and overlay_candidates:
         overlay_candidates.sort(key=lambda d: float(d.get("score") or 0.0), reverse=True)
         overlay_candidates = overlay_candidates[:overlay_max_candidates]
@@ -594,6 +615,10 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
         cx = int(np.mean(pts[:, 0]))
         cy = int(np.mean(pts[:, 1]))
         zone = centroid_to_zone(cx, cy, zones_dict)
+
+        if zone_restrict_active and zone is None:
+            continue
+
         detections.append({
             "payload": payload,
             "points": pts.tolist(),
@@ -605,7 +630,7 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
         })
 
     detections.extend(overlay_candidates)
-    return detections
+    return detections, zone_restrict_active
 
 # ------------------------------------------------------------
 # Overlay HTTP server
@@ -641,10 +666,9 @@ def draw_overlay(frame, detections, zones_dict):
     out = frame.copy()
     h, w = out.shape[:2]
 
-    # colors (BGR)
     ORANGE = (0, 165, 255)
     RED = (0, 0, 255)
-    CAND = (255, 255, 0)  # cyan for non-decoded candidates
+    CAND = (255, 255, 0)  # cyan
 
     # Zones first
     if isinstance(zones_dict, dict) and zones_dict:
@@ -727,7 +751,6 @@ def draw_overlay(frame, detections, zones_dict):
     # candidates first, decoded on top
     for det in candidates:
         _draw_item(det, CAND, prefix="CAND")
-
     for det in decoded:
         _draw_item(det, RED)
 
@@ -804,18 +827,17 @@ threading.Thread(target=start_http_server, daemon=True).start()
 # ------------------------------------------------------------
 logger.info(
     "Starting QR Inventory (mode=%s interval=%ss required=%s tls_verify=%s overlay_png_name=%s "
-    "ROI_SCALES=%s warp_scale=%s try_invert=%s adaptive_block_sizes=%s max_candidates=%s "
-    "overlay_show_candidates=%s overlay_max_candidates=%s overlay_show_scores=%s overlay_show_candidate_reason=%s "
-    "debug_metrics=%s)",
+    "restrict_to_zones=%s ROI_SCALES=%s warp_scale=%s try_invert=%s adaptive_block_sizes=%s max_candidates=%s "
+    "overlay_show_candidates=%s overlay_max_candidates=%s overlay_show_scores=%s overlay_show_candidate_reason=%s)",
     camera_mode, interval, required, tls_verify, OVERLAY_PNG_NAME,
-    ROI_SCALES, warp_scale, try_invert, adaptive_block_sizes, max_candidates,
+    restrict_to_zones, ROI_SCALES, warp_scale, try_invert, adaptive_block_sizes, max_candidates,
     overlay_show_candidates, overlay_max_candidates, overlay_show_scores, overlay_show_candidate_reason,
-    debug_metrics
 )
 
 _log_stream_info("STARTUP")
 cycle_idx = 0
 last_stream_info_ts = 0.0
+warned_no_zones = False
 
 while True:
     cycle_idx += 1
@@ -830,6 +852,11 @@ while True:
             time.sleep(interval)
             continue
 
+        if restrict_to_zones and (not isinstance(zones, dict) or not zones):
+            if not warned_no_zones:
+                logger.warning("restrict_to_zones=true but zones is empty/invalid. Falling back to full-frame detection.")
+                warned_no_zones = True
+
         if stream_info_interval_minutes > 0:
             now = time.time()
             if last_stream_info_ts == 0 or (now - last_stream_info_ts) >= stream_info_interval_minutes * 60:
@@ -842,38 +869,27 @@ while True:
             continue
 
         fh, fw = frame.shape[:2]
-        if debug_metrics and (cycle_idx % debug_log_every == 0):
-            logger.debug("Captured frame: %dx%d", fw, fh)
+        detections, zone_restrict_active = detect_qr_robust(frame, zones, cycle_idx=cycle_idx)
 
-        detections = detect_qr_robust(frame, zones, cycle_idx=cycle_idx)
-
-        # Log decoded only
+        # decoded only -> inventory mapping
         for det in detections:
             if not det.get("decoded", True):
                 continue
+
             info = det["payload"]
             cx, cy = det["centroid"]
             zone = det["zone"]
-            score = det.get("score", None)
-            diag = det.get("diag", None)
+
+            # in case padding produced a decoded outside, ignore if restricted
+            if zone_restrict_active and zone is None:
+                continue
 
             history[info].append(zone)
 
-            if debug_metrics and score is not None and diag is not None:
-                logger.info(
-                    "Detected payload=%s centroid=(%d,%d) zone=%s certainty=%d%% edge_px=%.1f lap_var=%.1f contrast=%.1f history=%s",
-                    info, cx, cy, zone,
-                    int(round(float(score) * 100)),
-                    float(diag.get("edge_px", 0.0)),
-                    float(diag.get("lap_var", 0.0)),
-                    float(diag.get("contrast", 0.0)),
-                    list(history[info]),
-                )
-            else:
-                logger.info(
-                    "Detected payload=%s centroid=(%d,%d) zone=%s history=%s",
-                    info, cx, cy, zone, list(history[info])
-                )
+            logger.info(
+                "Detected payload=%s centroid=(%d,%d) zone=%s history=%s",
+                info, cx, cy, zone, list(history[info])
+            )
 
             if len(history[info]) >= history_maxlen and len(set(history[info])) == 1:
                 confirmed_zone = history[info][-1]
@@ -892,10 +908,8 @@ while True:
             "detections_total": len(detections),
             "decoded": sum(1 for d in detections if d.get("decoded", True)),
             "candidates": sum(1 for d in detections if not d.get("decoded", True)),
+            "restrict_to_zones_active": zone_restrict_active,
         }
-
-        if debug_metrics and (cycle_idx % debug_log_every == 0):
-            logger.debug("Output: %s", fi)
 
         with STATE_LOCK:
             STATE["ts"] = int(time.time())
