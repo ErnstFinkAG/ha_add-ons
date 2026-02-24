@@ -68,6 +68,11 @@ warp_scale = _opt_float("warp_scale", 5.0)
 try_invert = _opt_bool("try_invert", True)
 max_candidates = _opt_int("max_candidates", 160)
 
+# NEW: deeper zone scanning (improves decode rate when every zone has a QR)
+zone_deep_scan = _opt_bool("zone_deep_scan", True)
+zone_extra_scales_raw = opts.get("zone_extra_scales", "6.0,8.0")
+zone_early_stop_score = _opt_float("zone_early_stop_score", 0.85)  # stop scanning a zone if certainty >= this
+
 abs_raw = opts.get("adaptive_block_sizes", None)
 if isinstance(abs_raw, list):
     adaptive_block_sizes = [int(x) for x in abs_raw if int(x) % 2 == 1 and int(x) >= 11]
@@ -88,9 +93,9 @@ elif isinstance(abs_raw, str) and abs_raw.strip():
 else:
     adaptive_block_sizes = [35]
 
-def _parse_roi_scales(raw, fallback):
+def _parse_float_list(raw, fallback_list):
     if raw is None:
-        return [fallback] if fallback and fallback > 0 else [2.0]
+        return fallback_list[:]
     if isinstance(raw, list):
         out = []
         for x in raw:
@@ -100,7 +105,7 @@ def _parse_roi_scales(raw, fallback):
                     out.append(xf)
             except Exception:
                 pass
-        return out or ([fallback] if fallback and fallback > 0 else [2.0])
+        return out or fallback_list[:]
     if isinstance(raw, str):
         parts = [p.strip() for p in raw.split(",") if p.strip()]
         out = []
@@ -111,10 +116,23 @@ def _parse_roi_scales(raw, fallback):
                     out.append(xf)
             except Exception:
                 pass
-        return out or ([fallback] if fallback and fallback > 0 else [2.0])
-    return [fallback] if fallback and fallback > 0 else [2.0]
+        return out or fallback_list[:]
+    return fallback_list[:]
+
+def _parse_roi_scales(raw, fallback):
+    base = _parse_float_list(raw, [fallback if fallback and fallback > 0 else 2.0])
+    # remove duplicates, keep stable order
+    seen = set()
+    out = []
+    for s in base:
+        k = round(float(s), 6)
+        if k not in seen:
+            seen.add(k)
+            out.append(float(s))
+    return out
 
 ROI_SCALES = _parse_roi_scales(roi_scales_raw, roi_scale)
+ZONE_EXTRA_SCALES = _parse_float_list(zone_extra_scales_raw, [6.0, 8.0])
 
 # ------------------------------------------------------------
 # Overlay options
@@ -124,8 +142,6 @@ overlay_max_candidates = max(0, _opt_int("overlay_max_candidates", 40))
 overlay_show_scores = _opt_bool("overlay_show_scores", True)
 overlay_show_size_px = _opt_bool("overlay_show_size_px", True)
 overlay_show_candidate_reason = _opt_bool("overlay_show_candidate_reason", True)
-
-# NEW: zone-level status readout
 overlay_show_zone_status = _opt_bool("overlay_show_zone_status", True)
 
 # ------------------------------------------------------------
@@ -336,10 +352,6 @@ def _contrast_std(gray: np.ndarray) -> float:
         return 0.0
 
 def _clip_fractions(gray: np.ndarray):
-    """
-    Return (bright_clip_frac, dark_clip_frac) in 0..1.
-    Reflection/glare often manifests as lots of near-white pixels.
-    """
     try:
         bright = float(np.mean(gray >= 250))
         dark = float(np.mean(gray <= 5))
@@ -356,7 +368,6 @@ def _certainty_score(edge_px: float, lap_var: float, contrast: float) -> float:
     return float(max(0.0, min(1.0, score)))
 
 def _failure_reason(edge_px: float, lap_var: float, contrast: float, bright_clip: float, dark_clip: float) -> str:
-    # prioritize glare/reflection detection
     if bright_clip >= 0.35:
         return "reflection"
     if edge_px < 35:
@@ -365,7 +376,6 @@ def _failure_reason(edge_px: float, lap_var: float, contrast: float, bright_clip
         return "blurry"
     if contrast < 18:
         return "low_contrast"
-    # optional: extreme black clipping sometimes indicates heavy shadow/crush
     if dark_clip >= 0.35:
         return "shadow"
     return "unknown"
@@ -457,6 +467,22 @@ def _warp_patch(frame_gray: np.ndarray, pts_full: np.ndarray):
     except Exception:
         return None, 0, edge
 
+def _analyze_warp(warp: np.ndarray, edge: float, warp_size: int):
+    lap = _laplacian_var(warp)
+    con = _contrast_std(warp)
+    bright, dark = _clip_fractions(warp)
+    score = _certainty_score(edge, lap, con)
+    reason = _failure_reason(edge, lap, con, bright, dark)
+    diag = {
+        "edge_px": edge,
+        "lap_var": lap,
+        "contrast": con,
+        "warp_size": warp_size,
+        "bright_clip": bright,
+        "dark_clip": dark,
+    }
+    return score, reason, diag
+
 def _decode_warp_variants(warp: np.ndarray) -> str:
     for v in _preprocess_gray_variants(warp):
         try:
@@ -468,264 +494,316 @@ def _decode_warp_variants(warp: np.ndarray) -> str:
             return payload
     return ""
 
-def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
-    frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-    h, w = frame_gray.shape[:2]
+def _pct(score):
+    try:
+        if score is None:
+            return None
+        return int(round(float(score) * 100))
+    except Exception:
+        return None
 
+# ------------------------------------------------------------
+# Zone-optimized scan (NEW, big boost when every zone has a QR)
+# ------------------------------------------------------------
+def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list[float], cycle_idx: int):
+    """
+    Returns:
+      decoded_det or None
+      best_candidate_det or None
+    """
+    h, w = frame_gray.shape[:2]
+    try:
+        x1, y1, x2, y2 = map(int, box)
+    except Exception:
+        return None, None
+
+    x1p = max(0, x1 - pad_px)
+    y1p = max(0, y1 - pad_px)
+    x2p = min(w - 1, x2 + pad_px)
+    y2p = min(h - 1, y2 + pad_px)
+    if x2p <= x1p or y2p <= y1p:
+        return None, None
+
+    roi = frame_gray[y1p:y2p, x1p:x2p]
+    if roi.size == 0:
+        return None, None
+
+    best_decoded = None  # dict with payload, pts_full, score, diag
+    best_candidate = None  # dict with pts_full, score, reason, diag
+
+    do_debug = debug_metrics and (cycle_idx % debug_log_every == 0)
+    failed_logged = 0
+
+    def map_pts(pts_local, sc):
+        pts_local = np.array(pts_local, dtype=np.float32).reshape(-1, 2)
+        if pts_local.shape[0] != 4:
+            return None
+        return (pts_local / sc) + np.array([x1p, y1p], dtype=np.float32)
+
+    def consider_candidate(pts_full):
+        nonlocal best_candidate
+        warp, ws, edge = _warp_patch(frame_gray, pts_full)
+        if warp is None:
+            return
+        score, reason, diag = _analyze_warp(warp, edge, ws)
+        cand = {
+            "payload": None,
+            "points": pts_full.tolist(),
+            "centroid": [int(np.mean(pts_full[:, 0])), int(np.mean(pts_full[:, 1]))],
+            "zone": zname,
+            "score": score,
+            "reason": reason,
+            "diag": diag,
+            "decoded": False,
+        }
+        if best_candidate is None or float(score) > float(best_candidate.get("score") or 0.0):
+            best_candidate = cand
+
+    def consider_decoded(payload, pts_full):
+        nonlocal best_decoded
+        warp, ws, edge = _warp_patch(frame_gray, pts_full)
+        if warp is None:
+            score = None
+            diag = None
+        else:
+            score, _, diag = _analyze_warp(warp, edge, ws)
+        det = {
+            "payload": payload,
+            "points": pts_full.tolist(),
+            "centroid": [int(np.mean(pts_full[:, 0])), int(np.mean(pts_full[:, 1]))],
+            "zone": zname,
+            "score": score,
+            "diag": diag,
+            "decoded": True,
+        }
+        if best_decoded is None:
+            best_decoded = det
+        else:
+            s_new = float(score) if score is not None else 0.0
+            s_old = float(best_decoded.get("score") or 0.0)
+            if s_new > s_old:
+                best_decoded = det
+
+    for sc in scales:
+        sc = float(sc) if sc else 1.0
+        if sc <= 0:
+            sc = 1.0
+        roi_s = cv2.resize(roi, None, fx=sc, fy=sc, interpolation=cv2.INTER_CUBIC) if sc != 1.0 else roi
+
+        for variant in _preprocess_gray_variants(roi_s):
+            # 1) detectAndDecode (single)
+            try:
+                payload, pts = qcd.detectAndDecode(variant)
+            except Exception:
+                payload, pts = "", None
+            payload = (payload or "").strip()
+            if payload and pts is not None:
+                pts_full = map_pts(pts, sc)
+                if pts_full is not None:
+                    consider_decoded(payload, pts_full)
+                    if best_decoded and (best_decoded.get("score") is not None) and float(best_decoded["score"]) >= zone_early_stop_score:
+                        return best_decoded, best_candidate
+
+            # 2) detectAndDecodeCurved (helps perspective / warping)
+            if zone_deep_scan:
+                try:
+                    payload2, pts2 = qcd.detectAndDecodeCurved(variant)
+                except Exception:
+                    payload2, pts2 = "", None
+                payload2 = (payload2 or "").strip()
+                if payload2 and pts2 is not None:
+                    pts_full = map_pts(pts2, sc)
+                    if pts_full is not None:
+                        consider_decoded(payload2, pts_full)
+                        if best_decoded and (best_decoded.get("score") is not None) and float(best_decoded["score"]) >= zone_early_stop_score:
+                            return best_decoded, best_candidate
+
+            # 3) multi (sometimes catches cases single misses)
+            decoded_list, cand_list = _detect_and_decode_multi(variant)
+            for p, pts_m in decoded_list:
+                pts_full = map_pts(pts_m, sc)
+                if pts_full is not None:
+                    consider_decoded(p, pts_full)
+            for pts_m in cand_list:
+                pts_full = map_pts(pts_m, sc)
+                if pts_full is not None:
+                    consider_candidate(pts_full)
+
+            # 4) candidate points (detectMulti) + warp decode
+            for pts_m in _detect_points(variant):
+                pts_full = map_pts(pts_m, sc)
+                if pts_full is not None:
+                    # try warp decode directly
+                    warp, ws, edge = _warp_patch(frame_gray, pts_full)
+                    if warp is not None:
+                        payload_w = _decode_warp_variants(warp)
+                        if payload_w:
+                            score, _, diag = _analyze_warp(warp, edge, ws)
+                            consider_decoded(payload_w, pts_full)
+                            if best_decoded and (best_decoded.get("score") is not None) and float(best_decoded["score"]) >= zone_early_stop_score:
+                                return best_decoded, best_candidate
+                        else:
+                            consider_candidate(pts_full)
+                            if do_debug and failed_logged < debug_max_failed_logs:
+                                s = best_candidate.get("score") if best_candidate else None
+                                logger.debug("Zone %s: candidate not decoded (best score=%.2f)", zname, float(s or 0.0))
+                                failed_logged += 1
+
+        # if we have a very good decode, stop scaling further
+        if best_decoded and best_decoded.get("score") is not None and float(best_decoded["score"]) >= zone_early_stop_score:
+            break
+
+    return best_decoded, best_candidate
+
+# ------------------------------------------------------------
+# Robust detection entrypoint
+# ------------------------------------------------------------
+def detect_qr(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
+    frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     zones_ok = isinstance(zones_dict, dict) and bool(zones_dict)
     zone_restrict_active = bool(restrict_to_zones and zones_ok)
 
-    best = {}   # payload -> {"pts": pts, "area": area, "score": score, "diag": diag}
-    cand = {}   # bucket -> {"pts": pts, "area": area}
+    detections = []
 
-    def zone_of_pts(pts):
-        cx = int(np.mean(pts[:, 0]))
-        cy = int(np.mean(pts[:, 1]))
-        return centroid_to_zone(cx, cy, zones_dict)
-
-    def add_best(payload, pts, score=None, diag=None):
-        if zone_restrict_active and zone_of_pts(pts) is None:
-            return
-        area = _quad_area(pts)
-        prev = best.get(payload)
-        if prev is None or area > prev["area"]:
-            best[payload] = {"pts": pts, "area": area, "score": score, "diag": diag}
-
-    def add_candidate(pts):
-        if zone_restrict_active and zone_of_pts(pts) is None:
-            return
-        cx = float(np.mean(pts[:, 0]))
-        cy = float(np.mean(pts[:, 1]))
-        key = (int(cx // 20), int(cy // 20))
-        area = _quad_area(pts)
-        prev = cand.get(key)
-        if prev is None or area > prev["area"]:
-            cand[key] = {"pts": pts, "area": area}
-
-    # PASS 1: Full-frame scan (skipped when restricted-to-zones is active)
-    if not zone_restrict_active:
-        for variant in _preprocess_gray_variants(frame_gray):
-            decoded, candidates = _detect_and_decode_multi(variant)
-            for payload, pts in decoded:
-                warp, size, edge = _warp_patch(frame_gray, pts)
-                if warp is not None:
-                    lap = _laplacian_var(warp)
-                    con = _contrast_std(warp)
-                    bright, dark = _clip_fractions(warp)
-                    score = _certainty_score(edge, lap, con)
-                    diag = {
-                        "edge_px": edge, "lap_var": lap, "contrast": con, "warp_size": size,
-                        "bright_clip": bright, "dark_clip": dark
-                    }
-                else:
-                    score = None
-                    diag = None
-                add_best(payload, pts, score=score, diag=diag)
-
-            for pts in candidates:
-                add_candidate(pts)
-
-            for pts in _detect_points(variant):
-                add_candidate(pts)
-
-    # PASS 2: Per-zone harvesting (always used; only pass when restricted)
-    if zone_fallback and zones_ok:
+    if zone_restrict_active:
+        # Zone-only: scan each zone independently and keep best decode or best candidate
         pad = max(0, int(roi_padding_px))
-        for _, box in zones_dict.items():
-            try:
-                x1, y1, x2, y2 = map(int, box)
-            except Exception:
-                continue
-            x1p = max(0, x1 - pad)
-            y1p = max(0, y1 - pad)
-            x2p = min(w - 1, x2 + pad)
-            y2p = min(h - 1, y2 + pad)
-            if x2p <= x1p or y2p <= y1p:
-                continue
-            roi = frame_gray[y1p:y2p, x1p:x2p]
-            if roi.size == 0:
-                continue
 
-            for sc in ROI_SCALES:
-                sc = float(sc) if sc else 1.0
-                if sc <= 0:
-                    sc = 1.0
-                roi_s = cv2.resize(roi, None, fx=sc, fy=sc, interpolation=cv2.INTER_CUBIC) if sc != 1.0 else roi
+        # effective scales = ROI_SCALES + optional extra (only for zone scanning)
+        eff = ROI_SCALES[:]
+        if zone_deep_scan:
+            eff = eff + ZONE_EXTRA_SCALES
+        # de-dup + sort (ascending helps find easy decodes early)
+        eff = sorted({round(float(s), 6) for s in eff if float(s) > 0})
+        eff = [float(s) for s in eff] or [2.0, 3.0, 4.0, 6.0, 8.0]
 
-                for pts in _detect_points(roi_s):
-                    pts_full = (pts / sc) + np.array([x1p, y1p], dtype=np.float32)
-                    add_candidate(pts_full)
+        for zname, box in zones_dict.items():
+            dec, cand = scan_zone(frame_gray, str(zname), box, pad, eff, cycle_idx)
+            if dec is not None:
+                detections.append(dec)
+            elif cand is not None and overlay_show_candidates:
+                detections.append(cand)
+            else:
+                # no detection for this zone -> nothing in detections list (zone overlay will show MISS no_candidate)
+                pass
 
-                decoded, candidates = _detect_and_decode_multi(roi_s)
-                for payload, pts in decoded:
-                    pts_full = (pts / sc) + np.array([x1p, y1p], dtype=np.float32)
-                    warp, size, edge = _warp_patch(frame_gray, pts_full)
-                    if warp is not None:
-                        lap = _laplacian_var(warp)
-                        con = _contrast_std(warp)
-                        bright, dark = _clip_fractions(warp)
-                        score = _certainty_score(edge, lap, con)
-                        diag = {
-                            "edge_px": edge, "lap_var": lap, "contrast": con, "warp_size": size,
-                            "bright_clip": bright, "dark_clip": dark
-                        }
-                    else:
-                        score = None
-                        diag = None
-                    add_best(payload, pts_full, score=score, diag=diag)
+        return detections, True
 
-                for pts in candidates:
-                    pts_full = (pts / sc) + np.array([x1p, y1p], dtype=np.float32)
-                    add_candidate(pts_full)
+    # Not restricted: fall back to the existing “candidate + decode” logic by scanning whole frame
+    # (kept intentionally simple; zones are still used for zone labels/status)
+    # We reuse the old behavior: detect all codes anywhere, plus candidate overlays.
+    best = {}  # payload -> det dict
+    cand = {}  # bucket -> best candidate det
 
-    # Limit candidates for decode pass
-    cand_items = sorted(cand.values(), key=lambda v: v["area"], reverse=True)[:max_candidates]
-
-    failed_logged = 0
-    do_debug = debug_metrics and (cycle_idx % debug_log_every == 0)
-
-    overlay_candidates = []
-    decoded_buckets = set()
-
-    for _, v in best.items():
-        pts = v["pts"]
-        cx = float(np.mean(pts[:, 0])); cy = float(np.mean(pts[:, 1]))
-        decoded_buckets.add((int(cx // 20), int(cy // 20)))
-
-    for item in cand_items:
-        pts = item["pts"]
-        warp, size, edge = _warp_patch(frame_gray, pts)
+    def add_decoded(payload, pts_full):
+        warp, ws, edge = _warp_patch(frame_gray, pts_full)
         if warp is None:
-            continue
+            score = None
+            diag = None
+        else:
+            score, _, diag = _analyze_warp(warp, edge, ws)
 
-        lap = _laplacian_var(warp)
-        con = _contrast_std(warp)
-        bright, dark = _clip_fractions(warp)
-
-        score = _certainty_score(edge, lap, con)
-        reason = _failure_reason(edge, lap, con, bright, dark)
-
-        payload = _decode_warp_variants(warp)
-        if payload:
-            diag = {
-                "edge_px": edge, "lap_var": lap, "contrast": con, "warp_size": size,
-                "bright_clip": bright, "dark_clip": dark
-            }
-            add_best(payload, pts, score=score, diag=diag)
-            continue
-
-        cx = int(np.mean(pts[:, 0])); cy = int(np.mean(pts[:, 1]))
-        bucket = (int(cx // 20), int(cy // 20))
-        if bucket in decoded_buckets:
-            continue
-
+        cx = int(np.mean(pts_full[:, 0])); cy = int(np.mean(pts_full[:, 1]))
         zone = centroid_to_zone(cx, cy, zones_dict)
-        if zone_restrict_active and zone is None:
-            continue
+        det = {
+            "payload": payload,
+            "points": pts_full.tolist(),
+            "centroid": [cx, cy],
+            "zone": zone,
+            "score": score,
+            "diag": diag,
+            "decoded": True,
+        }
+        prev = best.get(payload)
+        if prev is None:
+            best[payload] = det
+        else:
+            s_new = float(score) if score is not None else 0.0
+            s_old = float(prev.get("score") or 0.0)
+            if s_new > s_old:
+                best[payload] = det
 
-        if do_debug and failed_logged < debug_max_failed_logs:
-            logger.debug(
-                "QR candidate not decoded: center=(%d,%d) edge_px=%.1f warp=%d lap_var=%.1f contrast=%.1f bright_clip=%.2f score=%.2f reason=%s",
-                cx, cy, edge, size, lap, con, bright, score, reason
-            )
-            failed_logged += 1
-
-        overlay_candidates.append({
+    def add_candidate(pts_full):
+        warp, ws, edge = _warp_patch(frame_gray, pts_full)
+        if warp is None:
+            return
+        score, reason, diag = _analyze_warp(warp, edge, ws)
+        cx = int(np.mean(pts_full[:, 0])); cy = int(np.mean(pts_full[:, 1]))
+        bucket = (int(cx // 20), int(cy // 20))
+        zone = centroid_to_zone(cx, cy, zones_dict)
+        det = {
             "payload": None,
-            "points": pts.tolist(),
+            "points": pts_full.tolist(),
             "centroid": [cx, cy],
             "zone": zone,
             "score": score,
             "reason": reason,
-            "diag": {
-                "edge_px": edge, "lap_var": lap, "contrast": con, "warp_size": size,
-                "bright_clip": bright, "dark_clip": dark
-            },
+            "diag": diag,
             "decoded": False,
-        })
+        }
+        prev = cand.get(bucket)
+        if prev is None or float(score) > float(prev.get("score") or 0.0):
+            cand[bucket] = det
 
-    if overlay_show_candidates and overlay_max_candidates > 0 and overlay_candidates:
-        overlay_candidates.sort(key=lambda d: float(d.get("score") or 0.0), reverse=True)
-        overlay_candidates = overlay_candidates[:overlay_max_candidates]
-    else:
-        overlay_candidates = []
+    for variant in _preprocess_gray_variants(frame_gray):
+        decoded_list, cand_list = _detect_and_decode_multi(variant)
+        for p, pts in decoded_list:
+            pts_full = np.array(pts, dtype=np.float32).reshape(-1, 2)
+            if pts_full.shape[0] == 4:
+                add_decoded(p, pts_full)
+        for pts in cand_list:
+            pts_full = np.array(pts, dtype=np.float32).reshape(-1, 2)
+            if pts_full.shape[0] == 4:
+                add_candidate(pts_full)
+        for pts in _detect_points(variant):
+            pts_full = np.array(pts, dtype=np.float32).reshape(-1, 2)
+            if pts_full.shape[0] == 4:
+                add_candidate(pts_full)
 
-    detections = []
-    for payload, v in best.items():
-        pts = v["pts"]
-        cx = int(np.mean(pts[:, 0]))
-        cy = int(np.mean(pts[:, 1]))
-        zone = centroid_to_zone(cx, cy, zones_dict)
-        if zone_restrict_active and zone is None:
-            continue
-        detections.append({
-            "payload": payload,
-            "points": pts.tolist(),
-            "centroid": [cx, cy],
-            "zone": zone,
-            "score": v.get("score"),
-            "diag": v.get("diag"),
-            "decoded": True,
-        })
+    detections.extend(best.values())
+    if overlay_show_candidates:
+        candidates = sorted(cand.values(), key=lambda d: float(d.get("score") or 0.0), reverse=True)
+        detections.extend(candidates[:overlay_max_candidates] if overlay_max_candidates > 0 else candidates)
 
-    detections.extend(overlay_candidates)
-    return detections, zone_restrict_active
+    return detections, False
 
 # ------------------------------------------------------------
-# Zone status computation (NEW)
+# Zone status computation
 # ------------------------------------------------------------
 def compute_zone_status(zones_dict: dict, detections: list):
-    """
-    For each zone:
-      - if decoded present => show OK + best decoded (highest score/size)
-      - else if candidate present => show MISS + best candidate reason
-      - else => MISS no_candidate
-    """
     status = {}
     if not isinstance(zones_dict, dict):
         return status
 
     def det_key(d):
-        score = d.get("score")
         try:
-            score = float(score) if score is not None else 0.0
+            score = float(d.get("score") or 0.0)
         except Exception:
             score = 0.0
-        edge = None
         diag = d.get("diag") or {}
-        edge = diag.get("edge_px", None)
         try:
-            edge = float(edge) if edge is not None else 0.0
+            edge = float(diag.get("edge_px") or 0.0)
         except Exception:
             edge = 0.0
         return (score, edge)
 
-    # init
     for zname in zones_dict.keys():
         status[zname] = {"kind": "none", "det": None}
 
-    # group
     for d in detections:
         z = d.get("zone")
         if not z or z not in status:
             continue
-
         if d.get("decoded", True):
             cur = status[z]
-            if cur["kind"] != "decoded":
+            if cur["kind"] != "decoded" or det_key(d) > det_key(cur["det"]):
                 status[z] = {"kind": "decoded", "det": d}
-            else:
-                if det_key(d) > det_key(cur["det"]):
-                    status[z] = {"kind": "decoded", "det": d}
         else:
             cur = status[z]
             if cur["kind"] == "decoded":
                 continue
-            if cur["kind"] != "candidate":
+            if cur["kind"] != "candidate" or det_key(d) > det_key(cur["det"]):
                 status[z] = {"kind": "candidate", "det": d}
-            else:
-                if det_key(d) > det_key(cur["det"]):
-                    status[z] = {"kind": "candidate", "det": d}
 
     return status
 
@@ -751,14 +829,6 @@ def _safe_label(s: str, max_len: int = 96) -> str:
         return s[: max_len - 1] + "…"
     return s
 
-def _pct(score):
-    try:
-        if score is None:
-            return None
-        return int(round(float(score) * 100))
-    except Exception:
-        return None
-
 def _edge_px_from_det(det):
     diag = det.get("diag") or {}
     edge = diag.get("edge_px", None)
@@ -778,7 +848,6 @@ def draw_overlay(frame, detections, zones_dict):
     out = frame.copy()
     h, w = out.shape[:2]
 
-    # Colors (BGR)
     ORANGE = (0, 165, 255)
     RED = (0, 0, 255)
     CAND = (255, 255, 0)      # cyan
@@ -788,8 +857,10 @@ def draw_overlay(frame, detections, zones_dict):
 
     zone_status = compute_zone_status(zones_dict, detections) if overlay_show_zone_status else {}
 
-    # Zones first
+    # Zones first + status
     if isinstance(zones_dict, dict) and zones_dict:
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        pad = 3
         for zname, box in zones_dict.items():
             try:
                 x1, y1, x2, y2 = map(int, box)
@@ -804,104 +875,89 @@ def draw_overlay(frame, detections, zones_dict):
 
             cv2.rectangle(out, (x1, y1), (x2, y2), ORANGE, 2)
 
-            # Zone label box (line 1)
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.55
-            thickness = 2
-            pad = 3
-
-            zone_label = _safe_label(str(zname), max_len=32)
-            (tw, th), baseline = cv2.getTextSize(zone_label, font, font_scale, thickness)
-            zbx1, zby1 = x1, y1
+            # Zone name
+            zl = _safe_label(str(zname), 32)
+            (tw, th), base = cv2.getTextSize(zl, font, 0.55, 2)
             zbx2 = min(w - 1, x1 + tw + pad * 2)
-            zby2 = min(h - 1, y1 + th + baseline + pad * 2)
+            zby2 = min(h - 1, y1 + th + base + pad * 2)
+            cv2.rectangle(out, (x1, y1), (zbx2, zby2), ORANGE, -1)
+            cv2.putText(out, zl, (x1 + pad, min(h - 1, y1 + th + pad)), font, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
 
-            cv2.rectangle(out, (zbx1, zby1), (zbx2, zby2), ORANGE, -1)
-            cv2.putText(out, zone_label, (x1 + pad, min(h - 1, y1 + th + pad)),
-                        font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
-
-            # Zone status box (line 2) - NEW
             if overlay_show_zone_status:
                 st = zone_status.get(zname, {"kind": "none", "det": None})
                 kind = st.get("kind", "none")
                 det = st.get("det")
 
                 if kind == "decoded" and det:
-                    p = _pct(det.get("score"))
-                    edgepx = _edge_px_from_det(det)
                     parts = ["OK"]
-                    if overlay_show_scores and p is not None:
-                        parts.append(f"{p}%")
-                    if overlay_show_size_px and edgepx is not None:
-                        parts.append(f"{edgepx}px")
-                    status_text = " ".join(parts)
+                    if overlay_show_scores:
+                        p = _pct(det.get("score"))
+                        if p is not None:
+                            parts.append(f"{p}%")
+                    if overlay_show_size_px:
+                        ep = _edge_px_from_det(det)
+                        if ep is not None:
+                            parts.append(f"{ep}px")
+                    text = " ".join(parts)
                     bg = OKBG
+                    fg = (255, 255, 255)
                 elif kind == "candidate" and det:
-                    p = _pct(det.get("score"))
-                    edgepx = _edge_px_from_det(det)
-                    reason = det.get("reason") or "unknown"
                     parts = ["MISS"]
-                    if overlay_show_scores and p is not None:
-                        parts.append(f"{p}%")
-                    if overlay_show_size_px and edgepx is not None:
-                        parts.append(f"{edgepx}px")
-                    if overlay_show_candidate_reason and reason:
-                        parts.append(reason)
-                    status_text = " ".join(parts)
+                    if overlay_show_scores:
+                        p = _pct(det.get("score"))
+                        if p is not None:
+                            parts.append(f"{p}%")
+                    if overlay_show_size_px:
+                        ep = _edge_px_from_det(det)
+                        if ep is not None:
+                            parts.append(f"{ep}px")
+                    if overlay_show_candidate_reason:
+                        r = det.get("reason") or "unknown"
+                        parts.append(r)
+                    text = " ".join(parts)
                     bg = CAND_BG
+                    fg = (0, 0, 0)
                 else:
-                    status_text = "MISS no_candidate"
+                    text = "MISS no_candidate"
                     bg = MISSBG
+                    fg = (255, 255, 255)
 
-                status_text = _safe_label(status_text, max_len=40)
-                (stw, sth), sbase = cv2.getTextSize(status_text, font, 0.5, 1)
-                # place just below zone label box
+                text = _safe_label(text, 44)
+                (stw, sth), sbase = cv2.getTextSize(text, font, 0.5, 1)
                 sy1 = min(h - 1, zby2 + 2)
                 sy2 = min(h - 1, sy1 + sth + sbase + pad * 2)
-                sx1 = x1
                 sx2 = min(w - 1, x1 + stw + pad * 2)
-
-                # keep inside image
-                if sy1 < h - 1 and sy2 > sy1:
-                    cv2.rectangle(out, (sx1, sy1), (sx2, sy2), bg, -1)
-                    cv2.putText(out, status_text, (sx1 + pad, min(h - 1, sy1 + sth + pad)),
-                                font, 0.5, (0, 0, 0) if bg == CAND_BG else (255, 255, 255),
-                                1, cv2.LINE_AA)
+                if sy2 > sy1:
+                    cv2.rectangle(out, (x1, sy1), (sx2, sy2), bg, -1)
+                    cv2.putText(out, text, (x1 + pad, min(h - 1, sy1 + sth + pad)), font, 0.5, fg, 1, cv2.LINE_AA)
 
     decoded = [d for d in detections if d.get("decoded", True)]
     candidates = [d for d in detections if not d.get("decoded", True)]
 
-    def _draw_item(det, color, prefix=None):
+    def draw_det(det, color, prefix="CAND"):
         pts_list = det.get("points", [])
         if not pts_list:
             return
         pts = np.array(pts_list, dtype=np.int32).reshape((-1, 1, 2))
         if pts.size == 0:
             return
-
         cv2.polylines(out, [pts], isClosed=True, color=color, thickness=2)
 
         payload = det.get("payload", "")
-        score = det.get("score", None)
-        p = _pct(score) if overlay_show_scores else None
+        label = payload if payload else prefix
 
-        if payload:
-            label = payload
-        else:
-            label = prefix or "CAND"
-
-        if p is not None:
-            label = f"{label} {p}%"
-
+        if overlay_show_scores:
+            p = _pct(det.get("score"))
+            if p is not None:
+                label = f"{label} {p}%"
         if overlay_show_size_px:
-            edgepx = _edge_px_from_det(det)
-            if edgepx is not None:
-                label = f"{label} {edgepx}px"
-
+            ep = _edge_px_from_det(det)
+            if ep is not None:
+                label = f"{label} {ep}px"
         if (not det.get("decoded", True)) and overlay_show_candidate_reason:
-            reason = det.get("reason")
-            if reason:
-                label = f"{label} {reason}"
+            r = det.get("reason")
+            if r:
+                label = f"{label} {r}"
 
         label = _safe_label(label)
         if not label:
@@ -909,25 +965,19 @@ def draw_overlay(frame, detections, zones_dict):
 
         x, y = int(pts[0, 0, 0]), int(pts[0, 0, 1])
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.6
-        thickness = 2
-        (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+        (tw, th), base = cv2.getTextSize(label, font, 0.6, 2)
         pad = 4
-
         x1 = max(0, x)
-        y1 = max(0, y - th - baseline - pad * 2)
-        x2 = min(w - 1, x + tw + pad * 2)
-        y2 = min(h - 1, y)
-
+        y1 = max(0, y - th - base - pad * 2)
+        x2 = min(out.shape[1] - 1, x + tw + pad * 2)
+        y2 = min(out.shape[0] - 1, y)
         cv2.rectangle(out, (x1, y1), (x2, y2), color, -1)
-        cv2.putText(out, label, (x + pad, max(0, y - pad)),
-                    font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+        cv2.putText(out, label, (x + pad, max(0, y - pad)), font, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
 
-    # candidates first, decoded on top
-    for det in candidates:
-        _draw_item(det, CAND, prefix="CAND")
-    for det in decoded:
-        _draw_item(det, RED)
+    for d in candidates:
+        draw_det(d, CAND, "CAND")
+    for d in decoded:
+        draw_det(d, RED, "QR")
 
     return out
 
@@ -1002,13 +1052,11 @@ threading.Thread(target=start_http_server, daemon=True).start()
 # ------------------------------------------------------------
 logger.info(
     "Starting QR Inventory (mode=%s interval=%ss required=%s tls_verify=%s overlay_png_name=%s "
-    "restrict_to_zones=%s ROI_SCALES=%s warp_scale=%s try_invert=%s adaptive_block_sizes=%s max_candidates=%s "
-    "overlay_show_candidates=%s overlay_max_candidates=%s overlay_show_scores=%s overlay_show_size_px=%s "
-    "overlay_show_candidate_reason=%s overlay_show_zone_status=%s)",
+    "restrict_to_zones=%s zone_deep_scan=%s ROI_SCALES=%s zone_extra_scales=%s zone_early_stop_score=%.2f "
+    "warp_scale=%s try_invert=%s adaptive_block_sizes=%s max_candidates=%s)",
     camera_mode, interval, required, tls_verify, OVERLAY_PNG_NAME,
-    restrict_to_zones, ROI_SCALES, warp_scale, try_invert, adaptive_block_sizes, max_candidates,
-    overlay_show_candidates, overlay_max_candidates, overlay_show_scores, overlay_show_size_px,
-    overlay_show_candidate_reason, overlay_show_zone_status,
+    restrict_to_zones, zone_deep_scan, ROI_SCALES, ZONE_EXTRA_SCALES, zone_early_stop_score,
+    warp_scale, try_invert, adaptive_block_sizes, max_candidates,
 )
 
 _log_stream_info("STARTUP")
@@ -1046,7 +1094,7 @@ while True:
             continue
 
         fh, fw = frame.shape[:2]
-        detections, zone_restrict_active = detect_qr_robust(frame, zones, cycle_idx=cycle_idx)
+        detections, zone_restrict_active = detect_qr(frame, zones, cycle_idx=cycle_idx)
 
         # decoded only -> inventory mapping
         for det in detections:

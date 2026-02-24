@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.3.8"
+version: "0.3.9"
 slug: qr_inventory
 description: "Scan QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -41,14 +41,17 @@ options:
   adaptive_block_sizes: "21,35,51"
   max_candidates: 160
 
+  # NEW: deeper zone scanning (recommended if every zone has a QR)
+  zone_deep_scan: true
+  zone_extra_scales: "6.0,8.0"
+  zone_early_stop_score: 0.85
+
   # Overlay
   overlay_show_candidates: true
   overlay_max_candidates: 40
   overlay_show_scores: true
   overlay_show_size_px: true
   overlay_show_candidate_reason: true
-
-  # NEW: Zone status readout
   overlay_show_zone_status: true
 
   # Diagnostics
@@ -78,6 +81,10 @@ schema:
   try_invert: bool
   adaptive_block_sizes: str
   max_candidates: int
+
+  zone_deep_scan: bool
+  zone_extra_scales: str
+  zone_early_stop_score: float
 
   overlay_show_candidates: bool
   overlay_max_candidates: int
