@@ -51,7 +51,7 @@ stream_url = opts.get('rtsp_url')
 tls_verify = _opt_bool('tls_verify', False)
 
 # ------------------------------------------------------------
-# NEW: Restrict detection/decoding to zones only
+# Restrict detection/decoding to zones only (toggle)
 # ------------------------------------------------------------
 restrict_to_zones = _opt_bool("restrict_to_zones", False)
 
@@ -67,18 +67,6 @@ roi_scales_raw = opts.get("roi_scales", None)
 warp_scale = _opt_float("warp_scale", 5.0)
 try_invert = _opt_bool("try_invert", True)
 max_candidates = _opt_int("max_candidates", 160)
-
-# overlay candidates + score rendering
-overlay_show_candidates = _opt_bool("overlay_show_candidates", True)
-overlay_max_candidates = max(0, _opt_int("overlay_max_candidates", 40))
-overlay_show_scores = _opt_bool("overlay_show_scores", True)
-overlay_show_candidate_reason = _opt_bool("overlay_show_candidate_reason", True)
-
-# diagnostics logging (no image saving)
-debug_metrics = _opt_bool("debug_metrics", False)
-debug_log_every = max(1, _opt_int("debug_log_every", 1))
-debug_max_failed_logs = max(0, _opt_int("debug_max_failed_logs", 20))
-stream_info_interval_minutes = max(0, _opt_int("stream_info_interval_minutes", 0))  # 0=only startup
 
 abs_raw = opts.get("adaptive_block_sizes", None)
 if isinstance(abs_raw, list):
@@ -127,6 +115,23 @@ def _parse_roi_scales(raw, fallback):
     return [fallback] if fallback and fallback > 0 else [2.0]
 
 ROI_SCALES = _parse_roi_scales(roi_scales_raw, roi_scale)
+
+# ------------------------------------------------------------
+# Overlay options
+# ------------------------------------------------------------
+overlay_show_candidates = _opt_bool("overlay_show_candidates", True)
+overlay_max_candidates = max(0, _opt_int("overlay_max_candidates", 40))
+overlay_show_scores = _opt_bool("overlay_show_scores", True)
+overlay_show_size_px = _opt_bool("overlay_show_size_px", True)  # NEW
+overlay_show_candidate_reason = _opt_bool("overlay_show_candidate_reason", True)
+
+# ------------------------------------------------------------
+# Diagnostics logging (no image saving)
+# ------------------------------------------------------------
+debug_metrics = _opt_bool("debug_metrics", False)
+debug_log_every = max(1, _opt_int("debug_log_every", 1))
+debug_max_failed_logs = max(0, _opt_int("debug_max_failed_logs", 20))
+stream_info_interval_minutes = max(0, _opt_int("stream_info_interval_minutes", 0))  # 0=only startup
 
 # ------------------------------------------------------------
 # Overlay PNG name (configurable)
@@ -476,7 +481,7 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
         if prev is None or area > prev["area"]:
             cand[key] = {"pts": pts, "area": area}
 
-    # PASS 1: Full-frame scan (SKIPPED when restricted-to-zones is active)
+    # PASS 1: Full-frame scan (skipped when restricted-to-zones is active)
     if not zone_restrict_active:
         for variant in _preprocess_gray_variants(frame_gray):
             decoded, candidates = _detect_and_decode_multi(variant)
@@ -498,7 +503,7 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
             for pts in _detect_points(variant):
                 add_candidate(pts)
 
-    # PASS 2: Per-zone harvesting (always used; also the only pass when restricted)
+    # PASS 2: Per-zone harvesting (always used; only pass when restricted)
     if zone_fallback and zones_ok:
         pad = max(0, int(roi_padding_px))
         for _, box in zones_dict.items():
@@ -522,7 +527,6 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
                     sc = 1.0
                 roi_s = cv2.resize(roi, None, fx=sc, fy=sc, interpolation=cv2.INTER_CUBIC) if sc != 1.0 else roi
 
-                # candidates
                 for pts in _detect_points(roi_s):
                     pts_full = (pts / sc) + np.array([x1p, y1p], dtype=np.float32)
                     add_candidate(pts_full)
@@ -548,14 +552,13 @@ def detect_qr_robust(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
     # Limit candidates for decode pass
     cand_items = sorted(cand.values(), key=lambda v: v["area"], reverse=True)[:max_candidates]
 
-    # Decode candidates by warping (and keep failures as overlay "candidates")
     failed_logged = 0
     do_debug = debug_metrics and (cycle_idx % debug_log_every == 0)
 
     overlay_candidates = []
     decoded_buckets = set()
 
-    for payload, v in best.items():
+    for _, v in best.items():
         pts = v["pts"]
         cx = float(np.mean(pts[:, 0])); cy = float(np.mean(pts[:, 1]))
         decoded_buckets.add((int(cx // 20), int(cy // 20)))
@@ -723,6 +726,20 @@ def draw_overlay(frame, detections, zones_dict):
         if p is not None:
             label = f"{label} {p}%"
 
+        # NEW: size readout in px (edge length in original frame)
+        if overlay_show_size_px:
+            diag = det.get("diag") or {}
+            edge_px = diag.get("edge_px", None)
+            if edge_px is None:
+                try:
+                    pts4 = np.array(det.get("points", []), dtype=np.float32).reshape(-1, 2)
+                    if pts4.shape[0] == 4:
+                        edge_px = _max_edge_len(pts4)
+                except Exception:
+                    edge_px = None
+            if edge_px is not None:
+                label = f"{label} {int(round(float(edge_px)))}px"
+
         if (not det.get("decoded", True)) and overlay_show_candidate_reason:
             reason = det.get("reason")
             if reason:
@@ -828,10 +845,10 @@ threading.Thread(target=start_http_server, daemon=True).start()
 logger.info(
     "Starting QR Inventory (mode=%s interval=%ss required=%s tls_verify=%s overlay_png_name=%s "
     "restrict_to_zones=%s ROI_SCALES=%s warp_scale=%s try_invert=%s adaptive_block_sizes=%s max_candidates=%s "
-    "overlay_show_candidates=%s overlay_max_candidates=%s overlay_show_scores=%s overlay_show_candidate_reason=%s)",
+    "overlay_show_candidates=%s overlay_max_candidates=%s overlay_show_scores=%s overlay_show_size_px=%s overlay_show_candidate_reason=%s)",
     camera_mode, interval, required, tls_verify, OVERLAY_PNG_NAME,
     restrict_to_zones, ROI_SCALES, warp_scale, try_invert, adaptive_block_sizes, max_candidates,
-    overlay_show_candidates, overlay_max_candidates, overlay_show_scores, overlay_show_candidate_reason,
+    overlay_show_candidates, overlay_max_candidates, overlay_show_scores, overlay_show_size_px, overlay_show_candidate_reason,
 )
 
 _log_stream_info("STARTUP")
@@ -880,7 +897,6 @@ while True:
             cx, cy = det["centroid"]
             zone = det["zone"]
 
-            # in case padding produced a decoded outside, ignore if restricted
             if zone_restrict_active and zone is None:
                 continue
 
