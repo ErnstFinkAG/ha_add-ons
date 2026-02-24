@@ -26,6 +26,7 @@ RUN set -eux; \
       libxext \
       libxrender \
       libstdc++ \
+      zbar \
       ; \
   elif command -v apt-get >/dev/null 2>&1; then \
     apt-get update; \
@@ -42,6 +43,7 @@ RUN set -eux; \
       libsm6 \
       libxext6 \
       libxrender1 \
+      libzbar0 \
       ; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \

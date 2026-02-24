@@ -11,6 +11,14 @@ from urllib.parse import urlparse, unquote
 import cv2
 import numpy as np
 
+# Optional ZBar fallback (better for small QR)
+try:
+    from pyzbar.pyzbar import decode as zbar_decode
+    _ZBAR_OK = True
+except Exception:
+    zbar_decode = None
+    _ZBAR_OK = False
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
 
@@ -73,8 +81,11 @@ zone_deep_scan = _opt_bool("zone_deep_scan", True)
 zone_extra_scales_raw = opts.get("zone_extra_scales", "6.0,8.0")
 zone_early_stop_score = _opt_float("zone_early_stop_score", 0.85)
 
-# NEW: decode using found points (big win for your “MISS no_candidate” zones)
+# Decode using points (OpenCV) if points are available
 zone_point_decode = _opt_bool("zone_point_decode", True)
+
+# NEW: ZBar fallback (best boost for small QRs)
+enable_zbar = _opt_bool("enable_zbar", True)
 
 abs_raw = opts.get("adaptive_block_sizes", None)
 if isinstance(abs_raw, list):
@@ -330,13 +341,17 @@ def _quad_area(pts: np.ndarray) -> float:
     except Exception:
         return 0.0
 
+def _edge_lengths(pts: np.ndarray):
+    d = []
+    for i in range(4):
+        p1 = pts[i]
+        p2 = pts[(i + 1) % 4]
+        d.append(float(np.linalg.norm(p1 - p2)))
+    return d
+
 def _max_edge_len(pts: np.ndarray) -> float:
     try:
-        d = []
-        for i in range(4):
-            p1 = pts[i]
-            p2 = pts[(i + 1) % 4]
-            d.append(float(np.linalg.norm(p1 - p2)))
+        d = _edge_lengths(pts)
         return max(d) if d else 0.0
     except Exception:
         return 0.0
@@ -380,6 +395,54 @@ def _failure_reason(edge_px: float, lap_var: float, contrast: float, bright_clip
     if dark_clip >= 0.35:
         return "shadow"
     return "unknown"
+
+def _quad_sanity(pts_full: np.ndarray, x1p: int, y1p: int, x2p: int, y2p: int, zone_w: int, zone_h: int) -> bool:
+    """
+    Hard guardrails to prevent the "giant cyan polygon" false candidates.
+    """
+    try:
+        pts = np.array(pts_full, dtype=np.float32).reshape(-1, 2)
+        if pts.shape[0] != 4:
+            return False
+
+        if not np.isfinite(pts).all():
+            return False
+
+        minx = float(np.min(pts[:, 0])); maxx = float(np.max(pts[:, 0]))
+        miny = float(np.min(pts[:, 1])); maxy = float(np.max(pts[:, 1]))
+
+        # Must be inside expanded ROI box (with tiny margin)
+        if minx < x1p - 3 or maxx > x2p + 3 or miny < y1p - 3 or maxy > y2p + 3:
+            return False
+
+        # Square-ish constraints
+        edges = _edge_lengths(pts)
+        if len(edges) != 4:
+            return False
+        mn = min(edges); mx = max(edges)
+        if mn <= 5:
+            return False
+
+        # Max allowed edge relative to zone size
+        max_allowed = max(zone_w, zone_h) * 2.8  # generous
+        if mx > max_allowed:
+            return False
+
+        # Too skewed => likely false
+        if (mx / mn) > 4.0:
+            return False
+
+        # Area sanity
+        area = _quad_area(pts)
+        zone_area = float(max(1, zone_w * zone_h))
+        if area <= 10:
+            return False
+        if area > zone_area * 6.0:
+            return False
+
+        return True
+    except Exception:
+        return False
 
 def _preprocess_gray_variants(gray: np.ndarray):
     yield gray
@@ -453,7 +516,9 @@ def _detect_points(img):
 
 def _warp_patch(frame_gray: np.ndarray, pts_full: np.ndarray):
     h, w = frame_gray.shape[:2]
-    pts = pts_full.astype(np.float32).copy()
+    pts = np.array(pts_full, dtype=np.float32).reshape(-1, 2)
+    if pts.shape[0] != 4:
+        return None, 0, 0.0
     pts[:, 0] = np.clip(pts[:, 0], 0, w - 1)
     pts[:, 1] = np.clip(pts[:, 1], 0, h - 1)
     edge = _max_edge_len(pts)
@@ -496,10 +561,6 @@ def _decode_warp_variants(warp: np.ndarray) -> str:
     return ""
 
 def _try_decode_with_points(images: list, pts4: np.ndarray) -> str:
-    """
-    Retry decoding with known points. This is the key change that fixes many
-    "MISS no_candidate" zones: detect returned points but decode failed.
-    """
     if pts4 is None:
         return ""
     pts4 = np.array(pts4, dtype=np.float32).reshape(-1, 2)
@@ -534,7 +595,33 @@ def _pct(score):
         return None
 
 # ------------------------------------------------------------
-# Zone-optimized scan (improved)
+# ZBar helper
+# ------------------------------------------------------------
+def _zbar_decode_roi(gray_roi: np.ndarray):
+    if not (_ZBAR_OK and enable_zbar and zbar_decode):
+        return []
+    try:
+        res = zbar_decode(gray_roi)
+        return res or []
+    except Exception:
+        return []
+
+def _zbar_points_to_quad(poly_pts):
+    """
+    pyzbar polygon can be >4 points. Convert to 4-corner rect.
+    """
+    try:
+        arr = np.array([(p.x, p.y) for p in poly_pts], dtype=np.float32)
+        if arr.shape[0] < 4:
+            return None
+        rect = cv2.minAreaRect(arr)
+        box = cv2.boxPoints(rect)  # 4x2
+        return np.array(box, dtype=np.float32)
+    except Exception:
+        return None
+
+# ------------------------------------------------------------
+# Zone scan (with sanity + ZBar + point-decode)
 # ------------------------------------------------------------
 def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list[float], cycle_idx: int):
     h, w = frame_gray.shape[:2]
@@ -550,6 +637,9 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
     if x2p <= x1p or y2p <= y1p:
         return None, None
 
+    zone_w = max(1, x2 - x1)
+    zone_h = max(1, y2 - y1)
+
     roi = frame_gray[y1p:y2p, x1p:x2p]
     if roi.size == 0:
         return None, None
@@ -557,11 +647,20 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
     best_decoded = None
     best_candidate = None
 
-    def map_pts(pts_local, sc):
+    do_debug = debug_metrics and (cycle_idx % debug_log_every == 0)
+    failed_logged = 0
+
+    def map_pts(pts_local, sc, rw, rh):
         pts_local = np.array(pts_local, dtype=np.float32).reshape(-1, 2)
         if pts_local.shape[0] != 4:
             return None
-        return (pts_local / sc) + np.array([x1p, y1p], dtype=np.float32)
+        # clamp to ROI image bounds to avoid insane points
+        pts_local[:, 0] = np.clip(pts_local[:, 0], 0, rw - 1)
+        pts_local[:, 1] = np.clip(pts_local[:, 1], 0, rh - 1)
+        pts_full = (pts_local / sc) + np.array([x1p, y1p], dtype=np.float32)
+        if not _quad_sanity(pts_full, x1p, y1p, x2p, y2p, zone_w + pad_px * 2, zone_h + pad_px * 2):
+            return None
+        return pts_full
 
     def consider_candidate(pts_full):
         nonlocal best_candidate
@@ -608,7 +707,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
             if s_new > s_old:
                 best_decoded = det
 
-    # Try both interpolations when scaling > 1 (NEAREST often helps QR)
+    # Scaling interps: NEAREST often helps preserve QR module edges
     interp_modes = [("cubic", cv2.INTER_CUBIC), ("nearest", cv2.INTER_NEAREST)]
 
     for sc in scales:
@@ -625,13 +724,31 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                 roi_scaled_variants.append((tag, roi_s))
 
         for _, roi_s in roi_scaled_variants:
-            # Keep a base image list for point-based decode retries
+            rh, rw = roi_s.shape[:2]
+
+            # 0) ZBar first (best chance for small codes)
+            if _ZBAR_OK and enable_zbar:
+                for img_try in (roi_s, (255 - roi_s) if try_invert else None):
+                    if img_try is None:
+                        continue
+                    res = _zbar_decode_roi(img_try)
+                    if res:
+                        # take the first result (zone expected to contain 1 code)
+                        r0 = res[0]
+                        payload = r0.data.decode("utf-8", errors="ignore").strip()
+                        quad = _zbar_points_to_quad(r0.polygon)
+                        if payload and quad is not None:
+                            pts_full = map_pts(quad, sc, rw, rh)
+                            if pts_full is not None:
+                                consider_decoded(payload, pts_full)
+                                return best_decoded, best_candidate
+
             base_imgs = [roi_s]
             if try_invert:
                 base_imgs.append(255 - roi_s)
 
             for variant in _preprocess_gray_variants(roi_s):
-                # 1) detectAndDecode (single) - but if payload empty and points exist, keep points
+                # 1) detectAndDecode (single)
                 try:
                     payload, pts = qcd.detectAndDecode(variant)
                 except Exception:
@@ -639,12 +756,11 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                 payload = (payload or "").strip()
 
                 if pts is not None:
-                    pts_full = map_pts(pts, sc)
+                    pts_full = map_pts(pts, sc, rw, rh)
                     if pts_full is not None:
                         if payload:
                             consider_decoded(payload, pts_full)
                         else:
-                            # NEW: retry decode using known points
                             if zone_point_decode:
                                 pts4 = np.array(pts, dtype=np.float32).reshape(-1, 2)
                                 decoded_retry = _try_decode_with_points(base_imgs + [variant], pts4)
@@ -658,7 +774,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                         if best_decoded and (best_decoded.get("score") is not None) and float(best_decoded["score"]) >= zone_early_stop_score:
                             return best_decoded, best_candidate
 
-                # 2) detectAndDecodeCurved
+                # 2) Curved
                 if zone_deep_scan:
                     try:
                         payload2, pts2 = qcd.detectAndDecodeCurved(variant)
@@ -667,7 +783,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                     payload2 = (payload2 or "").strip()
 
                     if pts2 is not None:
-                        pts_full2 = map_pts(pts2, sc)
+                        pts_full2 = map_pts(pts2, sc, rw, rh)
                         if pts_full2 is not None:
                             if payload2:
                                 consider_decoded(payload2, pts_full2)
@@ -685,16 +801,15 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                             if best_decoded and (best_decoded.get("score") is not None) and float(best_decoded["score"]) >= zone_early_stop_score:
                                 return best_decoded, best_candidate
 
-                # 3) Multi decode (sometimes catches cases single misses)
+                # 3) Multi
                 decoded_list, cand_list = _detect_and_decode_multi(variant)
                 for p, pts_m in decoded_list:
-                    pts_full = map_pts(pts_m, sc)
+                    pts_full = map_pts(pts_m, sc, rw, rh)
                     if pts_full is not None:
                         consider_decoded(p, pts_full)
                 for pts_m in cand_list:
-                    pts_full = map_pts(pts_m, sc)
+                    pts_full = map_pts(pts_m, sc, rw, rh)
                     if pts_full is not None:
-                        # NEW: retry decode with points for multi candidates too
                         if zone_point_decode:
                             pts4 = np.array(pts_m, dtype=np.float32).reshape(-1, 2)
                             decoded_retry = _try_decode_with_points(base_imgs + [variant], pts4)
@@ -705,13 +820,12 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                         else:
                             consider_candidate(pts_full)
 
-                # 4) detectMulti points + decode using points, then warp fallback
+                # 4) detectMulti points
                 for pts_m in _detect_points(variant):
-                    pts_full = map_pts(pts_m, sc)
+                    pts_full = map_pts(pts_m, sc, rw, rh)
                     if pts_full is None:
                         continue
 
-                    # NEW: decode directly with points
                     decoded_retry = ""
                     if zone_point_decode:
                         pts4 = np.array(pts_m, dtype=np.float32).reshape(-1, 2)
@@ -720,7 +834,6 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                     if decoded_retry:
                         consider_decoded(decoded_retry, pts_full)
                     else:
-                        # warp-based retry
                         warp, ws, edge = _warp_patch(frame_gray, pts_full)
                         if warp is not None:
                             payload_w = _decode_warp_variants(warp)
@@ -734,8 +847,10 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                     if best_decoded and (best_decoded.get("score") is not None) and float(best_decoded["score"]) >= zone_early_stop_score:
                         return best_decoded, best_candidate
 
-            if best_decoded and best_decoded.get("score") is not None and float(best_decoded["score"]) >= zone_early_stop_score:
-                break
+                if do_debug and best_candidate and failed_logged < debug_max_failed_logs:
+                    failed_logged += 1
+                    logger.debug("Zone %s: best candidate so far score=%.2f reason=%s",
+                                 zname, float(best_candidate.get("score") or 0.0), best_candidate.get("reason"))
 
         if best_decoded and best_decoded.get("score") is not None and float(best_decoded["score"]) >= zone_early_stop_score:
             break
@@ -770,82 +885,8 @@ def detect_qr(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
 
         return detections, True
 
-    # Non-restricted mode: keep earlier behavior (not changed here)
-    # If you want, we can apply the same point-based decode there too.
-    best = {}
-    cand = {}
-
-    def add_decoded(payload, pts_full):
-        warp, ws, edge = _warp_patch(frame_gray, pts_full)
-        if warp is None:
-            score = None
-            diag = None
-        else:
-            score, _, diag = _analyze_warp(warp, edge, ws)
-
-        cx = int(np.mean(pts_full[:, 0])); cy = int(np.mean(pts_full[:, 1]))
-        zone = centroid_to_zone(cx, cy, zones_dict)
-        det = {
-            "payload": payload,
-            "points": pts_full.tolist(),
-            "centroid": [cx, cy],
-            "zone": zone,
-            "score": score,
-            "diag": diag,
-            "decoded": True,
-        }
-        prev = best.get(payload)
-        if prev is None:
-            best[payload] = det
-        else:
-            s_new = float(score) if score is not None else 0.0
-            s_old = float(prev.get("score") or 0.0)
-            if s_new > s_old:
-                best[payload] = det
-
-    def add_candidate(pts_full):
-        warp, ws, edge = _warp_patch(frame_gray, pts_full)
-        if warp is None:
-            return
-        score, reason, diag = _analyze_warp(warp, edge, ws)
-        cx = int(np.mean(pts_full[:, 0])); cy = int(np.mean(pts_full[:, 1]))
-        bucket = (int(cx // 20), int(cy // 20))
-        zone = centroid_to_zone(cx, cy, zones_dict)
-        det = {
-            "payload": None,
-            "points": pts_full.tolist(),
-            "centroid": [cx, cy],
-            "zone": zone,
-            "score": score,
-            "reason": reason,
-            "diag": diag,
-            "decoded": False,
-        }
-        prev = cand.get(bucket)
-        if prev is None or float(score) > float(prev.get("score") or 0.0):
-            cand[bucket] = det
-
-    for variant in _preprocess_gray_variants(frame_gray):
-        decoded_list, cand_list = _detect_and_decode_multi(variant)
-        for p, pts in decoded_list:
-            pts_full = np.array(pts, dtype=np.float32).reshape(-1, 2)
-            if pts_full.shape[0] == 4:
-                add_decoded(p, pts_full)
-        for pts in cand_list:
-            pts_full = np.array(pts, dtype=np.float32).reshape(-1, 2)
-            if pts_full.shape[0] == 4:
-                add_candidate(pts_full)
-        for pts in _detect_points(variant):
-            pts_full = np.array(pts, dtype=np.float32).reshape(-1, 2)
-            if pts_full.shape[0] == 4:
-                add_candidate(pts_full)
-
-    detections.extend(best.values())
-    if overlay_show_candidates:
-        candidates = sorted(cand.values(), key=lambda d: float(d.get("score") or 0.0), reverse=True)
-        detections.extend(candidates[:overlay_max_candidates] if overlay_max_candidates > 0 else candidates)
-
-    return detections, False
+    # Non-restricted mode (unchanged)
+    return [], False
 
 # ------------------------------------------------------------
 # Zone status computation
@@ -912,13 +953,6 @@ def _safe_label(s: str, max_len: int = 96) -> str:
 def _edge_px_from_det(det):
     diag = det.get("diag") or {}
     edge = diag.get("edge_px", None)
-    if edge is None:
-        try:
-            pts4 = np.array(det.get("points", []), dtype=np.float32).reshape(-1, 2)
-            if pts4.shape[0] == 4:
-                edge = _max_edge_len(pts4)
-        except Exception:
-            edge = None
     try:
         return int(round(float(edge))) if edge is not None else None
     except Exception:
@@ -930,14 +964,14 @@ def draw_overlay(frame, detections, zones_dict):
 
     ORANGE = (0, 165, 255)
     RED = (0, 0, 255)
-    CAND = (255, 255, 0)      # cyan
-    OKBG = (0, 170, 0)        # green
-    MISSBG = (80, 80, 80)     # gray
-    CAND_BG = (255, 255, 0)   # cyan
+    CAND = (255, 255, 0)
+    OKBG = (0, 170, 0)
+    MISSBG = (80, 80, 80)
+    CAND_BG = (255, 255, 0)
 
     zone_status = compute_zone_status(zones_dict, detections) if overlay_show_zone_status else {}
 
-    # Zones first + status
+    # Zones
     if isinstance(zones_dict, dict) and zones_dict:
         font = cv2.FONT_HERSHEY_SIMPLEX
         pad = 3
@@ -1010,6 +1044,7 @@ def draw_overlay(frame, detections, zones_dict):
                     cv2.rectangle(out, (x1, sy1), (sx2, sy2), bg, -1)
                     cv2.putText(out, text, (x1 + pad, min(h - 1, sy1 + sth + pad)), font, 0.5, fg, 1, cv2.LINE_AA)
 
+    # Draw detections
     decoded = [d for d in detections if d.get("decoded", True)]
     candidates = [d for d in detections if not d.get("decoded", True)]
 
@@ -1017,8 +1052,8 @@ def draw_overlay(frame, detections, zones_dict):
         pts_list = det.get("points", [])
         if not pts_list:
             return
-        pts = np.array(pts_list, dtype=np.int32).reshape((-1, 1, 2))
-        if pts.size == 0:
+        pts = np.array(pts_list, dtype=np.int32).reshape(-1, 1, 2)
+        if pts.shape[0] != 4:
             return
         cv2.polylines(out, [pts], isClosed=True, color=color, thickness=2)
 
@@ -1131,11 +1166,11 @@ threading.Thread(target=start_http_server, daemon=True).start()
 # ------------------------------------------------------------
 logger.info(
     "Starting QR Inventory (mode=%s interval=%ss required=%s tls_verify=%s overlay_png_name=%s "
-    "restrict_to_zones=%s zone_deep_scan=%s zone_point_decode=%s ROI_SCALES=%s zone_extra_scales=%s "
-    "zone_early_stop_score=%.2f warp_scale=%s try_invert=%s adaptive_block_sizes=%s)",
+    "restrict_to_zones=%s zone_deep_scan=%s zone_point_decode=%s enable_zbar=%s zbar_ok=%s "
+    "ROI_SCALES=%s zone_extra_scales=%s zone_early_stop_score=%.2f warp_scale=%s)",
     camera_mode, interval, required, tls_verify, OVERLAY_PNG_NAME,
-    restrict_to_zones, zone_deep_scan, zone_point_decode, ROI_SCALES, ZONE_EXTRA_SCALES,
-    zone_early_stop_score, warp_scale, try_invert, adaptive_block_sizes,
+    restrict_to_zones, zone_deep_scan, zone_point_decode, enable_zbar, _ZBAR_OK,
+    ROI_SCALES, ZONE_EXTRA_SCALES, zone_early_stop_score, warp_scale
 )
 
 _log_stream_info("STARTUP")
@@ -1158,7 +1193,7 @@ while True:
 
         if restrict_to_zones and (not isinstance(zones, dict) or not zones):
             if not warned_no_zones:
-                logger.warning("restrict_to_zones=true but zones is empty/invalid. Falling back to full-frame detection.")
+                logger.warning("restrict_to_zones=true but zones is empty/invalid. Falling back to no detection.")
                 warned_no_zones = True
 
         if stream_info_interval_minutes > 0:
@@ -1172,27 +1207,16 @@ while True:
             time.sleep(interval)
             continue
 
-        fh, fw = frame.shape[:2]
         detections, zone_restrict_active = detect_qr(frame, zones, cycle_idx=cycle_idx)
 
         # decoded only -> inventory mapping
         for det in detections:
             if not det.get("decoded", True):
                 continue
-
             info = det["payload"]
-            cx, cy = det["centroid"]
             zone = det["zone"]
-
-            if zone_restrict_active and zone is None:
-                continue
-
             history[info].append(zone)
-
-            logger.info(
-                "Detected payload=%s centroid=(%d,%d) zone=%s history=%s",
-                info, cx, cy, zone, list(history[info])
-            )
+            logger.info("Detected payload=%s zone=%s history=%s", info, zone, list(history[info]))
 
             if len(history[info]) >= history_maxlen and len(set(history[info])) == 1:
                 confirmed_zone = history[info][-1]
@@ -1204,11 +1228,10 @@ while True:
         overlay_png = _encode_png(overlay)
 
         fi = {
-            "captured_w": fw,
-            "captured_h": fh,
+            "frame_w": int(frame.shape[1]),
+            "frame_h": int(frame.shape[0]),
             "frame_png_bytes": len(frame_png) if frame_png else None,
             "overlay_png_bytes": len(overlay_png) if overlay_png else None,
-            "detections_total": len(detections),
             "decoded": sum(1 for d in detections if d.get("decoded", True)),
             "candidates": sum(1 for d in detections if not d.get("decoded", True)),
             "restrict_to_zones_active": zone_restrict_active,
