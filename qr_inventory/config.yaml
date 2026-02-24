@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.4.5"
+version: "0.4.6"
 slug: qr_inventory
 description: "Scan QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -25,10 +25,8 @@ options:
   tls_verify: false
   overlay_png_name: overlay.png
 
-  # Zones only
   restrict_to_zones: false
 
-  # Scan tuning
   use_preprocess: true
   try_invert: true
   roi_padding_px: 60
@@ -38,36 +36,34 @@ options:
   zone_max_scaled_dim: 2400
   zone_early_stop_score: 0.85
 
-  # IMPORTANT: reject decoded quads that don’t really belong to the zone (stops conflicts)
+  # Reject wrong-zone decodes (fixes Z04/Z06 bleed)
   zone_quad_in_zone_min_ratio: 0.60
 
   adaptive_block_sizes: "21,35,51"
 
-  # Decoders
   enable_zbar: true
   zbar_qrcode_only: true
 
-  # Safe OpenCV fallback (subprocess)
+  # OpenCV safe fallback (subprocess) - tries multiple variants/scales
   opencv_subprocess_fallback: true
-  opencv_fallback_only_if_decode_failed: true
   opencv_fallback_timeout_s: 3.0
+  opencv_fallback_attempts: 10
 
-  # (optional) OpenCV in-process decode (not recommended)
+  # In-process OpenCV (leave off)
   opencv_qr_enabled: false
   force_opencv_qr_on_musl: false
 
-  # Overlay
   overlay_show_scores: true
   overlay_show_size_px: true
   overlay_show_candidate_reason: true
   overlay_show_zone_status: true
-  overlay_show_candidates: true
-  overlay_max_candidates: 40
 
-  # Diagnostics
   stream_info_interval_minutes: 0
   debug_metrics: false
   debug_log_every: 1
+
+  # NEW: focus debug on a single zone, e.g. "Z02"
+  debug_zone: ""
 
 schema:
   camera_mode: list(rtsp|rtsps)
@@ -96,8 +92,8 @@ schema:
   zbar_qrcode_only: bool
 
   opencv_subprocess_fallback: bool
-  opencv_fallback_only_if_decode_failed: bool
   opencv_fallback_timeout_s: float
+  opencv_fallback_attempts: int
 
   opencv_qr_enabled: bool
   force_opencv_qr_on_musl: bool
@@ -106,9 +102,9 @@ schema:
   overlay_show_size_px: bool
   overlay_show_candidate_reason: bool
   overlay_show_zone_status: bool
-  overlay_show_candidates: bool
-  overlay_max_candidates: int
 
   stream_info_interval_minutes: int
   debug_metrics: bool
   debug_log_every: int
+
+  debug_zone: str
