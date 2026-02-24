@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.4.6"
+version: "0.4.7"
 slug: qr_inventory
 description: "Scan QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -33,10 +33,11 @@ options:
   roi_scale: 2.0
   roi_scales: "2.0,3.0,4.0"
   zone_extra_scales: "6.0,8.0,10.0"
-  zone_max_scaled_dim: 2400
-  zone_early_stop_score: 0.85
 
-  # Reject wrong-zone decodes (fixes Z04/Z06 bleed)
+  # IMPORTANT: raised and fixed scaling clamp
+  zone_max_scaled_dim: 3600
+
+  zone_early_stop_score: 0.85
   zone_quad_in_zone_min_ratio: 0.60
 
   adaptive_block_sizes: "21,35,51"
@@ -44,14 +45,10 @@ options:
   enable_zbar: true
   zbar_qrcode_only: true
 
-  # OpenCV safe fallback (subprocess) - tries multiple variants/scales
+  # OpenCV subprocess fallback with better diagnostics
   opencv_subprocess_fallback: true
   opencv_fallback_timeout_s: 3.0
-  opencv_fallback_attempts: 10
-
-  # In-process OpenCV (leave off)
-  opencv_qr_enabled: false
-  force_opencv_qr_on_musl: false
+  opencv_fallback_attempts: 20
 
   overlay_show_scores: true
   overlay_show_size_px: true
@@ -59,10 +56,8 @@ options:
   overlay_show_zone_status: true
 
   stream_info_interval_minutes: 0
-  debug_metrics: false
-  debug_log_every: 1
 
-  # NEW: focus debug on a single zone, e.g. "Z02"
+  # Focus debug on a single zone, e.g. "Z02"
   debug_zone: ""
 
 schema:
@@ -83,9 +78,9 @@ schema:
   roi_scales: str
   zone_extra_scales: str
   zone_max_scaled_dim: int
+
   zone_early_stop_score: float
   zone_quad_in_zone_min_ratio: float
-
   adaptive_block_sizes: str
 
   enable_zbar: bool
@@ -95,16 +90,10 @@ schema:
   opencv_fallback_timeout_s: float
   opencv_fallback_attempts: int
 
-  opencv_qr_enabled: bool
-  force_opencv_qr_on_musl: bool
-
   overlay_show_scores: bool
   overlay_show_size_px: bool
   overlay_show_candidate_reason: bool
   overlay_show_zone_status: bool
 
   stream_info_interval_minutes: int
-  debug_metrics: bool
-  debug_log_every: int
-
   debug_zone: str
