@@ -72,6 +72,20 @@ use_preprocess = _opt_bool("use_preprocess", True)
 try_invert = _opt_bool("try_invert", True)
 roi_padding_px = _opt_int("roi_padding_px", 60)
 
+
+enable_cutout = _opt_bool("enable_cutout", True)
+cutout_min_area = max(50, _opt_int("cutout_min_area", 500))
+cutout_ar_lo = _opt_float("cutout_ar_lo", 0.60)
+cutout_ar_hi = _opt_float("cutout_ar_hi", 1.40)
+cutout_inner_pad_frac = _opt_float("cutout_inner_pad_frac", 0.06)
+cutout_border_frac = _opt_float("cutout_border_frac", 0.20)
+cutout_border_min_px = max(0, _opt_int("cutout_border_min_px", 16))
+cutout_open_ksize = max(1, _opt_int("cutout_open_ksize", 3))
+if cutout_open_ksize % 2 == 0:
+    cutout_open_ksize += 1
+cutout_open_iter = max(0, _opt_int("cutout_open_iter", 1))
+
+
 roi_scale = _opt_float("roi_scale", 2.0)
 roi_scales_raw = opts.get("roi_scales", None)
 zone_extra_scales_raw = opts.get("zone_extra_scales", "6.0,8.0,10.0")
@@ -404,6 +418,115 @@ def _roi_clip_analysis(gray_roi: np.ndarray, margin_px: int = 6):
     except Exception:
         return out
 
+# ------------------------------------------------------------
+# Cutout + quiet-zone helper
+# ------------------------------------------------------------
+def _qr_cutout_with_border(gray_roi: np.ndarray):
+    """
+    Try to cut out the most QR-like dark component inside `gray_roi` and add a white
+    quiet-zone border around it before decoding.
+
+    Returns: (padded_gray, meta)
+      meta = {
+        "used_candidate": bool,
+        "crop_box": [x0, y0, x1, y1],   # x1/y1 are exclusive, in ROI coords
+        "border_px": int,
+        "crop_shape": [h, w],
+        "padded_shape": [h, w],
+      }
+    """
+    h, w = gray_roi.shape[:2]
+    meta = {
+        "used_candidate": False,
+        "crop_box": [0, 0, int(w), int(h)],
+        "border_px": 0,
+        "crop_shape": [int(h), int(w)],
+        "padded_shape": [int(h), int(w)],
+    }
+
+    if gray_roi is None or gray_roi.size == 0:
+        return gray_roi, meta
+
+    try:
+        g = gray_roi
+        if g.dtype != np.uint8:
+            g = cv2.normalize(g, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+        # Threshold to get "dark ink" mask
+        g_blur = cv2.GaussianBlur(g, (3, 3), 0)
+        _, th = cv2.threshold(g_blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # Ensure QR modules are dark (0) in `th`
+        dark0 = int(np.sum(th == 0))
+        dark1 = int(np.sum(th == 255))
+        if dark0 > dark1:
+            th = 255 - th
+
+        dark = (th == 0).astype(np.uint8) * 255
+
+        # Reduce thin background lines (mortar/tape edges)
+        if cutout_open_iter > 0:
+            k = np.ones((int(cutout_open_ksize), int(cutout_open_ksize)), np.uint8)
+            dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, k, iterations=int(cutout_open_iter))
+
+        _fc = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = _fc[0] if len(_fc) == 2 else _fc[1]
+
+        best = None
+        best_score = -1.0
+        for c in cnts:
+            x, y, cw, ch = cv2.boundingRect(c)
+            area = int(cw * ch)
+            if area < int(cutout_min_area):
+                continue
+            ar = float(cw) / float(max(1, ch))
+            if not (float(cutout_ar_lo) <= ar <= float(cutout_ar_hi)):
+                continue
+
+            # Score: big + close to square
+            score = float(area) - float(abs(ar - 1.0)) * float(area) * 0.6
+            if score > best_score:
+                best_score = score
+                best = (x, y, cw, ch)
+
+        if best is not None:
+            x, y, cw, ch = best
+            pad_in = int(round(float(cutout_inner_pad_frac) * float(min(cw, ch))))
+            x0 = max(0, x - pad_in)
+            y0 = max(0, y - pad_in)
+            x1 = min(w, x + cw + pad_in)
+            y1 = min(h, y + ch + pad_in)
+
+            meta["used_candidate"] = True
+            meta["crop_box"] = [int(x0), int(y0), int(x1), int(y1)]
+            meta["crop_shape"] = [int(y1 - y0), int(x1 - x0)]
+
+        x0, y0, x1, y1 = meta["crop_box"]
+        crop = g[y0:y1, x0:x1]
+        if crop is None or crop.size == 0:
+            crop = g
+            meta["used_candidate"] = False
+            meta["crop_box"] = [0, 0, int(w), int(h)]
+            meta["crop_shape"] = [int(h), int(w)]
+
+        # Add quiet-zone border (white)
+        border = max(int(cutout_border_min_px), int(round(float(cutout_border_frac) * float(min(crop.shape[:2])))))
+        meta["border_px"] = int(border)
+
+        if border > 0:
+            padded = cv2.copyMakeBorder(
+                crop, border, border, border, border,
+                borderType=cv2.BORDER_CONSTANT, value=255
+            )
+        else:
+            padded = crop
+
+        meta["padded_shape"] = [int(padded.shape[0]), int(padded.shape[1])]
+        return padded, meta
+    except Exception:
+        # Safe fallback: just decode the original ROI
+        return gray_roi, meta
+
 def _mark_clipping(gray_img: np.ndarray, analysis: dict):
     vis = cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
     h, w = gray_img.shape[:2]
@@ -632,7 +755,33 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
     con = _contrast_std(roi)
     bright, dark = _clip_fractions(roi)
 
-    clip_analysis = _roi_clip_analysis(roi, margin_px=6)
+    clip_analysis_roi = _roi_clip_analysis(roi, margin_px=6)
+
+    # Cut out QR-like component and add a white "quiet zone" border before decoding.
+    if enable_cutout:
+        roi_decode, cutout = _qr_cutout_with_border(roi)
+    else:
+        h0, w0 = roi.shape[:2]
+        roi_decode = roi
+        cutout = {
+            "used_candidate": False,
+            "crop_box": [0, 0, int(w0), int(h0)],
+            "border_px": 0,
+            "crop_shape": [int(h0), int(w0)],
+            "padded_shape": [int(h0), int(w0)],
+        }
+
+    x0, y0, x1, y1 = [int(v) for v in (cutout.get("crop_box") or [0, 0, roi.shape[1], roi.shape[0]])]
+    x0 = max(0, min(int(roi.shape[1]), x0))
+    y0 = max(0, min(int(roi.shape[0]), y0))
+    x1 = max(x0 + 1, min(int(roi.shape[1]), x1))
+    y1 = max(y0 + 1, min(int(roi.shape[0]), y1))
+    roi_crop = roi[y0:y1, x0:x1]
+    cutout["crop_box"] = [x0, y0, x1, y1]
+    border = int(cutout.get("border_px") or 0)
+
+    # Clipping analysis on the cutout (more robust vs. background lines in the full ROI)
+    clip_analysis = _roi_clip_analysis(roi_crop, margin_px=6) if roi_crop is not None and roi_crop.size else clip_analysis_roi
     clipped = bool(clip_analysis.get("clipped"))
 
     dbg = {
@@ -640,7 +789,11 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
         "roi_shape": list(roi.shape),
         "roi_pad_px": pad_px,
         "roi_stats": {"lap_var": lap, "contrast": con, "bright_clip": bright, "dark_clip": dark},
+        "cutout": cutout,
+        "roi_decode_shape": list(roi_decode.shape) if roi_decode is not None else None,
+        "roi_crop_shape": list(roi_crop.shape) if roi_crop is not None else None,
         "clip_analysis": clip_analysis,
+        "clip_analysis_roi": clip_analysis_roi,
         "scales": scales,
         "zbar": {"attempts": 0, "hits": 0},
         "opencv_subproc": {"attempts": 0, "hits": 0, "last": None},
@@ -651,7 +804,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
 
     # ZBar first
     for sc in scales:
-        for scale_tag, roi_s in _scaled_versions(roi, sc):
+        for scale_tag, roi_s in _scaled_versions(roi_decode, sc):
             for pre_name, v in _preprocess_gray_variants(roi_s):
                 dbg["zbar"]["attempts"] += 1
                 if zname == debug_zone and best_pre is None:
@@ -691,7 +844,10 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                 quad[:, 1] = np.clip(quad[:, 1], 0, rh - 1)
 
                 eff = float(scale_tag.split("x")[0])
-                pts_full = (quad / eff) + np.array([x1p, y1p], dtype=np.float32)
+                pts_roi = (quad / eff)
+                pts_roi[:, 0] = pts_roi[:, 0] - float(border) + float(x0)
+                pts_roi[:, 1] = pts_roi[:, 1] - float(border) + float(y0)
+                pts_full = pts_roi + np.array([x1p, y1p], dtype=np.float32)
                 cx = int(np.mean(pts_full[:, 0])); cy = int(np.mean(pts_full[:, 1]))
 
                 if not (zx1 <= cx <= zx2 and zy1 <= cy <= zy2):
@@ -714,7 +870,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                     "decoded": True,
                 }
 
-                marked_roi = _mark_clipping(roi, clip_analysis)
+                marked_roi = _mark_clipping(roi, clip_analysis_roi)
                 marked_best = _mark_clipping(best_pre, _roi_clip_analysis(best_pre, margin_px=6)) if best_pre is not None else None
                 _set_debug(zname, dbg, roi, best_pre, marked_roi, marked_best)
                 return det, None
@@ -726,7 +882,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
     if opencv_subprocess_fallback and reason in ("decode_failed", "roi_clipped"):
         tries = 0
         for sc in sorted(set(scales), reverse=True):
-            for scale_tag, roi_s in _scaled_versions(roi, sc):
+            for scale_tag, roi_s in _scaled_versions(roi_decode, sc):
                 for pre_name, v in _preprocess_gray_variants(roi_s):
                     if tries >= opencv_fallback_attempts:
                         break
@@ -738,8 +894,12 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                         pts = np.array(out["points"], dtype=np.float32).reshape(-1, 2)
                         if pts.shape[0] != 4:
                             continue
+
                         eff = float(scale_tag.split("x")[0])
-                        pts_full = (pts / eff) + np.array([x1p, y1p], dtype=np.float32)
+                        pts_roi = (pts / eff)
+                        pts_roi[:, 0] = pts_roi[:, 0] - float(border) + float(x0)
+                        pts_roi[:, 1] = pts_roi[:, 1] - float(border) + float(y0)
+                        pts_full = pts_roi + np.array([x1p, y1p], dtype=np.float32)
                         cx = int(np.mean(pts_full[:, 0])); cy = int(np.mean(pts_full[:, 1]))
                         if not (zx1 <= cx <= zx2 and zy1 <= cy <= zy2):
                             continue
@@ -761,7 +921,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                             "decoded": True,
                         }
 
-                        marked_roi = _mark_clipping(roi, clip_analysis)
+                        marked_roi = _mark_clipping(roi, clip_analysis_roi)
                         marked_best = _mark_clipping(best_pre, _roi_clip_analysis(best_pre, margin_px=6)) if best_pre is not None else None
                         _set_debug(zname, dbg, roi, best_pre, marked_roi, marked_best)
                         return det, None
@@ -782,7 +942,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
         "no_quad": True,
     }
 
-    marked_roi = _mark_clipping(roi, clip_analysis)
+    marked_roi = _mark_clipping(roi, clip_analysis_roi)
     marked_best = _mark_clipping(best_pre, _roi_clip_analysis(best_pre, margin_px=6)) if best_pre is not None else None
     _set_debug(zname, dbg, roi, best_pre, marked_roi, marked_best)
     return None, miss
