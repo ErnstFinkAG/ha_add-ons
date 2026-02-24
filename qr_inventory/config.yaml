@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.4.3"
+version: "0.4.4"
 slug: qr_inventory
 description: "Scan QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -43,6 +43,7 @@ options:
 
   # Decoders
   enable_zbar: true
+  zbar_qrcode_only: true
   opencv_qr_enabled: true
   force_opencv_qr_on_musl: false
 
@@ -83,6 +84,7 @@ schema:
   adaptive_block_sizes: str
 
   enable_zbar: bool
+  zbar_qrcode_only: bool
   opencv_qr_enabled: bool
   force_opencv_qr_on_musl: bool
 
