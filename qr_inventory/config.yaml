@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.4.4"
+version: "0.4.5"
 slug: qr_inventory
 description: "Scan QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -25,7 +25,7 @@ options:
   tls_verify: false
   overlay_png_name: overlay.png
 
-  # Only scan inside zones
+  # Zones only
   restrict_to_zones: false
 
   # Scan tuning
@@ -36,15 +36,24 @@ options:
   roi_scales: "2.0,3.0,4.0"
   zone_extra_scales: "6.0,8.0,10.0"
   zone_max_scaled_dim: 2400
-
-  warp_scale: 5.0
   zone_early_stop_score: 0.85
+
+  # IMPORTANT: reject decoded quads that don’t really belong to the zone (stops conflicts)
+  zone_quad_in_zone_min_ratio: 0.60
+
   adaptive_block_sizes: "21,35,51"
 
   # Decoders
   enable_zbar: true
   zbar_qrcode_only: true
-  opencv_qr_enabled: true
+
+  # Safe OpenCV fallback (subprocess)
+  opencv_subprocess_fallback: true
+  opencv_fallback_only_if_decode_failed: true
+  opencv_fallback_timeout_s: 3.0
+
+  # (optional) OpenCV in-process decode (not recommended)
+  opencv_qr_enabled: false
   force_opencv_qr_on_musl: false
 
   # Overlay
@@ -78,13 +87,18 @@ schema:
   roi_scales: str
   zone_extra_scales: str
   zone_max_scaled_dim: int
-
-  warp_scale: float
   zone_early_stop_score: float
+  zone_quad_in_zone_min_ratio: float
+
   adaptive_block_sizes: str
 
   enable_zbar: bool
   zbar_qrcode_only: bool
+
+  opencv_subprocess_fallback: bool
+  opencv_fallback_only_if_decode_failed: bool
+  opencv_fallback_timeout_s: float
+
   opencv_qr_enabled: bool
   force_opencv_qr_on_musl: bool
 

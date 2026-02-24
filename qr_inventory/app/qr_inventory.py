@@ -1,6 +1,8 @@
 import time
 import json
 import os
+import sys
+import base64
 import logging
 import subprocess
 import threading
@@ -12,11 +14,10 @@ from urllib.parse import urlparse, unquote
 import cv2
 import numpy as np
 
-# Optional ZBar (recommended for small QR)
+# Optional ZBar (best for small QR)
 try:
     from pyzbar.pyzbar import decode as zbar_decode
     try:
-        # available in pyzbar
         from pyzbar.pyzbar import ZBarSymbol
         _ZBAR_QR_SYMBOL = ZBarSymbol.QRCODE
     except Exception:
@@ -66,26 +67,33 @@ camera_mode = _opt_str('camera_mode', 'rtsps').lower()
 stream_url = opts.get('rtsp_url')
 tls_verify = _opt_bool('tls_verify', False)
 
-# Only scan inside zones
+# Zones-only mode
 restrict_to_zones = _opt_bool("restrict_to_zones", False)
 
-# Zone scan tuning
+# ROI/scanning
 use_preprocess = _opt_bool("use_preprocess", True)
 try_invert = _opt_bool("try_invert", True)
 roi_padding_px = _opt_int("roi_padding_px", 60)
-
 roi_scale = _opt_float("roi_scale", 2.0)  # backward compat
 roi_scales_raw = opts.get("roi_scales", None)
 zone_extra_scales_raw = opts.get("zone_extra_scales", "6.0,8.0,10.0")
-zone_max_scaled_dim = max(400, _opt_int("zone_max_scaled_dim", 2400))  # prevent insane scaled ROIs
-
-warp_scale = _opt_float("warp_scale", 5.0)  # used only for scoring / size estimation
+zone_max_scaled_dim = max(400, _opt_int("zone_max_scaled_dim", 2400))
 zone_early_stop_score = _opt_float("zone_early_stop_score", 0.85)
+
+# Overlap filter to stop cross-zone bleed/conflicts
+zone_quad_in_zone_min_ratio = _opt_float("zone_quad_in_zone_min_ratio", 0.60)
 
 # Decoders
 enable_zbar = _opt_bool("enable_zbar", True)
-zbar_qrcode_only = _opt_bool("zbar_qrcode_only", True)  # NEW: stops databar warnings
-opencv_qr_enabled = _opt_bool("opencv_qr_enabled", True)
+zbar_qrcode_only = _opt_bool("zbar_qrcode_only", True)
+
+# OpenCV fallback in subprocess (safe even if OpenCV crashes)
+opencv_subprocess_fallback = _opt_bool("opencv_subprocess_fallback", True)
+opencv_fallback_only_if_decode_failed = _opt_bool("opencv_fallback_only_if_decode_failed", True)
+opencv_fallback_timeout_s = _opt_float("opencv_fallback_timeout_s", 3.0)
+
+# OpenCV QR enabled (in-process). Keep OFF by default risk-wise; subprocess is safer.
+opencv_qr_enabled = _opt_bool("opencv_qr_enabled", False)
 force_opencv_qr_on_musl = _opt_bool("force_opencv_qr_on_musl", False)
 
 # Overlay options
@@ -94,7 +102,7 @@ overlay_show_size_px = _opt_bool("overlay_show_size_px", True)
 overlay_show_candidate_reason = _opt_bool("overlay_show_candidate_reason", True)
 overlay_show_zone_status = _opt_bool("overlay_show_zone_status", True)
 
-# Candidate overlays (only if OpenCV candidate exists; ZBar-only mode may have no quad)
+# Candidate overlays (rare in this build; misses are shown as zone-status)
 overlay_show_candidates = _opt_bool("overlay_show_candidates", True)
 overlay_max_candidates = max(0, _opt_int("overlay_max_candidates", 40))
 
@@ -103,7 +111,7 @@ debug_metrics = _opt_bool("debug_metrics", False)
 debug_log_every = max(1, _opt_int("debug_log_every", 1))
 stream_info_interval_minutes = max(0, _opt_int("stream_info_interval_minutes", 0))
 
-# Adaptive threshold sizes
+# Threshold sizes
 abs_raw = opts.get("adaptive_block_sizes", None)
 if isinstance(abs_raw, list):
     adaptive_block_sizes = [int(x) for x in abs_raw if int(x) % 2 == 1 and int(x) >= 11]
@@ -164,7 +172,7 @@ ROI_SCALES = _dedupe_sorted(_parse_float_list(roi_scales_raw, [roi_scale if roi_
 ZONE_EXTRA_SCALES = _dedupe_sorted(_parse_float_list(zone_extra_scales_raw, [6.0, 8.0, 10.0]))
 
 # ------------------------------------------------------------
-# Overlay PNG name (configurable)
+# Overlay PNG name
 # ------------------------------------------------------------
 _overlay_name = _opt_str('overlay_png_name', 'overlay.png')
 _overlay_name = _overlay_name.strip().lstrip('/')
@@ -174,7 +182,6 @@ if not _overlay_name:
 if not _overlay_name.lower().endswith('.png'):
     _overlay_name += '.png'
 OVERLAY_PNG_NAME = _overlay_name
-
 HTTP_PORT = 8099
 
 # ------------------------------------------------------------
@@ -380,10 +387,7 @@ def _failure_reason_no_points(zone_w: int, zone_h: int, lap_var: float, contrast
         return "shadow"
     if min(zone_w, zone_h) < 55:
         return "too_small"
-    # NEW: good quality but still no decode
-    if lap_var >= 40 and contrast >= 18 and bright_clip < 0.35 and dark_clip < 0.35:
-        return "decode_failed"
-    return "unknown"
+    return "decode_failed"
 
 def _pct(score):
     try:
@@ -441,7 +445,6 @@ def _zbar_decode_roi(gray_roi: np.ndarray):
             return zbar_decode(gray_roi, symbols=[_ZBAR_QR_SYMBOL]) or []
         res = zbar_decode(gray_roi) or []
         if zbar_qrcode_only:
-            # fallback if ZBarSymbol isn't available
             res = [r for r in res if getattr(r, "type", "") == "QRCODE"]
         return res
     except Exception:
@@ -459,24 +462,85 @@ def _zbar_poly_to_quad(poly_pts):
         return None
 
 # ------------------------------------------------------------
-# OpenCV QRCodeDetector safety (optional)
+# OpenCV decode in subprocess (safe even if OpenCV aborts)
 # ------------------------------------------------------------
-qcd = cv2.QRCodeDetector()
+_OPENCV_SUBPROC_CODE = r"""
+import sys, json, base64
+import numpy as np
+import cv2
 
-def _is_musl():
+b64 = sys.stdin.buffer.read().strip()
+if not b64:
+    print(json.dumps({"payload": "", "points": None}))
+    sys.exit(0)
+
+png = base64.b64decode(b64)
+img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_GRAYSCALE)
+if img is None:
+    print(json.dumps({"payload": "", "points": None}))
+    sys.exit(0)
+
+q = cv2.QRCodeDetector()
+payload, pts = q.detectAndDecode(img)
+payload = (payload or "").strip()
+out = {"payload": payload, "points": pts.tolist() if pts is not None else None}
+
+if not payload:
+    payload2, pts2 = q.detectAndDecodeCurved(img)
+    payload2 = (payload2 or "").strip()
+    if payload2:
+        out = {"payload": payload2, "points": pts2.tolist() if pts2 is not None else None}
+
+print(json.dumps(out))
+"""
+
+def _opencv_decode_subprocess(gray_roi: np.ndarray):
     try:
-        libc = platform.libc_ver()[0] or ""
-        return "musl" in libc.lower()
+        ok, buf = cv2.imencode(".png", gray_roi, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+        if not ok:
+            return None
+        b64 = base64.b64encode(buf.tobytes())
+        proc = subprocess.run(
+            [sys.executable, "-c", _OPENCV_SUBPROC_CODE],
+            input=b64,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=float(opencv_fallback_timeout_s),
+        )
+        if proc.returncode != 0 or not proc.stdout:
+            return None
+        out = json.loads(proc.stdout.decode("utf-8", errors="ignore"))
+        payload = (out.get("payload") or "").strip()
+        pts = out.get("points")
+        return {"payload": payload, "points": pts}
     except Exception:
-        return False
+        return None
 
-_MUSL = _is_musl()
-
-# Auto-disable OpenCV QR in zone-only mode on musl unless forced
-if _MUSL and restrict_to_zones and (not force_opencv_qr_on_musl):
-    if opencv_qr_enabled:
-        logger.warning("musl detected + restrict_to_zones=true -> disabling OpenCV QRCodeDetector to avoid crashes. (set force_opencv_qr_on_musl=true to override)")
-    opencv_qr_enabled = False
+# ------------------------------------------------------------
+# Overlap filtering (prevents cross-zone bleed/conflicts)
+# ------------------------------------------------------------
+def _bbox_overlap_ratio_with_zone(pts_full: np.ndarray, zone_box):
+    """
+    Returns intersection_area(bbox(pts), zone_box) / area(bbox(pts)).
+    """
+    try:
+        pts = np.array(pts_full, dtype=np.float32).reshape(-1, 2)
+        if pts.shape[0] != 4:
+            return 0.0
+        x1, y1, x2, y2 = map(float, zone_box)
+        minx = float(np.min(pts[:, 0])); maxx = float(np.max(pts[:, 0]))
+        miny = float(np.min(pts[:, 1])); maxy = float(np.max(pts[:, 1]))
+        bw = max(1.0, maxx - minx)
+        bh = max(1.0, maxy - miny)
+        bbox_area = bw * bh
+        ix1 = max(minx, x1); iy1 = max(miny, y1)
+        ix2 = min(maxx, x2); iy2 = min(maxy, y2)
+        iw = max(0.0, ix2 - ix1)
+        ih = max(0.0, iy2 - iy1)
+        inter = iw * ih
+        return float(inter / bbox_area) if bbox_area > 0 else 0.0
+    except Exception:
+        return 0.0
 
 # ------------------------------------------------------------
 # Scaling helper (caps size)
@@ -484,7 +548,6 @@ if _MUSL and restrict_to_zones and (not force_opencv_qr_on_musl):
 def _scaled_versions(gray_roi: np.ndarray, scale: float):
     if scale <= 1.000001:
         return [gray_roi]
-
     h, w = gray_roi.shape[:2]
     nh = int(round(h * scale))
     nw = int(round(w * scale))
@@ -493,7 +556,6 @@ def _scaled_versions(gray_roi: np.ndarray, scale: float):
         scale = float(zone_max_scaled_dim) / float(m)
         nh = max(1, int(round(h * scale)))
         nw = max(1, int(round(w * scale)))
-
     return [
         cv2.resize(gray_roi, (nw, nh), interpolation=cv2.INTER_CUBIC),
         cv2.resize(gray_roi, (nw, nh), interpolation=cv2.INTER_NEAREST),
@@ -505,25 +567,24 @@ def _scaled_versions(gray_roi: np.ndarray, scale: float):
 def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list[float], cycle_idx: int):
     h, w = frame_gray.shape[:2]
     try:
-        x1, y1, x2, y2 = map(int, box)
+        zx1, zy1, zx2, zy2 = map(int, box)
     except Exception:
-        return None, None  # decoded_det, candidate_det
+        return None, None
 
-    x1p = max(0, x1 - pad_px)
-    y1p = max(0, y1 - pad_px)
-    x2p = min(w - 1, x2 + pad_px)
-    y2p = min(h - 1, y2 + pad_px)
+    x1p = max(0, zx1 - pad_px)
+    y1p = max(0, zy1 - pad_px)
+    x2p = min(w - 1, zx2 + pad_px)
+    y2p = min(h - 1, zy2 + pad_px)
     if x2p <= x1p or y2p <= y1p:
         return None, None
 
-    zone_w = max(1, x2 - x1)
-    zone_h = max(1, y2 - y1)
-
+    zone_w = max(1, zx2 - zx1)
+    zone_h = max(1, zy2 - zy1)
     roi = frame_gray[y1p:y2p, x1p:x2p]
     if roi.size == 0:
         return None, None
 
-    # ZBar-first (stable + strong)
+    # ZBar-first
     for sc in scales:
         for roi_s in _scaled_versions(roi, sc):
             rh, rw = roi_s.shape[:2]
@@ -532,15 +593,13 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                 if not res:
                     continue
 
-                # pick largest symbol in ROI
                 best_area = -1.0
                 best_quad = None
                 best_payload = None
 
                 for r in res:
-                    payload = ""
                     try:
-                        payload = r.data.decode("utf-8", errors="ignore").strip()
+                        payload = (r.data.decode("utf-8", errors="ignore") or "").strip()
                     except Exception:
                         payload = ""
                     if not payload:
@@ -562,11 +621,17 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                 quad[:, 1] = np.clip(quad[:, 1], 0, rh - 1)
 
                 pts_full = (quad / float(sc)) + np.array([x1p, y1p], dtype=np.float32)
+
                 cx = int(np.mean(pts_full[:, 0]))
                 cy = int(np.mean(pts_full[:, 1]))
 
-                # only accept if centroid is inside the ORIGINAL zone (prevents cross-zone bleed)
-                if not (x1 <= cx <= x2 and y1 <= cy <= y2):
+                # must be inside original zone (not padded)
+                if not (zx1 <= cx <= zx2 and zy1 <= cy <= zy2):
+                    continue
+
+                # overlap ratio must be high enough (stops cross-zone bleed)
+                ov = _bbox_overlap_ratio_with_zone(pts_full, (zx1, zy1, zx2, zy2))
+                if ov < float(zone_quad_in_zone_min_ratio):
                     continue
 
                 edge_px = _edge_px_from_quad(pts_full)
@@ -580,43 +645,67 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                     "centroid": [cx, cy],
                     "zone": zname,
                     "score": score,
-                    "diag": {"edge_px": edge_px, "lap_var": lap, "contrast": con},
+                    "diag": {"edge_px": edge_px, "lap_var": lap, "contrast": con, "src": "zbar", "zone_ov": ov},
                     "decoded": True,
                 }
                 return det, None
 
-    # If ZBar didn't decode, return a zone-level MISS with a meaningful reason.
+    # ZBar failed: create MISS and optionally try OpenCV subprocess fallback
     lap = _laplacian_var(roi)
     con = _contrast_std(roi)
     bright, dark = _clip_fractions(roi)
     reason = _failure_reason_no_points(zone_w, zone_h, lap, con, bright, dark)
     score = _certainty_score(float(min(zone_w, zone_h)), lap, con)
 
+    # OpenCV subprocess fallback only when it’s likely a “real QR” failure
+    if opencv_subprocess_fallback and (not opencv_fallback_only_if_decode_failed or reason == "decode_failed"):
+        r = _opencv_decode_subprocess(roi)
+        if r and r.get("payload") and r.get("points"):
+            pts = np.array(r["points"], dtype=np.float32).reshape(-1, 2)
+            if pts.shape[0] == 4:
+                # points returned are in ROI coords; map to full-frame
+                pts_full = pts + np.array([x1p, y1p], dtype=np.float32)
+                cx = int(np.mean(pts_full[:, 0])); cy = int(np.mean(pts_full[:, 1]))
+
+                if (zx1 <= cx <= zx2 and zy1 <= cy <= zy2):
+                    ov = _bbox_overlap_ratio_with_zone(pts_full, (zx1, zy1, zx2, zy2))
+                    if ov >= float(zone_quad_in_zone_min_ratio):
+                        edge_px = _edge_px_from_quad(pts_full)
+                        score2 = _certainty_score(edge_px, lap, con)
+                        return {
+                            "payload": r["payload"],
+                            "points": pts_full.tolist(),
+                            "centroid": [cx, cy],
+                            "zone": zname,
+                            "score": score2,
+                            "diag": {"edge_px": edge_px, "lap_var": lap, "contrast": con, "src": "opencv_subproc", "zone_ov": ov},
+                            "decoded": True,
+                        }, None
+
     miss = {
         "payload": None,
-        "points": None,  # no quad to draw
-        "centroid": [int((x1 + x2) / 2), int((y1 + y2) / 2)],
+        "points": None,
+        "centroid": [int((zx1 + zx2) / 2), int((zy1 + zy2) / 2)],
         "zone": zname,
         "score": score,
         "reason": reason,
-        "diag": {"edge_px": float(min(zone_w, zone_h)), "lap_var": lap, "contrast": con},
+        "diag": {"edge_px": float(min(zone_w, zone_h)), "lap_var": lap, "contrast": con, "src": "miss"},
         "decoded": False,
         "no_quad": True,
     }
     return None, miss
 
 # ------------------------------------------------------------
-# Detection entrypoint (zones scanning; zones-only supported)
+# Detection entrypoint (zones scanning)
 # ------------------------------------------------------------
 def detect_qr(frame_bgr: np.ndarray, zones_dict: dict, cycle_idx: int):
     frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     zones_ok = isinstance(zones_dict, dict) and bool(zones_dict)
 
-    detections = []
-
     if restrict_to_zones and not zones_ok:
         return [], True
 
+    detections = []
     if zones_ok:
         pad = max(0, int(roi_padding_px))
         scales = _dedupe_sorted(ROI_SCALES + ZONE_EXTRA_SCALES)
@@ -766,7 +855,7 @@ def draw_overlay(frame, detections, zones_dict):
                 cv2.rectangle(out, (x1, sy1), (sx2, sy2), bg, -1)
                 cv2.putText(out, text, (x1 + pad, min(h - 1, sy1 + sth + pad)), font, 0.5, fg, 1, cv2.LINE_AA)
 
-    # Draw decoded quads (ZBar provides quads; MISS has no quad)
+    # Draw decoded quads
     for d in detections:
         pts_list = d.get("points")
         if not pts_list or d.get("no_quad"):
@@ -774,7 +863,6 @@ def draw_overlay(frame, detections, zones_dict):
         pts = np.array(pts_list, dtype=np.int32).reshape(-1, 1, 2)
         if pts.shape[0] != 4:
             continue
-
         color = RED if d.get("decoded") else CAND
         cv2.polylines(out, [pts], isClosed=True, color=color, thickness=2)
 
@@ -787,12 +875,8 @@ def draw_overlay(frame, detections, zones_dict):
             ep = _edge_px_from_det(d)
             if ep is not None:
                 label = f"{label} {ep}px"
-        if (not d.get("decoded")) and overlay_show_candidate_reason:
-            r = d.get("reason")
-            if r:
-                label = f"{label} {r}"
-
         label = _safe_label(label)
+
         x, y = int(pts[0, 0, 0]), int(pts[0, 0, 1])
         font = cv2.FONT_HERSHEY_SIMPLEX
         (tw, th), base = cv2.getTextSize(label, font, 0.6, 2)
@@ -873,11 +957,11 @@ threading.Thread(target=start_http_server, daemon=True).start()
 # ------------------------------------------------------------
 logger.info(
     "Starting QR Inventory (mode=%s interval=%ss required=%s tls_verify=%s overlay_png_name=%s "
-    "restrict_to_zones=%s musl=%s enable_zbar=%s zbar_ok=%s zbar_qrcode_only=%s "
-    "roi_scales=%s zone_extra_scales=%s zone_max_scaled_dim=%s)",
+    "restrict_to_zones=%s enable_zbar=%s zbar_ok=%s zbar_qrcode_only=%s "
+    "opencv_subprocess_fallback=%s zone_quad_in_zone_min_ratio=%.2f roi_scales=%s zone_extra_scales=%s)",
     camera_mode, interval, required, tls_verify, OVERLAY_PNG_NAME,
-    restrict_to_zones, _MUSL, enable_zbar, _ZBAR_OK, zbar_qrcode_only,
-    ROI_SCALES, ZONE_EXTRA_SCALES, zone_max_scaled_dim
+    restrict_to_zones, enable_zbar, _ZBAR_OK, zbar_qrcode_only,
+    opencv_subprocess_fallback, float(zone_quad_in_zone_min_ratio), ROI_SCALES, ZONE_EXTRA_SCALES
 )
 
 _log_stream_info("STARTUP")
@@ -910,7 +994,7 @@ while True:
 
         detections, zone_only_active = detect_qr(frame, zones, cycle_idx=cycle_idx)
 
-        # --- NEW: conflict handling for same payload in multiple zones in same scan ---
+        # De-duplicate payloads (after overlap filter this should be rare, but keep safety)
         decoded = [d for d in detections if d.get("decoded", False) and d.get("payload") and d.get("zone")]
         by_payload = defaultdict(list)
         for d in decoded:
@@ -918,16 +1002,21 @@ while True:
 
         for payload, items in by_payload.items():
             if len(items) > 1:
-                # conflict: do not update history/persist
-                zones_seen = [(it.get("zone"), _pct(it.get("score")), _edge_px_from_det(it)) for it in items]
-                logger.warning("Payload conflict in single scan (skipping): payload=%s zones=%s", payload, zones_seen)
-                continue
+                # choose best by zone overlap then score then size
+                def _rank(it):
+                    ov = float((it.get("diag") or {}).get("zone_ov") or 0.0)
+                    sc = float(it.get("score") or 0.0)
+                    ep = float((it.get("diag") or {}).get("edge_px") or 0.0)
+                    return (ov, sc, ep)
+                best = sorted(items, key=_rank, reverse=True)[0]
+                zones_seen = [(it.get("zone"), _pct(it.get("score")), _edge_px_from_det(it), round(float((it.get("diag") or {}).get("zone_ov") or 0.0), 2)) for it in items]
+                logger.warning("Payload conflict resolved: payload=%s choose=%s all=%s", payload, best.get("zone"), zones_seen)
+                items = [best]
 
             d = items[0]
             zone = d["zone"]
             history[payload].append(zone)
             logger.info("Detected payload=%s zone=%s history=%s", payload, zone, list(history[payload]))
-
             if len(history[payload]) >= history_maxlen and len(set(history[payload])) == 1:
                 persist_mapping(payload, zone)
 
