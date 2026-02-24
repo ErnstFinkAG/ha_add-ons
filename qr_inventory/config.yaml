@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.4.8"
+version: "0.4.9"
 slug: qr_inventory
 description: "Scan QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -53,7 +53,6 @@ options:
 
   stream_info_interval_minutes: 0
 
-  # NEW: choose one zone (e.g. "Z02") to expose /debug/* images for
   debug_zone: ""
 
 schema:

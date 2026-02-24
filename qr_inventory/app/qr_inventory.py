@@ -207,6 +207,27 @@ def persist_mapping(payload, zone):
         logger.exception('Failed writing inventory.json: %s', e)
 
 # ------------------------------------------------------------
+# Utility helpers (FIX: _safe_label added)
+# ------------------------------------------------------------
+def _safe_label(s: str, max_len: int = 96) -> str:
+    s = (s or "").replace("\n", " ").replace("\r", " ").strip()
+    if len(s) > max_len:
+        return s[: max_len - 1] + "…"
+    return s
+
+def _encode_png(img):
+    ok, buf = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+    return buf.tobytes() if ok else None
+
+def _edge_px_from_det(det):
+    diag = det.get("diag") or {}
+    edge = diag.get("edge_px", None)
+    try:
+        return int(round(float(edge))) if edge is not None else None
+    except Exception:
+        return None
+
+# ------------------------------------------------------------
 # Stream info
 # ------------------------------------------------------------
 def _run_ffprobe(url: str):
@@ -287,7 +308,7 @@ def get_frame_ffmpeg(url: str):
     return cv2.imdecode(data, cv2.IMREAD_COLOR)
 
 # ------------------------------------------------------------
-# Metrics / helpers
+# Metrics / clipping helpers
 # ------------------------------------------------------------
 def _laplacian_var(gray: np.ndarray) -> float:
     try:
@@ -349,22 +370,16 @@ def _bbox_overlap_ratio_with_zone(pts_full: np.ndarray, zone_box):
         return 0.0
 
 def _roi_clip_analysis(gray_roi: np.ndarray, margin_px: int = 6):
-    """
-    Returns bbox of dark pixels and which edges it touches.
-    This is what we use to derive roi_clipped.
-    """
     h, w = gray_roi.shape[:2]
     out = {
         "clipped": False,
         "margin_px": margin_px,
-        "bbox": None,  # [minx,miny,maxx,maxy]
+        "bbox": None,
         "touch": {"left": False, "top": False, "right": False, "bottom": False},
         "dark_px": 0,
     }
     try:
         _, th = cv2.threshold(gray_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-        # pick polarity where "dark structure" is 0 (fewest pixels tends to be the structure)
         dark0 = int(np.sum(th == 0))
         dark1 = int(np.sum(th == 255))
         if dark0 > dark1:
@@ -390,9 +405,6 @@ def _roi_clip_analysis(gray_roi: np.ndarray, margin_px: int = 6):
         return out
 
 def _mark_clipping(gray_img: np.ndarray, analysis: dict):
-    """
-    Draw bbox + touched edges on an image for visual debugging.
-    """
     vis = cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
     h, w = gray_img.shape[:2]
     bbox = analysis.get("bbox")
@@ -403,7 +415,6 @@ def _mark_clipping(gray_img: np.ndarray, analysis: dict):
         minx, miny, maxx, maxy = bbox
         cv2.rectangle(vis, (minx, miny), (maxx, maxy), (0, 0, 255), 2)
 
-    # mark touched edges
     if touch.get("left"):
         cv2.line(vis, (0, 0), (0, h - 1), (0, 0, 255), 4)
     if touch.get("top"):
@@ -558,7 +569,6 @@ def _scaled_versions(gray_roi: np.ndarray, scale: float):
     m = max(nh, nw)
     eff = float(scale)
     if m > zone_max_scaled_dim:
-        # cap but keep >1x (never downscale below original when requested >1)
         max_scale_allowed = float(zone_max_scaled_dim) / float(max(h, w))
         eff = max(1.0, min(float(scale), max_scale_allowed))
         nh = max(1, int(round(h * eff)))
@@ -582,10 +592,6 @@ DEBUG_STATE = {
     "roi_marked_png": None,
     "roi_best_marked_png": None,
 }
-
-def _encode_png(img):
-    ok, buf = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 1])
-    return buf.tobytes() if ok else None
 
 def _set_debug(zone: str, debug_json: dict, roi: np.ndarray, roi_best: np.ndarray | None, marked_roi: np.ndarray | None, marked_best: np.ndarray | None):
     if not zone or zone != debug_zone:
@@ -642,8 +648,6 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
     }
 
     best_pre = None
-    best_pre_name = None
-    best_scale_tag = None
 
     # ZBar first
     for sc in scales:
@@ -652,14 +656,11 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
                 dbg["zbar"]["attempts"] += 1
                 if zname == debug_zone and best_pre is None:
                     best_pre = v.copy()
-                    best_pre_name = pre_name
-                    best_scale_tag = scale_tag
                     dbg["best_preprocess"] = {"scale": scale_tag, "pre": pre_name}
 
                 res = _zbar_decode_roi(v)
                 if not res:
                     continue
-
                 dbg["zbar"]["hits"] += 1
 
                 best_area = -1.0
@@ -833,11 +834,8 @@ def compute_zone_status(zones_dict: dict, detections: list):
     return status
 
 # ------------------------------------------------------------
-# Overlay server state
+# Overlay rendering
 # ------------------------------------------------------------
-STATE_LOCK = threading.Lock()
-STATE = {"ts": 0, "frame_png": None, "overlay_png": None, "detections": [], "last_frame_info": {}}
-
 def draw_overlay(frame, detections, zones_dict):
     out = frame.copy()
     h, w = out.shape[:2]
@@ -901,6 +899,7 @@ def draw_overlay(frame, detections, zones_dict):
                 text = "MISS"
                 bg, fg = MISSBG, (255, 255, 255)
 
+            text = _safe_label(text, 64)
             (stw, sth), sbase = cv2.getTextSize(text, font, 0.5, 1)
             sy1 = min(h - 1, zby2 + 2)
             sy2 = min(h - 1, sy1 + sth + sbase + pad * 2)
@@ -918,7 +917,33 @@ def draw_overlay(frame, detections, zones_dict):
             continue
         cv2.polylines(out, [pts], isClosed=True, color=RED, thickness=2)
 
+        label = d.get("payload") or "QR"
+        if overlay_show_scores:
+            p = _pct(d.get("score"))
+            if p is not None:
+                label = f"{label} {p}%"
+        if overlay_show_size_px:
+            ep = _edge_px_from_det(d)
+            if ep is not None:
+                label = f"{label} {ep}px"
+        label = _safe_label(label, 96)
+
+        x, y = int(pts[0, 0, 0]), int(pts[0, 0, 1])
+        (tw, th), base = cv2.getTextSize(label, font, 0.6, 2)
+        x1 = max(0, x)
+        y1 = max(0, y - th - base - pad * 2)
+        x2 = min(w - 1, x + tw + pad * 2)
+        y2 = min(h - 1, y)
+        cv2.rectangle(out, (x1, y1), (x2, y2), RED, -1)
+        cv2.putText(out, label, (x + pad, y - pad), font, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+
     return out
+
+# ------------------------------------------------------------
+# HTTP server state + handler
+# ------------------------------------------------------------
+STATE_LOCK = threading.Lock()
+STATE = {"ts": 0, "frame_png": None, "overlay_png": None, "detections": [], "last_frame_info": {}}
 
 class OverlayHandler(BaseHTTPRequestHandler):
     def _send(self, code, content_type, body: bytes):
