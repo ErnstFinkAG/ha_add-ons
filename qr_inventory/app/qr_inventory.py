@@ -85,6 +85,12 @@ if cutout_open_ksize % 2 == 0:
     cutout_open_ksize += 1
 cutout_open_iter = max(0, _opt_int("cutout_open_iter", 1))
 
+cutout_close_ksize = max(1, _opt_int("cutout_close_ksize", 9))
+if cutout_close_ksize % 2 == 0:
+    cutout_close_ksize += 1
+cutout_close_iter = max(0, _opt_int("cutout_close_iter", 2))
+cutout_min_side_px = max(0, _opt_int("cutout_min_side_px", 50))
+
 
 roi_scale = _opt_float("roi_scale", 2.0)
 roi_scales_raw = opts.get("roi_scales", None)
@@ -464,7 +470,12 @@ def _qr_cutout_with_border(gray_roi: np.ndarray):
 
         dark = (th == 0).astype(np.uint8) * 255
 
-        # Reduce thin background lines (mortar/tape edges)
+        # Connect QR modules into a single silhouette (helps avoid picking only a finder pattern)
+        if cutout_close_iter > 0:
+            kc = np.ones((int(cutout_close_ksize), int(cutout_close_ksize)), np.uint8)
+            dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, kc, iterations=int(cutout_close_iter))
+
+        # Reduce thin background lines (mortar/tape edges) after closing
         if cutout_open_iter > 0:
             k = np.ones((int(cutout_open_ksize), int(cutout_open_ksize)), np.uint8)
             dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, k, iterations=int(cutout_open_iter))
@@ -476,15 +487,25 @@ def _qr_cutout_with_border(gray_roi: np.ndarray):
         best_score = -1.0
         for c in cnts:
             x, y, cw, ch = cv2.boundingRect(c)
-            area = int(cw * ch)
-            if area < int(cutout_min_area):
+            area_bbox = int(cw * ch)
+            if area_bbox < int(cutout_min_area):
                 continue
+            if int(min(cw, ch)) < int(cutout_min_side_px):
+                continue
+            # Reject "almost whole ROI" blobs (often caused by background edges)
+            if area_bbox > int(0.98 * float(w * h)):
+                continue
+
             ar = float(cw) / float(max(1, ch))
             if not (float(cutout_ar_lo) <= ar <= float(cutout_ar_hi)):
                 continue
 
-            # Score: big + close to square
-            score = float(area) - float(abs(ar - 1.0)) * float(area) * 0.6
+            area_cont = float(cv2.contourArea(c))
+            fill = area_cont / float(area_bbox) if area_bbox > 0 else 0.0
+            ar_err = float(abs(ar - 1.0))
+
+            # Score: prefer large, square-ish, and reasonably filled silhouette
+            score = float(area_bbox) * (1.0 - min(0.9, ar_err)) * (0.5 + min(1.0, fill))
             if score > best_score:
                 best_score = score
                 best = (x, y, cw, ch)
@@ -780,9 +801,23 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
     cutout["crop_box"] = [x0, y0, x1, y1]
     border = int(cutout.get("border_px") or 0)
 
-    # Clipping analysis on the cutout (more robust vs. background lines in the full ROI)
-    clip_analysis = _roi_clip_analysis(roi_crop, margin_px=6) if roi_crop is not None and roi_crop.size else clip_analysis_roi
-    clipped = bool(clip_analysis.get("clipped"))
+    # Clipping analysis:
+    # - For overlay/debug, analyze the *decode image* (includes added white border),
+    #   so we don't falsely flag "clipped" just because there was no quiet zone.
+    clip_analysis = _roi_clip_analysis(roi_decode, margin_px=6) if roi_decode is not None and roi_decode.size else clip_analysis_roi
+
+    # More meaningful "clipped" signal when cutout is used:
+    # If the cutout bbox touches the *original ROI* edge, we likely cropped the QR.
+    touch_roi_edge = False
+    try:
+        mpx = 6
+        if bool(cutout.get("used_candidate")):
+            touch_roi_edge = (x0 <= mpx) or (y0 <= mpx) or ((roi.shape[1] - x1) <= mpx) or ((roi.shape[0] - y1) <= mpx)
+    except Exception:
+        touch_roi_edge = False
+    cutout["touch_roi_edge"] = bool(touch_roi_edge)
+
+    clipped = bool(touch_roi_edge) if bool(cutout.get("used_candidate")) else bool(clip_analysis_roi.get("clipped"))
 
     dbg = {
         "zone": zname,

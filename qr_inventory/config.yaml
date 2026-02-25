@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.5.0"
+version: "0.5.1"
 slug: qr_inventory
 description: "Scan QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -41,6 +41,9 @@ options:
   cutout_open_ksize: 3
   cutout_open_iter: 1
 
+  cutout_close_ksize: 9
+  cutout_close_iter: 2
+  cutout_min_side_px: 50
   roi_scale: 2.0
   roi_scales: "2.0,3.0,4.0"
   zone_extra_scales: "6.0,8.0,10.0"
@@ -91,6 +94,9 @@ schema:
   cutout_open_ksize: int
   cutout_open_iter: int
 
+  cutout_close_ksize: int
+  cutout_close_iter: int
+  cutout_min_side_px: int
   roi_scale: float
   roi_scales: str
   zone_extra_scales: str
