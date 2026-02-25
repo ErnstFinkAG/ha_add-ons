@@ -93,6 +93,7 @@ cutout_min_side_px = max(0, _opt_int("cutout_min_side_px", 24))
 
 cutout_safety_pad_px = max(0, _opt_int("cutout_safety_pad_px", 0))
 cutout_detect_enable = _opt_bool("cutout_detect_enable", True)
+cutout_detect_tighten = _opt_bool("cutout_detect_tighten", True)
 cutout_detect_scales_raw = opts.get("cutout_detect_scales", "2.0,3.0,4.0")
 
 
@@ -117,6 +118,7 @@ overlay_show_scores = _opt_bool("overlay_show_scores", True)
 overlay_show_size_px = _opt_bool("overlay_show_size_px", True)
 overlay_show_candidate_reason = _opt_bool("overlay_show_candidate_reason", True)
 overlay_show_zone_status = _opt_bool("overlay_show_zone_status", True)
+overlay_show_unresolved_quads = _opt_bool("overlay_show_unresolved_quads", True)
 
 stream_info_interval_minutes = max(0, _opt_int("stream_info_interval_minutes", 0))
 debug_zone = _opt_str("debug_zone", "").strip()
@@ -465,6 +467,54 @@ def _roi_clip_analysis(gray_roi: np.ndarray, margin_px: int = 6):
 # ------------------------------------------------------------
 _QR_DETECTOR = cv2.QRCodeDetector()
 
+def _tighten_bbox_to_dark(g: np.ndarray, x0: int, y0: int, x1: int, y1: int):
+    """Tighten an axis-aligned crop box to the dark/module pixels inside it.
+
+    This is useful for small QRs where the detector bbox can include extra paper.
+    We intentionally crop tight to modules, then a synthetic white quiet-zone is added later.
+    """
+    try:
+        h, w = g.shape[:2]
+        x0 = int(max(0, min(w - 1, x0)))
+        y0 = int(max(0, min(h - 1, y0)))
+        x1 = int(max(x0 + 1, min(w, x1)))
+        y1 = int(max(y0 + 1, min(h, y1)))
+        sub = g[y0:y1, x0:x1]
+        if sub.size == 0:
+            return x0, y0, x1, y1
+
+        sb = cv2.GaussianBlur(sub, (3, 3), 0)
+        _, th = cv2.threshold(sb, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # Ensure background is white (255) and modules are black (0)
+        if int(np.sum(th == 0)) > int(np.sum(th == 255)):
+            th = 255 - th
+
+        dark = (th == 0).astype(np.uint8) * 255
+
+        # For tiny codes, connect modules slightly so bbox isn't fragmented.
+        k = 3 if min(sub.shape[:2]) < 140 else 5
+        dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8), iterations=1)
+
+        ys, xs = np.where(dark == 255)
+        if xs.size < 50:
+            return x0, y0, x1, y1
+
+        tx0 = x0 + int(xs.min())
+        ty0 = y0 + int(ys.min())
+        tx1 = x0 + int(xs.max()) + 1
+        ty1 = y0 + int(ys.max()) + 1
+
+        # clamp
+        tx0 = int(max(0, min(w - 1, tx0)))
+        ty0 = int(max(0, min(h - 1, ty0)))
+        tx1 = int(max(tx0 + 1, min(w, tx1)))
+        ty1 = int(max(ty0 + 1, min(h, ty1)))
+        return tx0, ty0, tx1, ty1
+    except Exception:
+        return int(x0), int(y0), int(x1), int(y1)
+
+
 def _qr_cutout_with_border(gray_roi: np.ndarray):
     """
     Cut out the QR region inside `gray_roi` as tightly as possible, then add a white
@@ -492,6 +542,7 @@ def _qr_cutout_with_border(gray_roi: np.ndarray):
         "border_px": 0,
         "crop_shape": [int(h), int(w)],
         "padded_shape": [int(h), int(w)],
+        "detect_quad": None,
     }
 
     if gray_roi is None or gray_roi.size == 0:
@@ -540,6 +591,15 @@ def _qr_cutout_with_border(gray_roi: np.ndarray):
                         continue
                     if not (float(cutout_ar_lo) <= ar <= float(cutout_ar_hi)):
                         continue
+
+                    meta["detect_quad"] = pts.tolist()
+
+                    # Tighten to dark/module pixels inside the detected bbox (removes paper margin)
+                    if cutout_detect_tighten:
+                        tx0, ty0, tx1, ty1 = _tighten_bbox_to_dark(g, x0, y0, x1, y1)
+                        # adopt only if it stays sensible
+                        if (tx1 - tx0) >= 8 and (ty1 - ty0) >= 8:
+                            x0, y0, x1, y1 = tx0, ty0, tx1, ty1
 
                     # Optional tight pad (user wants *no* margin by default)
                     pad_in = int(round(float(cutout_inner_pad_frac) * float(min(cw, ch)))) + int(cutout_safety_pad_px)
@@ -1075,6 +1135,34 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
         reason = "no_candidate"
     score = _certainty_score(float(min(zone_w, zone_h)), lap, con)
 
+    # If OpenCV localization found a QR quad (even if decoding failed), keep it as a candidate.
+    cand_pts_full = None
+    cand_edge_px = None
+    cand_ov = None
+    try:
+        dq = cutout.get("detect_quad") if enable_cutout else None
+        if dq is not None:
+            pts_roi = np.array(dq, dtype=np.float32).reshape(-1, 2)
+            if pts_roi.shape[0] == 4:
+                # Clamp to ROI bounds
+                pts_roi[:, 0] = np.clip(pts_roi[:, 0], 0, roi.shape[1] - 1)
+                pts_roi[:, 1] = np.clip(pts_roi[:, 1], 0, roi.shape[0] - 1)
+                pts_full = pts_roi + np.array([x1p, y1p], dtype=np.float32)
+
+                cx_det = int(np.mean(pts_full[:, 0])); cy_det = int(np.mean(pts_full[:, 1]))
+                ov_det = _bbox_overlap_ratio_with_zone(pts_full, (zx1, zy1, zx2, zy2))
+                if (zx1 <= cx_det <= zx2 and zy1 <= cy_det <= zy2) and (ov_det >= float(zone_quad_in_zone_min_ratio)):
+                    cand_pts_full = pts_full
+                    cand_edge_px = _edge_px_from_quad(pts_full)
+                    cand_ov = ov_det
+                    score = _certainty_score(cand_edge_px, lap, con)
+                    # If we have a quad but no decode, label it clearly.
+                    if reason in ("decode_failed", "no_candidate", "too_small", "roi_clipped"):
+                        reason = "detected_unresolved"
+    except Exception:
+        pass
+
+
     if opencv_subprocess_fallback and reason in ("decode_failed", "roi_clipped", "no_candidate"):
         tries = 0
         for sc in sorted(set(scales), reverse=True):
@@ -1126,16 +1214,28 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
             if tries >= opencv_fallback_attempts:
                 break
 
+    if cand_pts_full is not None:
+        cxm = int(np.mean(cand_pts_full[:, 0])); cym = int(np.mean(cand_pts_full[:, 1]))
+        miss_centroid = [cxm, cym]
+        miss_points = cand_pts_full.tolist()
+        miss_no_quad = False
+        miss_diag = {"lap_var": lap, "contrast": con, "src": "qrdetect", "clipped": clipped, "edge_px": cand_edge_px, "zone_ov": cand_ov}
+    else:
+        miss_centroid = [int((zx1 + zx2) / 2), int((zy1 + zy2) / 2)]
+        miss_points = None
+        miss_no_quad = True
+        miss_diag = {"lap_var": lap, "contrast": con, "src": "miss", "clipped": clipped}
+
     miss = {
         "payload": None,
-        "points": None,
-        "centroid": [int((zx1 + zx2) / 2), int((zy1 + zy2) / 2)],
+        "points": miss_points,
+        "centroid": miss_centroid,
         "zone": zname,
         "score": score,
         "reason": reason,
-        "diag": {"lap_var": lap, "contrast": con, "src": "miss", "clipped": clipped},
+        "diag": miss_diag,
         "decoded": False,
-        "no_quad": True,
+        "no_quad": miss_no_quad,
     }
 
     marked_roi = _mark_clipping(roi, clip_analysis_roi)
@@ -1198,15 +1298,17 @@ def draw_overlay(frame, detections, zones_dict):
 
     ORANGE = (0, 165, 255)
     RED = (0, 0, 255)
+    BLUE = (255, 0, 0)
     OKBG = (0, 170, 0)
     MISSBG = (80, 80, 80)
     CAND_BG = (255, 255, 0)
 
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    pad = 3
+
     zone_status = compute_zone_status(zones_dict, detections) if overlay_show_zone_status else {}
 
     if isinstance(zones_dict, dict) and zones_dict:
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        pad = 3
         for zname, box in zones_dict.items():
             try:
                 x1, y1, x2, y2 = map(int, box)
@@ -1263,17 +1365,28 @@ def draw_overlay(frame, detections, zones_dict):
             cv2.rectangle(out, (x1, sy1), (sx2, sy2), bg, -1)
             cv2.putText(out, text, (x1 + pad, sy1 + sth + pad), font, 0.5, fg, 1, cv2.LINE_AA)
 
-    # Draw decoded quads
+    # Draw quads:
+    # - decoded -> red
+    # - detected-but-unresolved (has points but decoded=False) -> blue
     for d in detections:
         pts_list = d.get("points")
         if not pts_list or d.get("no_quad"):
             continue
+        decoded = bool(d.get("decoded", False))
+        if (not decoded) and (not overlay_show_unresolved_quads):
+            continue
+
         pts = np.array(pts_list, dtype=np.int32).reshape(-1, 1, 2)
         if pts.shape[0] != 4:
             continue
-        cv2.polylines(out, [pts], isClosed=True, color=RED, thickness=2)
 
-        label = d.get("payload") or "QR"
+        color = RED if decoded else BLUE
+        cv2.polylines(out, [pts], isClosed=True, color=color, thickness=2)
+
+        if decoded:
+            label = d.get("payload") or "QR"
+        else:
+            label = "DETECTED"
         if overlay_show_scores:
             p = _pct(d.get("score"))
             if p is not None:
@@ -1290,7 +1403,7 @@ def draw_overlay(frame, detections, zones_dict):
         y1 = max(0, y - th - base - pad * 2)
         x2 = min(w - 1, x + tw + pad * 2)
         y2 = min(h - 1, y)
-        cv2.rectangle(out, (x1, y1), (x2, y2), RED, -1)
+        cv2.rectangle(out, (x1, y1), (x2, y2), color, -1)
         cv2.putText(out, label, (x + pad, y - pad), font, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
 
     return out
