@@ -120,6 +120,9 @@ overlay_show_candidate_reason = _opt_bool("overlay_show_candidate_reason", True)
 overlay_show_zone_status = _opt_bool("overlay_show_zone_status", True)
 overlay_show_unresolved_quads = _opt_bool("overlay_show_unresolved_quads", True)
 
+overlay_fill_unresolved_gap = _opt_bool("overlay_fill_unresolved_gap", True)
+overlay_fill_unresolved_alpha = _opt_float("overlay_fill_unresolved_alpha", 0.22)
+
 stream_info_interval_minutes = max(0, _opt_int("stream_info_interval_minutes", 0))
 debug_zone = _opt_str("debug_zone", "").strip()
 
@@ -1308,6 +1311,63 @@ def draw_overlay(frame, detections, zones_dict):
 
     zone_status = compute_zone_status(zones_dict, detections) if overlay_show_zone_status else {}
 
+    # Fill the "gap" between the zone rectangle and an unresolved detected quad.
+    # This is purely visual: it helps confirm how much non-QR area is inside the scan zone.
+    if overlay_fill_unresolved_gap and overlay_show_unresolved_quads and isinstance(zones_dict, dict) and zones_dict and isinstance(zone_status, dict) and zone_status:
+        alpha = float(overlay_fill_unresolved_alpha)
+        alpha = max(0.0, min(0.85, alpha))
+
+        for zname, st in zone_status.items():
+            if not isinstance(st, dict) or st.get("kind") != "candidate":
+                continue
+            det = st.get("det") or {}
+            if not isinstance(det, dict):
+                continue
+            if det.get("reason") != "detected_unresolved":
+                continue
+            pts_list = det.get("points")
+            if not pts_list or zname not in zones_dict:
+                continue
+
+            try:
+                x1, y1, x2, y2 = map(int, zones_dict[zname])
+            except Exception:
+                continue
+
+            # Clamp and slice the zone region (avoid allocating full-frame masks on 16k frames).
+            x1c = max(0, min(w - 1, x1))
+            y1c = max(0, min(h - 1, y1))
+            x2c = max(0, min(w - 1, x2))
+            y2c = max(0, min(h - 1, y2))
+            if x2c <= x1c or y2c <= y1c:
+                continue
+
+            pts = np.array(pts_list, dtype=np.int32).reshape(-1, 1, 2)
+            if pts.shape[0] != 4:
+                continue
+
+            sub = out[y1c:y2c + 1, x1c:x2c + 1]
+            sh, sw = sub.shape[:2]
+            if sh < 2 or sw < 2:
+                continue
+
+            pts_sub = pts.copy()
+            pts_sub[:, :, 0] -= int(x1c)
+            pts_sub[:, :, 1] -= int(y1c)
+
+            poly_mask = np.zeros((sh, sw), dtype=np.uint8)
+            cv2.fillPoly(poly_mask, [pts_sub], 255)
+
+            # Outside the quad (within the zone rectangle) -> fill with semi-transparent BLUE
+            m = (poly_mask == 0)
+            if not np.any(m):
+                continue
+
+            sub_f = sub.astype(np.float32)
+            color = np.array(BLUE, dtype=np.float32).reshape(1, 1, 3)
+            sub_f[m] = sub_f[m] * (1.0 - alpha) + color * alpha
+            out[y1c:y2c + 1, x1c:x2c + 1] = sub_f.astype(np.uint8)
+
     if isinstance(zones_dict, dict) and zones_dict:
         for zname, box in zones_dict.items():
             try:
@@ -1407,7 +1467,6 @@ def draw_overlay(frame, detections, zones_dict):
         cv2.putText(out, label, (x + pad, y - pad), font, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
 
     return out
-
 # ------------------------------------------------------------
 # HTTP server state + handler
 # ------------------------------------------------------------

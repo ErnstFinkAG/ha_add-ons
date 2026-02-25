@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.5.3"
+version: "0.5.4"
 slug: qr_inventory
 description: "Scan QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -70,6 +70,9 @@ options:
   overlay_show_zone_status: true
   overlay_show_unresolved_quads: true
 
+
+  overlay_fill_unresolved_gap: true
+  overlay_fill_unresolved_alpha: 0.22
   stream_info_interval_minutes: 0
 
   debug_zone: ""
@@ -128,5 +131,8 @@ schema:
   overlay_show_zone_status: bool
   overlay_show_unresolved_quads: bool
 
+
+  overlay_fill_unresolved_gap: bool
+  overlay_fill_unresolved_alpha: float
   stream_info_interval_minutes: int
   debug_zone: str
