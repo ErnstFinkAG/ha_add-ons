@@ -77,7 +77,7 @@ enable_cutout = _opt_bool("enable_cutout", True)
 cutout_min_area = max(50, _opt_int("cutout_min_area", 500))
 cutout_ar_lo = _opt_float("cutout_ar_lo", 0.60)
 cutout_ar_hi = _opt_float("cutout_ar_hi", 1.40)
-cutout_inner_pad_frac = _opt_float("cutout_inner_pad_frac", 0.06)
+cutout_inner_pad_frac = _opt_float("cutout_inner_pad_frac", 0.00)
 cutout_border_frac = _opt_float("cutout_border_frac", 0.20)
 cutout_border_min_px = max(0, _opt_int("cutout_border_min_px", 16))
 cutout_open_ksize = max(1, _opt_int("cutout_open_ksize", 3))
@@ -89,7 +89,12 @@ cutout_close_ksize = max(1, _opt_int("cutout_close_ksize", 9))
 if cutout_close_ksize % 2 == 0:
     cutout_close_ksize += 1
 cutout_close_iter = max(0, _opt_int("cutout_close_iter", 2))
-cutout_min_side_px = max(0, _opt_int("cutout_min_side_px", 50))
+cutout_min_side_px = max(0, _opt_int("cutout_min_side_px", 24))
+
+cutout_safety_pad_px = max(0, _opt_int("cutout_safety_pad_px", 0))
+cutout_detect_enable = _opt_bool("cutout_detect_enable", True)
+cutout_detect_scales_raw = opts.get("cutout_detect_scales", "2.0,3.0,4.0")
+
 
 
 roi_scale = _opt_float("roi_scale", 2.0)
@@ -174,6 +179,8 @@ def _dedupe_sorted(vals):
 
 ROI_SCALES = _dedupe_sorted(_parse_float_list(roi_scales_raw, [roi_scale if roi_scale > 0 else 2.0]))
 ZONE_EXTRA_SCALES = _dedupe_sorted(_parse_float_list(zone_extra_scales_raw, [6.0, 8.0, 10.0]))
+CUTOUT_DETECT_SCALES = _dedupe_sorted(_parse_float_list(cutout_detect_scales_raw, [2.0, 3.0, 4.0]))
+
 
 # ------------------------------------------------------------
 # Overlay PNG name
@@ -391,22 +398,42 @@ def _bbox_overlap_ratio_with_zone(pts_full: np.ndarray, zone_box):
 
 def _roi_clip_analysis(gray_roi: np.ndarray, margin_px: int = 6):
     h, w = gray_roi.shape[:2]
+    m = max(1, int(margin_px))
+    edge_thr = 0.02  # require at least 2% of edge band to be "dark" to count as touching
+
     out = {
         "clipped": False,
-        "margin_px": margin_px,
+        "margin_px": int(margin_px),
         "bbox": None,
         "touch": {"left": False, "top": False, "right": False, "bottom": False},
         "dark_px": 0,
+        "dark_frac": 0.0,
+        "edge_dark_ratio": {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0},
     }
     try:
+        # Otsu binarization (white-ish background)
         _, th = cv2.threshold(gray_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # Ensure background is white (255) and "ink/modules" are black (0)
         dark0 = int(np.sum(th == 0))
         dark1 = int(np.sum(th == 255))
         if dark0 > dark1:
             th = 255 - th
+            dark0, dark1 = dark1, dark0
+
+        n = int(w * h) if w and h else 0
+        out["dark_px"] = int(dark0)
+        out["dark_frac"] = float(dark0) / float(max(1, n))
+
+        # If almost nothing is dark, there's nothing to clip.
+        if dark0 < 50 or out["dark_frac"] < 0.001:
+            return out
+
+        # If almost everything is dark, threshold likely failed (don't label "clipped").
+        if out["dark_frac"] > 0.90:
+            return out
 
         ys, xs = np.where(th == 0)
-        out["dark_px"] = int(xs.size)
         if xs.size < 50:
             return out
 
@@ -414,10 +441,19 @@ def _roi_clip_analysis(gray_roi: np.ndarray, margin_px: int = 6):
         miny, maxy = int(ys.min()), int(ys.max())
         out["bbox"] = [minx, miny, maxx, maxy]
 
-        out["touch"]["left"] = (minx <= margin_px)
-        out["touch"]["top"] = (miny <= margin_px)
-        out["touch"]["right"] = ((w - 1 - maxx) <= margin_px)
-        out["touch"]["bottom"] = ((h - 1 - maxy) <= margin_px)
+        # Edge-band density: prevents background mortar/tape lines from forcing "clipped"
+        left_ratio = float(np.mean(th[:, :m] == 0))
+        right_ratio = float(np.mean(th[:, max(0, w - m):] == 0))
+        top_ratio = float(np.mean(th[:m, :] == 0))
+        bottom_ratio = float(np.mean(th[max(0, h - m):, :] == 0))
+        out["edge_dark_ratio"] = {
+            "left": left_ratio, "top": top_ratio, "right": right_ratio, "bottom": bottom_ratio
+        }
+
+        out["touch"]["left"] = (minx <= m) and (left_ratio > edge_thr)
+        out["touch"]["top"] = (miny <= m) and (top_ratio > edge_thr)
+        out["touch"]["right"] = ((w - 1 - maxx) <= m) and (right_ratio > edge_thr)
+        out["touch"]["bottom"] = ((h - 1 - maxy) <= m) and (bottom_ratio > edge_thr)
 
         out["clipped"] = any(out["touch"].values())
         return out
@@ -427,14 +463,21 @@ def _roi_clip_analysis(gray_roi: np.ndarray, margin_px: int = 6):
 # ------------------------------------------------------------
 # Cutout + quiet-zone helper
 # ------------------------------------------------------------
+_QR_DETECTOR = cv2.QRCodeDetector()
+
 def _qr_cutout_with_border(gray_roi: np.ndarray):
     """
-    Try to cut out the most QR-like dark component inside `gray_roi` and add a white
+    Cut out the QR region inside `gray_roi` as tightly as possible, then add a white
     quiet-zone border around it before decoding.
+
+    Key design: we try OpenCV's QRCodeDetector *detect()* (localization only) on an upscaled
+    ROI first. This tends to find even small QRs where binarization/CC fails. We then crop
+    tightly to the detected quad's bounding box (no extra margin unless `cutout_*pad*` adds it).
 
     Returns: (padded_gray, meta)
       meta = {
         "used_candidate": bool,
+        "method": str,
         "crop_box": [x0, y0, x1, y1],   # x1/y1 are exclusive, in ROI coords
         "border_px": int,
         "crop_shape": [h, w],
@@ -444,6 +487,7 @@ def _qr_cutout_with_border(gray_roi: np.ndarray):
     h, w = gray_roi.shape[:2]
     meta = {
         "used_candidate": False,
+        "method": "none",
         "crop_box": [0, 0, int(w), int(h)],
         "border_px": 0,
         "crop_shape": [int(h), int(w)],
@@ -458,80 +502,195 @@ def _qr_cutout_with_border(gray_roi: np.ndarray):
         if g.dtype != np.uint8:
             g = cv2.normalize(g, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 
-        # Threshold to get "dark ink" mask
-        g_blur = cv2.GaussianBlur(g, (3, 3), 0)
-        _, th = cv2.threshold(g_blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # --------------------------------------------------------
+        # 1) Prefer OpenCV QR localization (detect only), upscaled.
+        # --------------------------------------------------------
+        if cutout_detect_enable:
+            for s in (CUTOUT_DETECT_SCALES or [2.0, 3.0, 4.0]):
+                try:
+                    sf = float(s)
+                    if sf <= 1.0:
+                        continue
+                    up = cv2.resize(g, (int(round(w * sf)), int(round(h * sf))), interpolation=cv2.INTER_CUBIC)
+                    ok, pts = _QR_DETECTOR.detect(up)
+                    if not ok or pts is None:
+                        continue
+                    pts = np.array(pts, dtype=np.float32).reshape(-1, 2) / float(sf)
 
-        # Ensure QR modules are dark (0) in `th`
-        dark0 = int(np.sum(th == 0))
-        dark1 = int(np.sum(th == 255))
-        if dark0 > dark1:
-            th = 255 - th
+                    minx = int(np.floor(np.min(pts[:, 0]))); maxx = int(np.ceil(np.max(pts[:, 0])))
+                    miny = int(np.floor(np.min(pts[:, 1]))); maxy = int(np.ceil(np.max(pts[:, 1])))
 
-        dark = (th == 0).astype(np.uint8) * 255
+                    # Convert to exclusive coords
+                    x0 = max(0, min(w - 1, minx))
+                    y0 = max(0, min(h - 1, miny))
+                    x1 = max(x0 + 1, min(w, maxx + 1))
+                    y1 = max(y0 + 1, min(h, maxy + 1))
 
-        # Connect QR modules into a single silhouette (helps avoid picking only a finder pattern)
-        if cutout_close_iter > 0:
-            kc = np.ones((int(cutout_close_ksize), int(cutout_close_ksize)), np.uint8)
-            dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, kc, iterations=int(cutout_close_iter))
+                    cw = x1 - x0
+                    ch = y1 - y0
+                    area_bbox = int(cw * ch)
+                    ar = float(cw) / float(max(1, ch))
 
-        # Reduce thin background lines (mortar/tape edges) after closing
-        if cutout_open_iter > 0:
-            k = np.ones((int(cutout_open_ksize), int(cutout_open_ksize)), np.uint8)
-            dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, k, iterations=int(cutout_open_iter))
+                    # Basic sanity: reasonably square & not the whole ROI
+                    if area_bbox < int(cutout_min_area):
+                        continue
+                    if int(min(cw, ch)) < int(cutout_min_side_px):
+                        continue
+                    if area_bbox > int(0.98 * float(w * h)):
+                        continue
+                    if not (float(cutout_ar_lo) <= ar <= float(cutout_ar_hi)):
+                        continue
 
-        _fc = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cnts = _fc[0] if len(_fc) == 2 else _fc[1]
+                    # Optional tight pad (user wants *no* margin by default)
+                    pad_in = int(round(float(cutout_inner_pad_frac) * float(min(cw, ch)))) + int(cutout_safety_pad_px)
+                    if pad_in > 0:
+                        x0 = max(0, x0 - pad_in)
+                        y0 = max(0, y0 - pad_in)
+                        x1 = min(w, x1 + pad_in)
+                        y1 = min(h, y1 + pad_in)
 
-        best = None
-        best_score = -1.0
-        for c in cnts:
-            x, y, cw, ch = cv2.boundingRect(c)
-            area_bbox = int(cw * ch)
-            if area_bbox < int(cutout_min_area):
-                continue
-            if int(min(cw, ch)) < int(cutout_min_side_px):
-                continue
-            # Reject "almost whole ROI" blobs (often caused by background edges)
-            if area_bbox > int(0.98 * float(w * h)):
-                continue
+                    meta["used_candidate"] = True
+                    meta["method"] = f"qrdetect_{sf:.2f}x"
+                    meta["crop_box"] = [int(x0), int(y0), int(x1), int(y1)]
+                    meta["crop_shape"] = [int(y1 - y0), int(x1 - x0)]
+                    break
+                except Exception:
+                    continue
 
-            ar = float(cw) / float(max(1, ch))
-            if not (float(cutout_ar_lo) <= ar <= float(cutout_ar_hi)):
-                continue
+        # --------------------------------------------------------
+        # 2) Fallback: binarize + morphology + contour scoring.
+        # --------------------------------------------------------
+        if not meta["used_candidate"]:
+            g_blur = cv2.GaussianBlur(g, (3, 3), 0)
+            _, th = cv2.threshold(g_blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-            area_cont = float(cv2.contourArea(c))
-            fill = area_cont / float(area_bbox) if area_bbox > 0 else 0.0
-            ar_err = float(abs(ar - 1.0))
+            # Ensure background is white and "ink/modules" are black (0)
+            dark0 = int(np.sum(th == 0))
+            dark1 = int(np.sum(th == 255))
+            if dark0 > dark1:
+                th = 255 - th
+                dark0, dark1 = dark1, dark0
 
-            # Score: prefer large, square-ish, and reasonably filled silhouette
-            score = float(area_bbox) * (1.0 - min(0.9, ar_err)) * (0.5 + min(1.0, fill))
-            if score > best_score:
-                best_score = score
-                best = (x, y, cw, ch)
+            n = int(w * h) if w and h else 0
+            dark_frac = float(dark0) / float(max(1, n))
+            meta["thr_method"] = "otsu"
+            meta["thr_dark_frac"] = float(dark_frac)
 
-        if best is not None:
-            x, y, cw, ch = best
-            pad_in = int(round(float(cutout_inner_pad_frac) * float(min(cw, ch))))
-            x0 = max(0, x - pad_in)
-            y0 = max(0, y - pad_in)
-            x1 = min(w, x + cw + pad_in)
-            y1 = min(h, y + ch + pad_in)
+            # If Otsu produces an extreme mask, try adaptive thresholding.
+            if dark_frac < 0.01 or dark_frac > 0.80:
+                try:
+                    bs = 35 if min(h, w) >= 160 else 21
+                    if bs >= min(h, w):
+                        bs = max(11, (min(h, w) // 2) | 1)
+                    thr = cv2.adaptiveThreshold(
+                        g_blur, 255,
+                        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                        cv2.THRESH_BINARY,
+                        int(bs), 5
+                    )
+                    d0 = int(np.sum(thr == 0))
+                    d1 = int(np.sum(thr == 255))
+                    if d0 > d1:
+                        thr = 255 - thr
+                        d0, d1 = d1, d0
+                    dfrac = float(d0) / float(max(1, n))
+                    if 0.001 < dfrac < 0.95:
+                        th = thr
+                        meta["thr_method"] = f"adaptive{int(bs)}"
+                        meta["thr_dark_frac"] = float(dfrac)
+                except Exception:
+                    pass
 
-            meta["used_candidate"] = True
-            meta["crop_box"] = [int(x0), int(y0), int(x1), int(y1)]
-            meta["crop_shape"] = [int(y1 - y0), int(x1 - x0)]
+            # Raw dark mask (modules) and a "connected" version for contour finding.
+            dark_raw = (th == 0).astype(np.uint8) * 255
+            dark = dark_raw.copy()
 
+            # Connect QR modules into a silhouette (prevents picking only a finder pattern)
+            if cutout_close_iter > 0:
+                kc = np.ones((int(cutout_close_ksize), int(cutout_close_ksize)), np.uint8)
+                dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, kc, iterations=int(cutout_close_iter))
+
+            # Reduce thin background lines after closing
+            if cutout_open_iter > 0:
+                ko = np.ones((int(cutout_open_ksize), int(cutout_open_ksize)), np.uint8)
+                dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, ko, iterations=int(cutout_open_iter))
+
+            _fc = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cnts = _fc[0] if len(_fc) == 2 else _fc[1]
+
+            best = None
+            best_score = -1.0
+            for c in cnts:
+                x, y, cw, ch = cv2.boundingRect(c)
+                area_bbox = int(cw * ch)
+                if area_bbox < int(cutout_min_area):
+                    continue
+                if int(min(cw, ch)) < int(cutout_min_side_px):
+                    continue
+                if area_bbox > int(0.98 * float(w * h)):
+                    continue
+
+                ar = float(cw) / float(max(1, ch))
+                if not (float(cutout_ar_lo) <= ar <= float(cutout_ar_hi)):
+                    continue
+
+                area_cont = float(cv2.contourArea(c))
+                fill = area_cont / float(area_bbox) if area_bbox > 0 else 0.0
+                ar_err = float(abs(ar - 1.0))
+                score = float(area_bbox) * (1.0 - min(0.9, ar_err)) * (0.5 + min(1.0, fill))
+                if score > best_score:
+                    best_score = score
+                    best = (x, y, cw, ch)
+
+            if best is not None:
+                x, y, cw, ch = best
+
+                # Tighten: within the chosen silhouette bbox, re-bbox the RAW dark pixels.
+                # This yields a crop "around the QR only" (no paper margin).
+                sub = (dark_raw[y:y + ch, x:x + cw] == 255)
+                ys, xs = np.where(sub)
+                if xs.size >= 50:
+                    tx0 = x + int(xs.min())
+                    ty0 = y + int(ys.min())
+                    tx1 = x + int(xs.max()) + 1
+                    ty1 = y + int(ys.max()) + 1
+                else:
+                    tx0, ty0, tx1, ty1 = x, y, x + cw, y + ch
+
+                cw2 = tx1 - tx0
+                ch2 = ty1 - ty0
+
+                pad_in = int(round(float(cutout_inner_pad_frac) * float(min(cw2, ch2)))) + int(cutout_safety_pad_px)
+                if pad_in > 0:
+                    tx0 = max(0, tx0 - pad_in)
+                    ty0 = max(0, ty0 - pad_in)
+                    tx1 = min(w, tx1 + pad_in)
+                    ty1 = min(h, ty1 + pad_in)
+
+                meta["used_candidate"] = True
+                meta["method"] = "morph_cc"
+                meta["crop_box"] = [int(tx0), int(ty0), int(tx1), int(ty1)]
+                meta["crop_shape"] = [int(ty1 - ty0), int(tx1 - tx0)]
+
+        # --------------------------------------------------------
+        # Crop + add white quiet-zone border
+        # --------------------------------------------------------
         x0, y0, x1, y1 = meta["crop_box"]
         crop = g[y0:y1, x0:x1]
         if crop is None or crop.size == 0:
             crop = g
             meta["used_candidate"] = False
+            meta["method"] = "none"
             meta["crop_box"] = [0, 0, int(w), int(h)]
             meta["crop_shape"] = [int(h), int(w)]
 
-        # Add quiet-zone border (white)
-        border = max(int(cutout_border_min_px), int(round(float(cutout_border_frac) * float(min(crop.shape[:2])))))
+        if bool(meta.get("used_candidate")):
+            border = max(
+                int(cutout_border_min_px),
+                int(round(float(cutout_border_frac) * float(min(crop.shape[:2])))))
+        else:
+            border = int(cutout_border_min_px)
+
         meta["border_px"] = int(border)
 
         if border > 0:
@@ -544,8 +703,8 @@ def _qr_cutout_with_border(gray_roi: np.ndarray):
 
         meta["padded_shape"] = [int(padded.shape[0]), int(padded.shape[1])]
         return padded, meta
+
     except Exception:
-        # Safe fallback: just decode the original ROI
         return gray_roi, meta
 
 def _mark_clipping(gray_img: np.ndarray, analysis: dict):
@@ -817,7 +976,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
         touch_roi_edge = False
     cutout["touch_roi_edge"] = bool(touch_roi_edge)
 
-    clipped = bool(touch_roi_edge) if bool(cutout.get("used_candidate")) else bool(clip_analysis_roi.get("clipped"))
+    clipped = (bool(touch_roi_edge) if bool(cutout.get("used_candidate")) else False) if enable_cutout else bool(clip_analysis_roi.get("clipped"))
 
     dbg = {
         "zone": zname,
@@ -912,9 +1071,11 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
 
     # fallback
     reason = _failure_reason(zone_w, zone_h, lap, con, bright, dark, clipped)
+    if enable_cutout and (not bool(cutout.get("used_candidate"))) and reason == "decode_failed":
+        reason = "no_candidate"
     score = _certainty_score(float(min(zone_w, zone_h)), lap, con)
 
-    if opencv_subprocess_fallback and reason in ("decode_failed", "roi_clipped"):
+    if opencv_subprocess_fallback and reason in ("decode_failed", "roi_clipped", "no_candidate"):
         tries = 0
         for sc in sorted(set(scales), reverse=True):
             for scale_tag, roi_s in _scaled_versions(roi_decode, sc):
