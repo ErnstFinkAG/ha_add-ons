@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.5.5"
+version: "0.5.6"
 slug: qr_inventory
 description: "Scan QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -44,7 +44,7 @@ options:
   cutout_close_ksize: 9
   cutout_close_iter: 2
   cutout_min_side_px: 24
-  cutout_safety_pad_px: 0
+  cutout_safety_pad_px: 2
   cutout_detect_enable: true
   cutout_detect_tighten: true
   cutout_detect_scales: "2.0,3.0,4.0"

@@ -1075,6 +1075,19 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
 
     clipped = (bool(touch_roi_edge) if bool(cutout.get("used_candidate")) else False) if enable_cutout else bool(clip_analysis_roi.get("clipped"))
 
+    # If we have a detected quad (blue border), ZBar can sometimes decode best at 1.0x.
+    # Many configs start at 2.0x; prepend 1.0x only for detected-quads to avoid extra work everywhere.
+    scales_eff = list(scales) if isinstance(scales, (list, tuple)) else [float(scales)]
+    try:
+        if enable_cutout and (cutout.get("detect_quad") is not None):
+            if 1.0 not in scales_eff:
+                scales_eff = [1.0] + scales_eff
+        # de-dup while keeping order
+        _seen = set()
+        scales_eff = [float(s) for s in scales_eff if not (float(s) in _seen or _seen.add(float(s)))]
+    except Exception:
+        scales_eff = list(scales) if isinstance(scales, (list, tuple)) else [float(scales)]
+
     dbg = {
         "zone": zname,
         "roi_shape": list(roi.shape),
@@ -1085,7 +1098,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
         "roi_crop_shape": list(roi_crop.shape) if roi_crop is not None else None,
         "clip_analysis": clip_analysis,
         "clip_analysis_roi": clip_analysis_roi,
-        "scales": scales,
+        "scales": scales_eff,
         "zbar": {"attempts": 0, "hits": 0},
         "opencv_subproc": {"attempts": 0, "hits": 0, "last": None},
         "best_preprocess": None,
@@ -1094,7 +1107,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
     best_pre = None
 
     # ZBar first
-    for sc in scales:
+    for sc in scales_eff:
         for scale_tag, roi_s in _scaled_versions(roi_decode, sc):
             for pre_name, v in _preprocess_gray_variants(roi_s):
                 dbg["zbar"]["attempts"] += 1
@@ -1200,9 +1213,9 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
         pass
 
 
-    if opencv_subprocess_fallback and reason in ("decode_failed", "roi_clipped", "no_candidate"):
+    if opencv_subprocess_fallback and reason in ("decode_failed", "roi_clipped", "no_candidate", "detected_unresolved"):
         tries = 0
-        for sc in sorted(set(scales), reverse=True):
+        for sc in sorted(set(scales_eff), reverse=True):
             for scale_tag, roi_s in _scaled_versions(roi_decode, sc):
                 for pre_name, v in _preprocess_gray_variants(roi_s):
                     if tries >= opencv_fallback_attempts:
