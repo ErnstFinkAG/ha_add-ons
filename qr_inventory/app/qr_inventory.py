@@ -96,6 +96,12 @@ cutout_detect_enable = _opt_bool("cutout_detect_enable", True)
 cutout_detect_tighten = _opt_bool("cutout_detect_tighten", True)
 cutout_detect_scales_raw = opts.get("cutout_detect_scales", "2.0,3.0,4.0")
 
+# If OpenCV QR localization returns a quad (even when decoding fails), we can improve
+# decode reliability by forcing everything *outside* that quad to pure white in the
+# decode input. This removes paper texture / background clutter and effectively
+# creates a cleaner quiet-zone around the symbol.
+cutout_whiten_outside_quad = _opt_bool("cutout_whiten_outside_quad", True)
+
 
 
 roi_scale = _opt_float("roi_scale", 2.0)
@@ -736,7 +742,7 @@ def _qr_cutout_with_border(gray_roi: np.ndarray):
                 meta["crop_shape"] = [int(ty1 - ty0), int(tx1 - tx0)]
 
         # --------------------------------------------------------
-        # Crop + add white quiet-zone border
+        # Crop + (optional) whiten outside detected quad + add quiet-zone border
         # --------------------------------------------------------
         x0, y0, x1, y1 = meta["crop_box"]
         crop = g[y0:y1, x0:x1]
@@ -746,6 +752,34 @@ def _qr_cutout_with_border(gray_roi: np.ndarray):
             meta["method"] = "none"
             meta["crop_box"] = [0, 0, int(w), int(h)]
             meta["crop_shape"] = [int(h), int(w)]
+
+        # If we have a detected quad, force everything *outside* it to pure white.
+        # This mirrors the (visual) "gap fill" but for the decode input, and it
+        # often helps ZBar on noisy paper / low-contrast small codes.
+        if bool(meta.get("used_candidate")) and cutout_whiten_outside_quad and meta.get("detect_quad") is not None:
+            try:
+                pts = np.array(meta.get("detect_quad"), dtype=np.float32).reshape(-1, 2)
+                if pts.shape[0] == 4 and crop is not None and crop.size:
+                    # Move quad into crop coordinates
+                    pts[:, 0] -= float(x0)
+                    pts[:, 1] -= float(y0)
+
+                    # Clamp to crop bounds (fillPoly tolerates out-of-bounds but clamp helps stability)
+                    ch, cw = crop.shape[:2]
+                    pts[:, 0] = np.clip(pts[:, 0], -2.0, float(cw + 1))
+                    pts[:, 1] = np.clip(pts[:, 1], -2.0, float(ch + 1))
+
+                    mask = np.zeros((ch, cw), dtype=np.uint8)
+                    cv2.fillPoly(mask, [pts.astype(np.int32)], 255)
+
+                    if mask.size and np.any(mask == 0):
+                        # Outside the quad -> white
+                        crop2 = crop.copy()
+                        crop2[mask == 0] = 255
+                        crop = crop2
+                        meta["whiten_outside_quad"] = True
+            except Exception:
+                pass
 
         if bool(meta.get("used_candidate")):
             border = max(

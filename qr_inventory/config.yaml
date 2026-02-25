@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.5.4"
+version: "0.5.5"
 slug: qr_inventory
 description: "Scan QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
 arch:
@@ -48,6 +48,11 @@ options:
   cutout_detect_enable: true
   cutout_detect_tighten: true
   cutout_detect_scales: "2.0,3.0,4.0"
+
+  # For decode input: if a QR quad is detected (even if not decoded), force everything
+  # outside the quad to pure white before running ZBar/OpenCV. This removes paper/
+  # wall texture and gives a cleaner synthetic quiet-zone.
+  cutout_whiten_outside_quad: true
   roi_scale: 2.0
   roi_scales: "2.0,3.0,4.0"
   zone_extra_scales: "6.0,8.0,10.0"
@@ -109,6 +114,7 @@ schema:
   cutout_detect_enable: bool
   cutout_detect_tighten: bool
   cutout_detect_scales: str
+  cutout_whiten_outside_quad: bool
   roi_scale: float
   roi_scales: str
   zone_extra_scales: str
