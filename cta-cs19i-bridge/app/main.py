@@ -1,5 +1,6 @@
 import asyncio, json, re, argparse, time, unicodedata
 import websockets
+from websockets.exceptions import ConnectionClosed
 import xml.etree.ElementTree as ET
 from paho.mqtt import client as mqtt
 from datetime import datetime
@@ -9,7 +10,8 @@ def ts():
 
 def extract_number(value: str):
     m = re.match(r"^\s*([\-+]?\d+(?:[.,]\d+)?)\s*([^\d\s].*)?$", value or "")
-    if not m: return None, None
+    if not m:
+        return None, None
     num = float(m.group(1).replace(",", "."))
     unit = (m.group(2) or "").strip() or None
     return num, unit
@@ -59,7 +61,9 @@ def parse_content(root: ET.Element):
         opts = []
         for opt in it.findall("option"):
             opts.append({"text": (opt.text or ""), "val": opt.get("value")})
-        rows.append({"name": name, "value": value, "id": item_id, "unit": unit, "raw": raw, "div": div, "options": opts})
+        rows.append(
+            {"name": name, "value": value, "id": item_id, "unit": unit, "raw": raw, "div": div, "options": opts}
+        )
     return title, rows
 
 def slug(s: str, keep_slash=False):
@@ -91,6 +95,15 @@ def print_table(title: str, rows, page_path: str):
         print(f"{r['name'].ljust(name_w)}  {r['value'].ljust(val_w)}  {r['id'].ljust(id_w)}", flush=True)
     print("", flush=True)
 
+def is_ws_close_error(e: Exception) -> bool:
+    msg = str(e) or ""
+    return (
+        isinstance(e, ConnectionClosed)
+        or "no close frame received" in msg.lower()
+        or "connection closed" in msg.lower()
+        or "ws closed" in msg.lower()
+    )
+
 class MqttBridge:
     def __init__(self, host, port, user, pw, discovery_prefix, state_base_topic):
         self.discovery = discovery_prefix.rstrip("/")
@@ -121,10 +134,8 @@ class MqttBridge:
     def stop(self):
         try:
             self.client.publish(f"{self.state_base}/status", "offline", retain=True)
-        except Exception:
-            pass
-        try:
             self.client.loop_stop()
+            self.client.disconnect()
         except Exception:
             pass
 
@@ -133,7 +144,7 @@ class MqttBridge:
 
     def pub_sensor(self, page_title: str, row: dict, page_path: str):
         page_slug = slug(page_path, keep_slash=True).replace("/", "_")
-        name_slug = slug(row['name'])
+        name_slug = slug(row["name"])
         uniq = f"{self.state_base}_{page_slug}_{name_slug}"
         st_topic = f"{self.state_base}/{slug(page_path, keep_slash=True)}/{name_slug}"
         cfg_topic = f"{self.discovery}/sensor/{uniq}/config"
@@ -145,7 +156,7 @@ class MqttBridge:
 
         if num is not None and unit:
             state_payload = f"{num}"
-            u = (unit or '').strip()
+            u = (unit or "").strip()
             if u in ("°C", "C", "degC"):
                 device_class = "temperature"
             elif u in ("V", "Volt", "volts"):
@@ -197,65 +208,99 @@ class CTAClient:
 
     async def connect(self):
         headers = [("Origin", f"http://{self.host}")]
-        self.ws = await websockets.connect(self.uri, subprotocols=["Lux_WS"], extra_headers=headers, ping_interval=20, ping_timeout=10)
+        # Controller/embedded servers often don't like ping/pong -> disable.
+        self.ws = await websockets.connect(
+            self.uri,
+            subprotocols=["Lux_WS"],
+            extra_headers=headers,
+            ping_interval=None,
+            ping_timeout=None,
+            close_timeout=1,
+            max_size=None,
+        )
         await self.send(f"LOGIN;{self.password}")
         await asyncio.sleep(0.2)
 
     async def close(self):
         if self.ws:
-            try: await self.ws.close(code=1000)
-            except Exception: pass
+            try:
+                await self.ws.close(code=1000)
+            except Exception:
+                pass
             self.ws = None
 
     async def send(self, text: str):
-        if self.ws is None: return
-        await self.ws.send(text)
+        if self.ws is None:
+            raise RuntimeError("WS not connected")
+        try:
+            await self.ws.send(text)
+        except ConnectionClosed as e:
+            self.ws = None
+            raise RuntimeError(f"WS closed: {e}") from e
 
     async def recv_once(self, timeout: float):
-        if self.ws is None: return None
+        if self.ws is None:
+            raise RuntimeError("WS not connected")
         try:
             return await asyncio.wait_for(self.ws.recv(), timeout=timeout)
         except asyncio.TimeoutError:
             return None
+        except ConnectionClosed as e:
+            self.ws = None
+            raise RuntimeError(f"WS closed: {e}") from e
 
-    async def get_navigation(self) -> ET.Element:
-        await self.send("GET;NAV;1")
-        buf = ""
-        t0 = time.time()
-        while time.time() - t0 < 4:
-            msg = await self.recv_once(1.0)
-            if msg is None:
+    async def get_navigation(self, tries=10, timeout=8.0):
+        last = None
+        for _ in range(tries):
+            await self.send("REFRESH")
+            txt = await self.recv_once(timeout)
+            if txt is None:
                 continue
-            buf += msg
-            if re.search(r"</\s*Navigation\s*>", buf, re.I):
-                return parse_xml(buf)
-        raise RuntimeError("Navigation timeout")
+            last = txt
+            if re.search(r"<\s*Navigation(\s|>)", txt, re.I):
+                try:
+                    return parse_xml(txt)
+                except Exception:
+                    await asyncio.sleep(0.2)
+        raise RuntimeError(f"No Navigation received. Last:\n{last}")
 
-    async def get_page(self, page_id: str, page_title: str) -> ET.Element:
-        await self.send(f"GET;{page_id};1")
-        buf = ""
-        t0 = time.time()
-        while time.time() - t0 < 4:
-            msg = await self.recv_once(1.0)
-            if msg is None:
+    async def get_page(self, page_id: str, title: str, per_read=4.0, overall=25.0, poll_ms=300):
+        deadline = asyncio.get_event_loop().time() + overall
+        sent_get = False
+        last = None
+        while asyncio.get_event_loop().time() < deadline:
+            if not sent_get:
+                await self.send(f"GET;{page_id}")
+                sent_get = True
+                await asyncio.sleep(poll_ms / 1000)
+
+            await self.send("REFRESH")
+            txt = await self.recv_once(per_read)
+            if txt is None:
                 continue
-            buf += msg
-            if "</Content>" in buf or re.search(r"</\s*Content\s*>", buf, re.I):
-                if is_content_of(buf, page_id, page_title):
-                    return parse_xml(buf)
-        raise RuntimeError(f"Page timeout id={page_id} title={page_title}")
+            last = txt
+            if is_content_of(txt, page_id, title):
+                try:
+                    return parse_xml(txt)
+                except Exception:
+                    pass
+            await asyncio.sleep(poll_ms / 1000)
 
-async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass,
-              poll_interval, delta_c, discovery_prefix, state_base_topic,
-              log_pages, log_changes_only):
-    cta = CTAClient(host, port, password)
-    await cta.connect()
+        raise RuntimeError(f"Timed out waiting for Content of {title} ({page_id}). Last:\n{last}")
 
+async def run(
+    host, port, password,
+    mqtt_host, mqtt_port, mqtt_user, mqtt_pass,
+    poll_interval, delta_c, discovery_prefix, state_base_topic,
+    log_pages, log_changes_only
+):
+    prev = {}
     mqttb = MqttBridge(mqtt_host, mqtt_port, mqtt_user, mqtt_pass, discovery_prefix, state_base_topic)
     mqttb.connect_async()
     mqttb.pub_button_start()
 
-    prev = {}
+    cta = CTAClient(host, port, password)
+    await cta.connect()
 
     async def start_heating():
         try:
@@ -263,21 +308,29 @@ async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass,
             leaves = list(walk_nav_leaves(nav, []))
             p_temp_info = next((l for l in leaves if l["path"].startswith("Informationen/Temperaturen")), None)
             p_temp_set  = next((l for l in leaves if l["path"].startswith("Einstellungen/Temperaturen")), None)
-            if not all([p_temp_info, p_temp_set]): return
+            if not all([p_temp_info, p_temp_set]):
+                return
+
             info = await cta.get_page(p_temp_info["id"], "Temperaturen")
             _, rows = parse_content(info)
             rueck = next((r for r in rows if r["name"] == "Rücklauf"), None)
-            if not rueck: return
+            if not rueck:
+                return
             num, _ = extract_number(rueck["value"])
-            if num is None: return
+            if num is None:
+                return
+
             target = num + float(delta_c)
+
             te = await cta.get_page(p_temp_set["id"], "Temperaturen")
             _, rows = parse_content(te)
             minr = next((r for r in rows if r["name"].startswith("Min. Rückl.Solltemp")), None)
             cap  = next((r for r in rows if r["name"] == "Rückl.-Begr."), None)
             if cap:
                 cnum, _ = extract_number(cap["value"])
-                if cnum is not None and target > cnum: target = cnum
+                if cnum is not None and target > cnum:
+                    target = cnum
+
             if minr:
                 cur, _ = extract_number(minr["value"])
                 div = minr.get("div", 1.0) if isinstance(minr.get("div", 1.0), (int, float)) else 1.0
@@ -288,25 +341,44 @@ async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass,
                     await asyncio.sleep(0.5)
         except Exception as e:
             print(f"[start_heating] {e}", flush=True)
+            if is_ws_close_error(e):
+                try:
+                    await cta.close()
+                except Exception:
+                    pass
 
     mqttb.on_press_start = start_heating
 
     try:
         while True:
+            # NAV loop with reconnect on WS close
             try:
                 nav = await cta.get_navigation()
             except Exception as e:
                 print(f"[nav] {e}", flush=True)
-                await cta.close()
-                await asyncio.sleep(2)
-                await cta.connect()
+                if is_ws_close_error(e):
+                    try:
+                        await cta.close()
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1)
+                    try:
+                        await cta.connect()
+                    except Exception as e2:
+                        print(f"[reconnect] {e2}", flush=True)
+                        await asyncio.sleep(2)
+                else:
+                    await asyncio.sleep(2)
                 continue
 
             leaves = list(walk_nav_leaves(nav, []))
+            reconnect_needed = False
+
             for leaf in leaves:
                 try:
                     page = await cta.get_page(leaf["id"], leaf["name"])
                     title, rows = parse_content(page)
+
                     for r in rows:
                         mqttb.pub_sensor(title, r, leaf["path"])
 
@@ -317,7 +389,8 @@ async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass,
                                 key = (slug(leaf["path"]), r["name"])
                                 val = r["value"]
                                 if prev.get(key) != val:
-                                    changed.append(r); prev[key] = val
+                                    changed.append(r)
+                                    prev[key] = val
                             if changed:
                                 print_table(title, changed, leaf["path"])
                         else:
@@ -327,8 +400,27 @@ async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass,
 
                 except Exception as e:
                     print(f"[page {leaf['path']}] {e}", flush=True)
+                    if is_ws_close_error(e):
+                        reconnect_needed = True
+                        break
+
                 await asyncio.sleep(0.15)
+
+            if reconnect_needed:
+                try:
+                    await cta.close()
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
+                try:
+                    await cta.connect()
+                except Exception as e2:
+                    print(f"[reconnect] {e2}", flush=True)
+                    await asyncio.sleep(2)
+                continue
+
             await asyncio.sleep(int(poll_interval))
+
     finally:
         await cta.close()
         mqttb.stop()
@@ -346,7 +438,6 @@ def parse_args():
     p.add_argument("--demand-delta", type=float, default=5.0)
     p.add_argument("--discovery-prefix", default="homeassistant")
     p.add_argument("--state-base-topic", default="cta_cs19i")
-    # NOTE: keep as flag (no argument) – matches run.sh
     p.add_argument("--log-pages", action="store_true")
     p.add_argument("--log-changes-only", action="store_true")
     return p.parse_args()
