@@ -60,13 +60,50 @@ def _opt_str(key, default):
     v = opts.get(key, default)
     return default if v is None else str(v)
 
-interval = _opt_int('interval_seconds', 60)
-required = _opt_int('required_consistency', 3)
-camera_mode = _opt_str('camera_mode', 'rtsps').lower()
-stream_url = opts.get('rtsp_url')
-tls_verify = _opt_bool('tls_verify', False)
+def _deep_get(d, *keys, default=None):
+    cur = d
+    for k in keys:
+        if not isinstance(cur, dict):
+            return default
+        if k not in cur:
+            return default
+        cur = cur.get(k)
+    return cur
 
-restrict_to_zones = _opt_bool("restrict_to_zones", False)
+def _parse_int(v, default):
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+def _parse_bool(v, default=False):
+    if v is None:
+        return default
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    s = str(v).strip().lower()
+    if s in ("1", "true", "yes", "y", "on"):
+        return True
+    if s in ("0", "false", "no", "n", "off"):
+        return False
+    return default
+
+def _parse_str_list(v):
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return [str(x).strip() for x in v if str(x).strip()]
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return []
+        # allow comma-separated strings
+        if "," in s:
+            return [p.strip() for p in s.split(",") if p.strip()]
+        return [s]
+    return [str(v).strip()] if str(v).strip() else []
 
 use_preprocess = _opt_bool("use_preprocess", True)
 try_invert = _opt_bool("try_invert", True)
@@ -129,8 +166,7 @@ overlay_show_unresolved_quads = _opt_bool("overlay_show_unresolved_quads", True)
 overlay_fill_unresolved_gap = _opt_bool("overlay_fill_unresolved_gap", True)
 overlay_fill_unresolved_alpha = _opt_float("overlay_fill_unresolved_alpha", 0.22)
 
-stream_info_interval_minutes = max(0, _opt_int("stream_info_interval_minutes", 0))
-debug_zone = _opt_str("debug_zone", "").strip()
+STREAM_INFO_INTERVAL_MINUTES_DEFAULT = max(0, _opt_int("stream_info_interval_minutes", 0))
 
 abs_raw = opts.get("adaptive_block_sizes", None)
 if isinstance(abs_raw, list):
@@ -193,56 +229,285 @@ ZONE_EXTRA_SCALES = _dedupe_sorted(_parse_float_list(zone_extra_scales_raw, [6.0
 CUTOUT_DETECT_SCALES = _dedupe_sorted(_parse_float_list(cutout_detect_scales_raw, [2.0, 3.0, 4.0]))
 
 
+
 # ------------------------------------------------------------
-# Overlay PNG name
+# Global defaults (multi-camera)
 # ------------------------------------------------------------
+_defaults = opts.get("defaults") if isinstance(opts.get("defaults"), dict) else {}
+
+DEFAULT_INTERVAL_S = _parse_int(_defaults.get("interval_s", _defaults.get("interval_seconds", opts.get("interval_seconds", 60))), 60)
+DEFAULT_REQUIRED = _parse_int(_defaults.get("required", _defaults.get("required_consistency", opts.get("required_consistency", 3))), 3)
+DEFAULT_RESTRICT_TO_ZONES = _parse_bool(_defaults.get("restrict_to_zones", opts.get("restrict_to_zones", False)), False)
+
+# TLS verify: global default, can be overridden per camera.stream.tls_verify
+TLS_VERIFY_DEFAULT = _parse_bool(opts.get("tls_verify", False), False)
+
+# Logging
+_log_level = str(_defaults.get("log_level", opts.get("log_level", "info"))).strip().lower()
+_LOG_LEVEL_MAP = {
+    "trace": logging.DEBUG,
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "warn": logging.WARNING,
+    "error": logging.ERROR,
+}
+logger.setLevel(_LOG_LEVEL_MAP.get(_log_level, logging.INFO))
+
+# Debug zones (GLOBAL): list of zone names like ["A1","A2","Y1"].
+# Backward compat: old single debug_zone: "Z10"
+_debug_zones_raw = opts.get("debug_zones", _defaults.get("debug_zones", []))
+_debug_zone_legacy = _opt_str("debug_zone", "").strip()
+DEBUG_ZONES = set(_parse_str_list(_debug_zones_raw))
+if _debug_zone_legacy:
+    DEBUG_ZONES.add(_debug_zone_legacy)
+DEBUG_ALL_ZONES = ("*" in DEBUG_ZONES)
+if DEBUG_ALL_ZONES:
+    DEBUG_ZONES.discard("*")
+
+def _debug_enabled_for_zone(zone_name: str) -> bool:
+    if DEBUG_ALL_ZONES:
+        return True
+    return str(zone_name) in DEBUG_ZONES
+
+# ------------------------------------------------------------
+# Overlay HTTP server settings
+# ------------------------------------------------------------
+HTTP_PORT = _parse_int(opts.get("overlay_http_port", 8099), 8099)
+
+OVERLAY_ROUTE_PREFIX = str(opts.get("overlay_route_prefix", "/overlays") or "/overlays").strip()
+if not OVERLAY_ROUTE_PREFIX.startswith("/"):
+    OVERLAY_ROUTE_PREFIX = "/" + OVERLAY_ROUTE_PREFIX
+OVERLAY_ROUTE_PREFIX = OVERLAY_ROUTE_PREFIX.rstrip("/")
+
+FRAME_ROUTE_PREFIX = str(opts.get("frame_route_prefix", "/frames") or "/frames").strip()
+if not FRAME_ROUTE_PREFIX.startswith("/"):
+    FRAME_ROUTE_PREFIX = "/" + FRAME_ROUTE_PREFIX
+FRAME_ROUTE_PREFIX = FRAME_ROUTE_PREFIX.rstrip("/")
+
+# Legacy single-camera overlay filename (still served for backward compatibility)
 _overlay_name = os.path.basename(_opt_str('overlay_png_name', 'overlay.png').strip().lstrip('/')) or "overlay.png"
 if not _overlay_name.lower().endswith('.png'):
     _overlay_name += ".png"
 OVERLAY_PNG_NAME = _overlay_name
-HTTP_PORT = 8099
 
 # ------------------------------------------------------------
-# Zones
+# Multi-camera config parsing
 # ------------------------------------------------------------
-zones_raw = opts.get('zones', {})
-if isinstance(zones_raw, str):
+def _parse_zones(zones_raw):
+    """
+    Accepts:
+      - list of {zone: "A1", rect_px: [x1,y1,x2,y2]}
+      - dict of {"A1": [x1,y1,x2,y2], ...}
+      - legacy dict of {"Z01": [..], ...}
+    Returns dict: zone_name -> [x1,y1,x2,y2] (ints)
+    """
+    out = {}
+    if zones_raw is None:
+        return out
+
+    if isinstance(zones_raw, str):
+        # allow JSON string (legacy)
+        try:
+            zones_raw = json.loads(zones_raw) if zones_raw.strip() else {}
+        except Exception:
+            return out
+
+    if isinstance(zones_raw, dict):
+        for k, v in zones_raw.items():
+            try:
+                a = [int(v[0]), int(v[1]), int(v[2]), int(v[3])]
+                out[str(k)] = a
+            except Exception:
+                continue
+        return out
+
+    if isinstance(zones_raw, list):
+        for item in zones_raw:
+            if isinstance(item, dict):
+                z = item.get("zone") or item.get("id") or item.get("name")
+                rect = item.get("rect_px") or item.get("rect") or item.get("box")
+            else:
+                z = None
+                rect = item
+            if not z:
+                continue
+            try:
+                a = [int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])]
+            except Exception:
+                continue
+            out[str(z)] = a
+        return out
+
+    return out
+
+def _parse_legacy_zones():
+    zones_raw = opts.get('zones', {})
+    if isinstance(zones_raw, str):
+        try:
+            zones_dict = json.loads(zones_raw) if zones_raw.strip() else {}
+        except Exception:
+            zones_dict = {}
+    elif isinstance(zones_raw, dict):
+        zones_dict = zones_raw
+    else:
+        zones_dict = {}
+    return _parse_zones(zones_dict)
+
+def _parse_cameras():
+    cams = opts.get("cameras")
+    out = {}
+
+    def _conf_has_url(conf):
+        if not isinstance(conf, dict):
+            return False
+        url = _deep_get(conf, "stream", "rtsp_url", default=None) or conf.get("rtsp_url")
+        return isinstance(url, str) and bool(url.strip())
+
+    # New format: cameras is a dict keyed by camera id
+    if isinstance(cams, dict) and cams:
+        for cam_id, conf in cams.items():
+            if not isinstance(conf, dict):
+                continue
+            out[str(cam_id)] = conf
+        # treat as "not configured" if no camera has a URL (so legacy rtsp_url can still work)
+        if any(_conf_has_url(c) for c in out.values()):
+            return out
+        out = {}
+
+    # Alternate format: list of cameras with explicit id
+    if isinstance(cams, list) and cams:
+        for conf in cams:
+            if not isinstance(conf, dict):
+                continue
+            cam_id = conf.get("id")
+            if not cam_id:
+                continue
+            out[str(cam_id)] = conf
+        if any(_conf_has_url(c) for c in out.values()):
+            return out
+        out = {}
+
+    # Legacy single-camera options
+    legacy_url = opts.get("rtsp_url")
+    if isinstance(legacy_url, str) and legacy_url.strip():
+        out["cam1"] = {
+            "name": "camera1",
+            "stream": {"rtsp_url": legacy_url.strip(), "tls_verify": TLS_VERIFY_DEFAULT},
+            "zones": _parse_legacy_zones(),
+            "settings": {
+                "interval_s": DEFAULT_INTERVAL_S,
+                "required": DEFAULT_REQUIRED,
+                "restrict_to_zones": DEFAULT_RESTRICT_TO_ZONES,
+                "enabled": True,
+            },
+        }
+    return out
+
+_CAMERAS_RAW = _parse_cameras()
+
+def _build_camera_runtime(cam_id: str, conf: dict):
+    name = str(conf.get("name") or cam_id)
+
+    stream = conf.get("stream") if isinstance(conf.get("stream"), dict) else {}
+    url = stream.get("rtsp_url") or conf.get("rtsp_url") or ""
+    url = str(url).strip()
+
+    tls_verify = _parse_bool(stream.get("tls_verify", TLS_VERIFY_DEFAULT), TLS_VERIFY_DEFAULT)
+
+    settings = conf.get("settings") if isinstance(conf.get("settings"), dict) else {}
+    enabled = _parse_bool(settings.get("enabled", True), True)
+
+    interval_s = _parse_int(settings.get("interval_s", settings.get("interval_seconds", DEFAULT_INTERVAL_S)), DEFAULT_INTERVAL_S)
+    required_n = _parse_int(settings.get("required", settings.get("required_consistency", DEFAULT_REQUIRED)), DEFAULT_REQUIRED)
+    restrict = _parse_bool(settings.get("restrict_to_zones", DEFAULT_RESTRICT_TO_ZONES), DEFAULT_RESTRICT_TO_ZONES)
+
+    # Stream info logging interval: can be global only for now
+    stream_info_interval_minutes = _parse_int(opts.get("stream_info_interval_minutes", 0), 0)
+
+    # Zones: accept either conf.zones (list/dict) or legacy dict already stored
+    zones_dict = _parse_zones(conf.get("zones"))
+    if not zones_dict and isinstance(conf.get("zones"), dict):
+        zones_dict = _parse_zones(conf.get("zones"))
+    if not zones_dict and "zones" in conf and isinstance(conf["zones"], dict):
+        zones_dict = _parse_zones(conf["zones"])
+
+    # If user provided legacy dict in cam1.zones (from _parse_cameras), it might already be dict of zone->rect
+    if not zones_dict and isinstance(conf.get("zones"), dict):
+        zones_dict = conf.get("zones")
+
+    return {
+        "id": cam_id,
+        "name": name,
+        "url": url,
+        "tls_verify": tls_verify,
+        "enabled": enabled,
+        "interval_s": max(1, interval_s),
+        "required": max(1, required_n),
+        "restrict_to_zones": bool(restrict),
+        "zones": zones_dict if isinstance(zones_dict, dict) else {},
+        "stream_info_interval_minutes": max(0, stream_info_interval_minutes),
+    }
+
+CAMERAS = {}
+for _cid, _conf in _CAMERAS_RAW.items():
     try:
-        zones = json.loads(zones_raw) if zones_raw.strip() else {}
-    except Exception:
-        logger.warning('zones is not valid JSON, using {}')
-        zones = {}
-elif isinstance(zones_raw, dict):
-    zones = zones_raw
-else:
-    zones = {}
+        cam_rt = _build_camera_runtime(str(_cid), _conf if isinstance(_conf, dict) else {})
+        CAMERAS[cam_rt["id"]] = cam_rt
+    except Exception as e:
+        logger.exception("Failed parsing camera config %s: %s", _cid, e)
+
+CAMERA_IDS = sorted(CAMERAS.keys())
+PRIMARY_CAMERA_ID = CAMERA_IDS[0] if CAMERA_IDS else None
+
+if not CAMERA_IDS:
+    logger.error("No cameras configured. Please set 'cameras:' in the add-on options.")
 
 # ------------------------------------------------------------
-# Persistence
+# Persistence (inventory mapping)
 # ------------------------------------------------------------
-history_maxlen = required if required and required > 0 else 1
-history = defaultdict(lambda: deque(maxlen=history_maxlen))
+INV_LOCK = threading.Lock()
+
 confirmed = {}
-
 inv_path = '/data/inventory.json'
 if os.path.exists(inv_path):
     try:
         with open(inv_path, 'r', encoding='utf-8') as f:
-            confirmed = json.load(f)
+            confirmed = json.load(f) or {}
     except Exception:
         confirmed = {}
 
-def persist_mapping(payload, zone):
-    prev = confirmed.get(payload)
-    if prev == zone:
-        return
-    confirmed[payload] = zone
+def _atomic_write_json(path: str, obj):
     try:
-        with open(inv_path, 'w', encoding='utf-8') as f:
-            json.dump(confirmed, f, indent=2, ensure_ascii=False)
-        logger.info('Persisted mapping %s -> %s', payload, zone)
+        d = os.path.dirname(path) or "."
+        os.makedirs(d, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(obj, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+        return True
     except Exception as e:
-        logger.exception('Failed writing inventory.json: %s', e)
+        logger.exception("Failed writing %s: %s", path, e)
+        return False
+
+def persist_mapping(payload: str, location: str):
+    """
+    Persist payload -> location mapping.
+    location is typically "<camera_id>.<zone>", e.g. "cam1.A1".
+    """
+    payload = (payload or "").strip()
+    location = (location or "").strip()
+    if not payload or not location:
+        return
+
+    with INV_LOCK:
+        prev = confirmed.get(payload)
+        if prev == location:
+            return
+        confirmed[payload] = location
+
+    if _atomic_write_json(inv_path, confirmed):
+        logger.info('Persisted mapping %s -> %s', payload, location)
 
 # ------------------------------------------------------------
 # Utility helpers (FIX: _safe_label added)
@@ -268,9 +533,9 @@ def _edge_px_from_det(det):
 # ------------------------------------------------------------
 # Stream info
 # ------------------------------------------------------------
-def _run_ffprobe(url: str):
+def _run_ffprobe(url: str, tls_verify: bool):
     cmd = ["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-select_streams", "v:0"]
-    if url.lower().startswith("rtsps://") and not tls_verify:
+    if url.lower().startswith("rtsps://") and (not bool(tls_verify)):
         cmd += ["-tls_verify", "0"]
     cmd += [url]
     try:
@@ -308,10 +573,10 @@ def _fmt_rate(r):
     except Exception:
         return r
 
-def _log_stream_info(tag: str):
-    if not stream_url:
+def _log_stream_info(tag: str, url: str, tls_verify: bool):
+    if not url:
         return
-    info = _run_ffprobe(stream_url)
+    info = _run_ffprobe(url, tls_verify)
     if not info:
         logger.info("%s: Stream info: (ffprobe unavailable or no metadata)", tag)
         return
@@ -328,9 +593,9 @@ def _log_stream_info(tag: str):
 # ------------------------------------------------------------
 # Frame capture
 # ------------------------------------------------------------
-def get_frame_ffmpeg(url: str):
+def get_frame_ffmpeg(url: str, tls_verify: bool):
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp"]
-    if url.lower().startswith("rtsps://") and not tls_verify:
+    if url.lower().startswith("rtsps://") and (not bool(tls_verify)):
         cmd += ["-tls_verify", "0"]
     cmd += ["-i", url, "-an", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "pipe:1"]
     try:
@@ -983,32 +1248,47 @@ def _scaled_versions(gray_roi: np.ndarray, scale: float):
 # Debug state (in-memory)
 # ------------------------------------------------------------
 DEBUG_LOCK = threading.Lock()
-DEBUG_STATE = {
-    "zone": None,
-    "ts": 0,
-    "json": None,
-    "roi_png": None,
-    "roi_best_png": None,
-    "roi_marked_png": None,
-    "roi_best_marked_png": None,
-}
+# key: "<cam_id>:<zone>"
+DEBUG_STATE = {}
+# Track latest debug entry (global + per camera)
+DEBUG_LATEST = {"key": None, "ts": 0, "by_cam": {}}
 
-def _set_debug(zone: str, debug_json: dict, roi: np.ndarray, roi_best: np.ndarray | None, marked_roi: np.ndarray | None, marked_best: np.ndarray | None):
-    if not zone or zone != debug_zone:
+def _set_debug(cam_id: str, zone: str, debug_json: dict, roi: np.ndarray,
+               roi_best: np.ndarray | None, marked_roi: np.ndarray | None, marked_best: np.ndarray | None):
+    if not zone or (not _debug_enabled_for_zone(zone)):
         return
+    cam_id = str(cam_id or "").strip() or "cam"
+    zone = str(zone).strip()
+    key = f"{cam_id}:{zone}"
+    ts = int(time.time())
+    entry = {
+        "camera": cam_id,
+        "zone": zone,
+        "ts": ts,
+        "debug": debug_json,
+        "roi_png": _encode_png(roi) if roi is not None else None,
+        "roi_best_png": _encode_png(roi_best) if roi_best is not None else None,
+        "roi_marked_png": _encode_png(marked_roi) if marked_roi is not None else None,
+        "roi_best_marked_png": _encode_png(marked_best) if marked_best is not None else None,
+    }
+
     with DEBUG_LOCK:
-        DEBUG_STATE["zone"] = zone
-        DEBUG_STATE["ts"] = int(time.time())
-        DEBUG_STATE["json"] = debug_json
-        DEBUG_STATE["roi_png"] = _encode_png(roi) if roi is not None else None
-        DEBUG_STATE["roi_best_png"] = _encode_png(roi_best) if roi_best is not None else None
-        DEBUG_STATE["roi_marked_png"] = _encode_png(marked_roi) if marked_roi is not None else None
-        DEBUG_STATE["roi_best_marked_png"] = _encode_png(marked_best) if marked_best is not None else None
+        DEBUG_STATE[key] = entry
+        # global latest
+        if ts >= int(DEBUG_LATEST.get("ts") or 0):
+            DEBUG_LATEST["ts"] = ts
+            DEBUG_LATEST["key"] = key
+        # per-camera latest
+        by_cam = DEBUG_LATEST.get("by_cam") or {}
+        cur = by_cam.get(cam_id) or {}
+        if ts >= int(cur.get("ts") or 0):
+            by_cam[cam_id] = {"ts": ts, "key": key}
+        DEBUG_LATEST["by_cam"] = by_cam
 
 # ------------------------------------------------------------
 # Zone scan
 # ------------------------------------------------------------
-def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list[float]):
+def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
     H, W = frame_gray.shape[:2]
     try:
         zx1, zy1, zx2, zy2 = map(int, box)
@@ -1089,6 +1369,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
         scales_eff = list(scales) if isinstance(scales, (list, tuple)) else [float(scales)]
 
     dbg = {
+        "camera": str(cam_id),
         "zone": zname,
         "roi_shape": list(roi.shape),
         "roi_pad_px": pad_px,
@@ -1111,7 +1392,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
         for scale_tag, roi_s in _scaled_versions(roi_decode, sc):
             for pre_name, v in _preprocess_gray_variants(roi_s):
                 dbg["zbar"]["attempts"] += 1
-                if zname == debug_zone and best_pre is None:
+                if _debug_enabled_for_zone(zname) and best_pre is None:
                     best_pre = v.copy()
                     dbg["best_preprocess"] = {"scale": scale_tag, "pre": pre_name}
 
@@ -1176,7 +1457,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
 
                 marked_roi = _mark_clipping(roi, clip_analysis_roi)
                 marked_best = _mark_clipping(best_pre, _roi_clip_analysis(best_pre, margin_px=6)) if best_pre is not None else None
-                _set_debug(zname, dbg, roi, best_pre, marked_roi, marked_best)
+                _set_debug(cam_id, zname, dbg, roi, best_pre, marked_roi, marked_best)
                 return det, None
 
     # fallback
@@ -1257,7 +1538,7 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
 
                         marked_roi = _mark_clipping(roi, clip_analysis_roi)
                         marked_best = _mark_clipping(best_pre, _roi_clip_analysis(best_pre, margin_px=6)) if best_pre is not None else None
-                        _set_debug(zname, dbg, roi, best_pre, marked_roi, marked_best)
+                        _set_debug(cam_id, zname, dbg, roi, best_pre, marked_roi, marked_best)
                         return det, None
                 if tries >= opencv_fallback_attempts:
                     break
@@ -1290,17 +1571,17 @@ def scan_zone(frame_gray: np.ndarray, zname: str, box, pad_px: int, scales: list
 
     marked_roi = _mark_clipping(roi, clip_analysis_roi)
     marked_best = _mark_clipping(best_pre, _roi_clip_analysis(best_pre, margin_px=6)) if best_pre is not None else None
-    _set_debug(zname, dbg, roi, best_pre, marked_roi, marked_best)
+    _set_debug(cam_id, zname, dbg, roi, best_pre, marked_roi, marked_best)
     return None, miss
 
 # ------------------------------------------------------------
 # Detection entrypoint
 # ------------------------------------------------------------
-def detect_qr(frame_bgr: np.ndarray, zones_dict: dict):
+def detect_qr(frame_bgr: np.ndarray, cam_id: str, zones_dict: dict, restrict_to_zones_flag: bool):
     frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     zones_ok = isinstance(zones_dict, dict) and bool(zones_dict)
 
-    if restrict_to_zones and not zones_ok:
+    if restrict_to_zones_flag and not zones_ok:
         return [], True
 
     detections = []
@@ -1308,12 +1589,12 @@ def detect_qr(frame_bgr: np.ndarray, zones_dict: dict):
         pad = max(0, int(roi_padding_px))
         scales = _dedupe_sorted(ROI_SCALES + ZONE_EXTRA_SCALES) or [2.0, 3.0, 4.0, 6.0, 8.0, 10.0]
         for zname, box in zones_dict.items():
-            dec, miss = scan_zone(frame_gray, str(zname), box, pad, scales)
+            dec, miss = scan_zone(frame_gray, str(cam_id), str(zname), box, pad, scales)
             if dec is not None:
                 detections.append(dec)
             elif miss is not None:
                 detections.append(miss)
-        return detections, True if restrict_to_zones else False
+        return detections, True if restrict_to_zones_flag else False
 
     return [], False
 
@@ -1518,7 +1799,28 @@ def draw_overlay(frame, detections, zones_dict):
 # HTTP server state + handler
 # ------------------------------------------------------------
 STATE_LOCK = threading.Lock()
-STATE = {"ts": 0, "frame_png": None, "overlay_png": None, "detections": [], "last_frame_info": {}}
+# cam_id -> {"ts": int, "frame_png": bytes|None, "overlay_png": bytes|None, "detections": list, "frame_info": dict}
+STATE = {}
+
+def _get_cam_state(cam_id: str):
+    with STATE_LOCK:
+        return (STATE.get(cam_id) or {}).copy()
+
+def _get_all_states():
+    with STATE_LOCK:
+        return {k: (v or {}).copy() for k, v in STATE.items()}
+
+def _send_json(handler: BaseHTTPRequestHandler, obj, code=200):
+    body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    handler.send_response(code)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    try:
+        handler.wfile.write(body)
+    except BrokenPipeError:
+        return
 
 class OverlayHandler(BaseHTTPRequestHandler):
     def _send(self, code, content_type, body: bytes):
@@ -1527,88 +1829,147 @@ class OverlayHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            return
 
     def do_GET(self):
         path = unquote(urlparse(self.path).path or "/")
 
-        with STATE_LOCK:
-            overlay_png = STATE["overlay_png"]
-            frame_png = STATE["frame_png"]
-            det = STATE["detections"]
-            ts = STATE["ts"]
-            fi = STATE.get("last_frame_info", {}) or {}
-
+        # Index
         if path in ("/", "/index.html"):
+            cams_html = ""
+            for cid in CAMERA_IDS:
+                cam = CAMERAS.get(cid) or {}
+                cname = cam.get("name") or cid
+                cams_html += f'<li><b>{cid}</b> ({cname}) - ' \
+                            f'<a href="/{cid}/overlay.png">overlay</a> | ' \
+                            f'<a href="/{cid}/frame.png">frame</a> | ' \
+                            f'<a href="/{cid}/detections.json">detections</a></li>\n'
+            dz = "*" if DEBUG_ALL_ZONES else ", ".join(sorted(DEBUG_ZONES)) if DEBUG_ZONES else "-"
             html = f"""<!doctype html>
-<html><head><meta charset="utf-8"><title>QR Inventory Overlay</title></head>
+<html><head><meta charset="utf-8"><title>QR Inventory</title></head>
 <body style="font-family: sans-serif">
-  <h3>QR Inventory Overlay</h3>
-  <p>Overlay PNG: <code>/{OVERLAY_PNG_NAME}</code></p>
-  <p>Debug zone: <code>{debug_zone or "-"}</code></p>
-  <ul>
-    <li><a href="/{OVERLAY_PNG_NAME}">overlay</a></li>
-    <li><a href="/frame.png">frame</a></li>
-    <li><a href="/detections.json">detections.json</a></li>
-    <li><a href="/debug.json">debug.json</a></li>
-    <li><a href="/debug/roi.png">debug roi</a></li>
-    <li><a href="/debug/roi_best.png">debug roi_best</a></li>
-    <li><a href="/debug/roi_marked.png">debug roi_marked</a></li>
-    <li><a href="/debug/roi_best_marked.png">debug roi_best_marked</a></li>
-  </ul>
-  <img src="/{OVERLAY_PNG_NAME}" style="max-width: 100%; height: auto;" />
+  <h3>QR Inventory</h3>
+  <p>Cameras:</p>
+  <ul>{cams_html}</ul>
+  <p>Aggregate: <a href="/detections.json">/detections.json</a></p>
+  <p>Debug zones: <code>{dz}</code></p>
+  <p>Debug index: <a href="/debug/index.json">/debug/index.json</a></p>
 </body></html>""".encode("utf-8")
             return self._send(200, "text/html; charset=utf-8", html)
 
-        if path == "/overlay.png" or path == f"/{OVERLAY_PNG_NAME}":
-            if overlay_png is None:
-                return self._send(503, "text/plain; charset=utf-8", b"overlay not ready")
-            return self._send(200, "image/png", overlay_png)
-
-        if path == "/frame.png":
-            if frame_png is None:
-                return self._send(503, "text/plain; charset=utf-8", b"frame not ready")
-            return self._send(200, "image/png", frame_png)
-
+        # Aggregate detections
         if path == "/detections.json":
-            body = json.dumps({"ts": ts, "detections": det, "frame_info": fi}, ensure_ascii=False).encode("utf-8")
-            return self._send(200, "application/json; charset=utf-8", body)
+            states = _get_all_states()
+            cams = {}
+            for cid, st in states.items():
+                cams[cid] = {
+                    "ts": st.get("ts") or 0,
+                    "detections": st.get("detections") or [],
+                    "frame_info": st.get("frame_info") or {},
+                    "camera": {"id": cid, "name": (CAMERAS.get(cid) or {}).get("name") or cid},
+                }
+            return _send_json(self, {"ts": int(time.time()), "cameras": cams})
 
-        if path == "/debug.json":
-            with DEBUG_LOCK:
-                dj = DEBUG_STATE.get("json")
-                dz = DEBUG_STATE.get("zone")
-                dts = DEBUG_STATE.get("ts")
-            body = json.dumps({"zone": dz, "ts": dts, "debug": dj}, ensure_ascii=False).encode("utf-8")
-            return self._send(200, "application/json; charset=utf-8", body)
+        # Legacy single-camera endpoints
+        if PRIMARY_CAMERA_ID:
+            if path in ("/overlay.png", f"/{OVERLAY_PNG_NAME}"):
+                st = _get_cam_state(PRIMARY_CAMERA_ID)
+                b = st.get("overlay_png")
+                if not b:
+                    return self._send(503, "text/plain; charset=utf-8", b"overlay not ready")
+                return self._send(200, "image/png", b)
 
-        if path == "/debug/roi.png":
-            with DEBUG_LOCK:
-                b = DEBUG_STATE.get("roi_png")
-            if not b:
-                return self._send(404, "text/plain; charset=utf-8", b"no debug roi available")
-            return self._send(200, "image/png", b)
+            if path == "/frame.png":
+                st = _get_cam_state(PRIMARY_CAMERA_ID)
+                b = st.get("frame_png")
+                if not b:
+                    return self._send(503, "text/plain; charset=utf-8", b"frame not ready")
+                return self._send(200, "image/png", b)
 
-        if path == "/debug/roi_best.png":
-            with DEBUG_LOCK:
-                b = DEBUG_STATE.get("roi_best_png")
-            if not b:
-                return self._send(404, "text/plain; charset=utf-8", b"no debug roi_best available")
-            return self._send(200, "image/png", b)
+        # Per-camera endpoints: /<cam_id>/overlay.png | frame.png | detections.json
+        parts = [p for p in path.strip("/").split("/") if p]
+        if parts:
+            cid = parts[0]
+            if cid in CAMERAS:
+                st = _get_cam_state(cid)
+                if len(parts) == 2 and parts[1] == "overlay.png":
+                    b = st.get("overlay_png")
+                    if not b:
+                        return self._send(503, "text/plain; charset=utf-8", b"overlay not ready")
+                    return self._send(200, "image/png", b)
+                if len(parts) == 2 and parts[1] == "frame.png":
+                    b = st.get("frame_png")
+                    if not b:
+                        return self._send(503, "text/plain; charset=utf-8", b"frame not ready")
+                    return self._send(200, "image/png", b)
+                if len(parts) == 2 and parts[1] == "detections.json":
+                    return _send_json(self, {
+                        "ts": st.get("ts") or 0,
+                        "camera": {"id": cid, "name": (CAMERAS.get(cid) or {}).get("name") or cid},
+                        "detections": st.get("detections") or [],
+                        "frame_info": st.get("frame_info") or {},
+                    })
 
-        if path == "/debug/roi_marked.png":
-            with DEBUG_LOCK:
-                b = DEBUG_STATE.get("roi_marked_png")
-            if not b:
-                return self._send(404, "text/plain; charset=utf-8", b"no debug roi_marked available")
-            return self._send(200, "image/png", b)
+        # Short overlay route: /overlays/<cam_id>.png
+        if path.startswith(OVERLAY_ROUTE_PREFIX + "/"):
+            cid = path[len(OVERLAY_ROUTE_PREFIX) + 1:].strip("/")
+            if cid.endswith(".png"):
+                cid = cid[:-4]
+            if cid in CAMERAS:
+                st = _get_cam_state(cid)
+                b = st.get("overlay_png")
+                if not b:
+                    return self._send(503, "text/plain; charset=utf-8", b"overlay not ready")
+                return self._send(200, "image/png", b)
 
-        if path == "/debug/roi_best_marked.png":
+        # Short frame route: /frames/<cam_id>.png
+        if path.startswith(FRAME_ROUTE_PREFIX + "/"):
+            cid = path[len(FRAME_ROUTE_PREFIX) + 1:].strip("/")
+            if cid.endswith(".png"):
+                cid = cid[:-4]
+            if cid in CAMERAS:
+                st = _get_cam_state(cid)
+                b = st.get("frame_png")
+                if not b:
+                    return self._send(503, "text/plain; charset=utf-8", b"frame not ready")
+                return self._send(200, "image/png", b)
+
+        # Debug index + per-zone debug blobs
+        if path == "/debug/index.json":
             with DEBUG_LOCK:
-                b = DEBUG_STATE.get("roi_best_marked_png")
-            if not b:
-                return self._send(404, "text/plain; charset=utf-8", b"no debug roi_best_marked available")
-            return self._send(200, "image/png", b)
+                keys = sorted(DEBUG_STATE.keys())
+                latest = DEBUG_LATEST.copy()
+            # Provide keys like "cam1:A1"
+            return _send_json(self, {"keys": keys, "latest": latest})
+
+        if path.startswith("/debug/"):
+            parts = [p for p in path.strip("/").split("/") if p]
+            # /debug/<cam_id>/<zone>/debug.json
+            if len(parts) >= 4:
+                _, cid, zone, tail = parts[0], parts[1], parts[2], "/".join(parts[3:])
+                key = f"{cid}:{zone}"
+                with DEBUG_LOCK:
+                    entry = DEBUG_STATE.get(key)
+                if not entry:
+                    return self._send(404, "text/plain; charset=utf-8", b"no debug available")
+                if tail == "debug.json":
+                    return _send_json(self, {"camera": cid, "zone": zone, "ts": entry.get("ts") or 0, "debug": entry.get("debug")})
+                if tail == "roi.png":
+                    b = entry.get("roi_png")
+                elif tail == "roi_best.png":
+                    b = entry.get("roi_best_png")
+                elif tail == "roi_marked.png":
+                    b = entry.get("roi_marked_png")
+                elif tail == "roi_best_marked.png":
+                    b = entry.get("roi_best_marked_png")
+                else:
+                    b = None
+                if not b:
+                    return self._send(404, "text/plain; charset=utf-8", b"no debug image available")
+                return self._send(200, "image/png", b)
 
         return self._send(404, "text/plain; charset=utf-8", b"not found")
 
@@ -1616,95 +1977,163 @@ class OverlayHandler(BaseHTTPRequestHandler):
         logger.debug("HTTP: " + fmt, *args)
 
 def start_http_server():
-    httpd = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), OverlayHandler)
-    logger.info("Overlay HTTP server listening on :%d (/%s)", HTTP_PORT, OVERLAY_PNG_NAME)
+    httpd = ThreadingHTTPServer(("0.0.0.0", int(HTTP_PORT)), OverlayHandler)
+    logger.info("Overlay HTTP server listening on :%d", int(HTTP_PORT))
     httpd.serve_forever()
 
+# ------------------------------------------------------------
+# Main loop (multi-camera)
+# ------------------------------------------------------------
+def _safe_cam_id(s: str) -> str:
+    s = (s or "").strip()
+    return s if s else "cam"
+
+def _camera_location(cam_id: str, zone: str) -> str:
+    return f"{_safe_cam_id(cam_id)}.{str(zone).strip()}"
+
+def _write_camera_detections(cam_id: str, payload: dict):
+    try:
+        out_dir = f"/data/{_safe_cam_id(cam_id)}"
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, "detections.json")
+        _atomic_write_json(path, payload)
+    except Exception:
+        logger.exception("Failed writing detections.json for %s", cam_id)
+
+class CameraWorker(threading.Thread):
+    def __init__(self, cam_cfg: dict):
+        super().__init__(daemon=True)
+        self.cam = cam_cfg or {}
+        self.cam_id = self.cam.get("id") or "cam"
+        self.cam_name = self.cam.get("name") or self.cam_id
+        self.url = self.cam.get("url") or ""
+        self.tls_verify = bool(self.cam.get("tls_verify", TLS_VERIFY_DEFAULT))
+        self.interval_s = int(self.cam.get("interval_s") or DEFAULT_INTERVAL_S)
+        self.required = int(self.cam.get("required") or DEFAULT_REQUIRED)
+        self.restrict_to_zones = bool(self.cam.get("restrict_to_zones", DEFAULT_RESTRICT_TO_ZONES))
+        self.zones = self.cam.get("zones") or {}
+        self.stream_info_interval_minutes = int(self.cam.get("stream_info_interval_minutes") or STREAM_INFO_INTERVAL_MINUTES_DEFAULT)
+        self.last_stream_info_ts = 0.0
+        self.history = defaultdict(lambda: deque(maxlen=max(1, self.required)))
+
+    def run(self):
+        if not self.url:
+            logger.error("Camera %s has empty rtsp_url; skipping", self.cam_id)
+            return
+
+        logger.info(
+            "Camera %s (%s) starting: url=%s interval=%ss required=%s zones=%s restrict_to_zones=%s",
+            self.cam_id, self.cam_name, self.url, self.interval_s, self.required, len(self.zones), self.restrict_to_zones
+        )
+
+        _log_stream_info(f"{self.cam_id} STARTUP", self.url, self.tls_verify)
+
+        cycle_idx = 0
+        while True:
+            cycle_idx += 1
+            try:
+                # Periodic stream info
+                if self.stream_info_interval_minutes > 0:
+                    now = time.time()
+                    if self.last_stream_info_ts == 0 or (now - self.last_stream_info_ts) >= self.stream_info_interval_minutes * 60:
+                        _log_stream_info(f"{self.cam_id} PERIODIC", self.url, self.tls_verify)
+                        self.last_stream_info_ts = now
+
+                frame = get_frame_ffmpeg(self.url, self.tls_verify)
+                if frame is None:
+                    time.sleep(self.interval_s)
+                    continue
+
+                detections, zone_only_active = detect_qr(frame, self.cam_id, self.zones, self.restrict_to_zones)
+
+                # stamp camera id onto detections
+                for d in detections:
+                    try:
+                        d["camera"] = self.cam_id
+                    except Exception:
+                        pass
+
+                decoded = [d for d in detections if d.get("decoded", False) and d.get("payload") and d.get("zone")]
+                by_payload = defaultdict(list)
+                for d in decoded:
+                    by_payload[d["payload"]].append(d)
+
+                for payload, items in by_payload.items():
+                    # Resolve conflicts within this camera cycle
+                    if len(items) > 1:
+                        def _rank(it):
+                            sc = float(it.get("score") or 0.0)
+                            ep = float((it.get("diag") or {}).get("edge_px") or 0.0)
+                            return (sc, ep)
+                        best = sorted(items, key=_rank, reverse=True)[0]
+                        logger.warning("Payload conflict resolved: cam=%s payload=%s choose=%s", self.cam_id, payload, best.get("zone"))
+                        items = [best]
+
+                    d = items[0]
+                    zone = str(d.get("zone"))
+                    loc = _camera_location(self.cam_id, zone)
+
+                    self.history[payload].append(loc)
+                    logger.info("Detected cam=%s payload=%s zone=%s history=%s", self.cam_id, payload, zone, list(self.history[payload]))
+
+                    if len(self.history[payload]) >= max(1, self.required) and len(set(self.history[payload])) == 1:
+                        persist_mapping(payload, loc)
+
+                overlay = draw_overlay(frame, detections, self.zones)
+
+                frame_png = _encode_png(frame)
+                overlay_png = _encode_png(overlay)
+
+                fi = {
+                    "camera_id": self.cam_id,
+                    "camera_name": self.cam_name,
+                    "frame_w": int(frame.shape[1]),
+                    "frame_h": int(frame.shape[0]),
+                    "decoded": sum(1 for d in detections if d.get("decoded", False)),
+                    "miss": sum(1 for d in detections if not d.get("decoded", False)),
+                    "restrict_to_zones_active": bool(zone_only_active),
+                    "debug_zones": ("*" if DEBUG_ALL_ZONES else sorted(DEBUG_ZONES)),
+                    "cycle": int(cycle_idx),
+                }
+
+                ts = int(time.time())
+
+                # Persist detections for this camera
+                _write_camera_detections(self.cam_id, {
+                    "ts": ts,
+                    "camera": {"id": self.cam_id, "name": self.cam_name},
+                    "detections": detections,
+                    "frame_info": fi,
+                })
+
+                # Update in-memory HTTP state
+                with STATE_LOCK:
+                    STATE[self.cam_id] = {
+                        "ts": ts,
+                        "frame_png": frame_png,
+                        "overlay_png": overlay_png,
+                        "detections": detections,
+                        "frame_info": fi,
+                    }
+
+            except Exception as e:
+                logger.exception("Error in camera loop (%s): %s", self.cam_id, e)
+
+            time.sleep(self.interval_s)
+
+# Start HTTP server
 threading.Thread(target=start_http_server, daemon=True).start()
 
-# ------------------------------------------------------------
-# Main loop
-# ------------------------------------------------------------
-logger.info(
-    "Starting QR Inventory (mode=%s interval=%ss required=%s overlay_png_name=%s restrict_to_zones=%s debug_zone=%s)",
-    camera_mode, interval, required, OVERLAY_PNG_NAME, restrict_to_zones, debug_zone or "-"
-)
+# Start cameras
+if CAMERA_IDS:
+    for cid in CAMERA_IDS:
+        cam = CAMERAS.get(cid) or {}
+        if not bool(cam.get("enabled", True)):
+            logger.info("Camera %s disabled; skipping", cid)
+            continue
+        CameraWorker(cam).start()
 
-_log_stream_info("STARTUP")
-
-cycle_idx = 0
-last_stream_info_ts = 0.0
-
+# Keep process alive
 while True:
-    cycle_idx += 1
-    try:
-        if camera_mode not in ("rtsp", "rtsps"):
-            logger.error('Unsupported camera_mode=%s (use rtsp or rtsps)', camera_mode)
-            time.sleep(interval)
-            continue
+    time.sleep(3600)
 
-        if not stream_url:
-            logger.error('rtsp_url is empty. Please set it in the add-on options.')
-            time.sleep(interval)
-            continue
-
-        if stream_info_interval_minutes > 0:
-            now = time.time()
-            if last_stream_info_ts == 0 or (now - last_stream_info_ts) >= stream_info_interval_minutes * 60:
-                _log_stream_info("PERIODIC")
-                last_stream_info_ts = now
-
-        frame = get_frame_ffmpeg(stream_url)
-        if frame is None:
-            time.sleep(interval)
-            continue
-
-        detections, zone_only_active = detect_qr(frame, zones)
-
-        decoded = [d for d in detections if d.get("decoded", False) and d.get("payload") and d.get("zone")]
-        by_payload = defaultdict(list)
-        for d in decoded:
-            by_payload[d["payload"]].append(d)
-
-        for payload, items in by_payload.items():
-            if len(items) > 1:
-                def _rank(it):
-                    sc = float(it.get("score") or 0.0)
-                    ep = float((it.get("diag") or {}).get("edge_px") or 0.0)
-                    return (sc, ep)
-                best = sorted(items, key=_rank, reverse=True)[0]
-                logger.warning("Payload conflict resolved: payload=%s choose=%s", payload, best.get("zone"))
-                items = [best]
-
-            d = items[0]
-            zone = d["zone"]
-            history[payload].append(zone)
-            logger.info("Detected payload=%s zone=%s history=%s", payload, zone, list(history[payload]))
-            if len(history[payload]) >= history_maxlen and len(set(history[payload])) == 1:
-                persist_mapping(payload, zone)
-
-        overlay = draw_overlay(frame, detections, zones)
-
-        frame_png = _encode_png(frame)
-        overlay_png = _encode_png(overlay)
-
-        fi = {
-            "frame_w": int(frame.shape[1]),
-            "frame_h": int(frame.shape[0]),
-            "decoded": sum(1 for d in detections if d.get("decoded", False)),
-            "miss": sum(1 for d in detections if not d.get("decoded", False)),
-            "restrict_to_zones_active": zone_only_active,
-            "debug_zone": debug_zone or None,
-        }
-
-        with STATE_LOCK:
-            STATE["ts"] = int(time.time())
-            STATE["frame_png"] = frame_png
-            STATE["overlay_png"] = overlay_png
-            STATE["detections"] = detections
-            STATE["last_frame_info"] = fi
-
-    except Exception as e:
-        logger.exception("Error in main loop: %s", e)
-
-    time.sleep(interval)

@@ -1,7 +1,7 @@
 name: QR Inventory
-version: "0.5.6"
+version: "0.6.1"
 slug: qr_inventory
-description: "Scan QR codes from an RTSPS/RTSP camera, map them to storage zones, and serve an overlay PNG via HTTP."
+description: "Scan QR codes from one or more RTSPS/RTSP cameras, map them to zones, and serve per-camera overlay/debug endpoints via HTTP."
 arch:
   - amd64
   - aarch64
@@ -17,6 +17,21 @@ ports_description:
 webui: "http://[HOST]:[PORT:8099]/"
 
 options:
+  # New multi-camera config (recommended)
+  defaults:
+    interval_s: 60
+    required: 3
+    restrict_to_zones: false
+    log_level: info
+
+  debug_zones: []
+  overlay_http_port: 8099
+  overlay_route_prefix: /overlays
+  frame_route_prefix: /frames
+
+  cameras: {}
+
+  # Legacy single-camera config (still supported; used if cameras is empty or has no URLs)
   camera_mode: rtsps
   rtsp_url: ""
   interval_seconds: 60
@@ -24,9 +39,9 @@ options:
   zones: "{}"
   tls_verify: false
   overlay_png_name: overlay.png
+  debug_zone: ""
 
-  restrict_to_zones: false
-
+  # Decoder / overlay tuning (global, shared by all cameras)
   use_preprocess: true
   try_invert: true
   roi_padding_px: 60
@@ -53,6 +68,7 @@ options:
   # outside the quad to pure white before running ZBar/OpenCV. This removes paper/
   # wall texture and gives a cleaner synthetic quiet-zone.
   cutout_whiten_outside_quad: true
+
   roi_scale: 2.0
   roi_scales: "2.0,3.0,4.0"
   zone_extra_scales: "6.0,8.0,10.0"
@@ -75,14 +91,44 @@ options:
   overlay_show_zone_status: true
   overlay_show_unresolved_quads: true
 
-
   overlay_fill_unresolved_gap: true
   overlay_fill_unresolved_alpha: 0.22
   stream_info_interval_minutes: 0
 
-  debug_zone: ""
-
 schema:
+  # New multi-camera config
+  defaults:
+    interval_s: int
+    required: int
+    restrict_to_zones: bool
+    log_level: list(trace|debug|info|warning|error)
+
+  debug_zones:
+    - match(^(\*|[A-Za-z0-9_-]+)$)
+  overlay_http_port: port
+  overlay_route_prefix: str
+  frame_route_prefix: str
+
+  cameras:
+    str:
+      name: str?
+      stream:
+        rtsp_url: str
+        tls_verify: bool?
+      zones:
+        - zone: match(^[A-Za-z0-9_-]+$)
+          rect_px:
+            - int
+            - int
+            - int
+            - int
+      settings:
+        enabled: bool?
+        interval_s: int?
+        required: int?
+        restrict_to_zones: bool?
+
+  # Legacy single-camera config (optional)
   camera_mode: list(rtsp|rtsps)
   rtsp_url: str
   interval_seconds: int
@@ -90,9 +136,9 @@ schema:
   zones: str
   tls_verify: bool
   overlay_png_name: str
+  debug_zone: str
 
-  restrict_to_zones: bool
-
+  # Decoder / overlay tuning
   use_preprocess: bool
   try_invert: bool
   roi_padding_px: int
@@ -115,6 +161,7 @@ schema:
   cutout_detect_tighten: bool
   cutout_detect_scales: str
   cutout_whiten_outside_quad: bool
+
   roi_scale: float
   roi_scales: str
   zone_extra_scales: str
@@ -137,8 +184,6 @@ schema:
   overlay_show_zone_status: bool
   overlay_show_unresolved_quads: bool
 
-
   overlay_fill_unresolved_gap: bool
   overlay_fill_unresolved_alpha: float
   stream_info_interval_minutes: int
-  debug_zone: str
