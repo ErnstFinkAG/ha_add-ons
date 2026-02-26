@@ -9,71 +9,116 @@ def ts():
 
 def extract_number(value: str):
     m = re.match(r"^\s*([\-+]?\d+(?:[.,]\d+)?)\s*([^\d\s].*)?$", value or "")
-    if not m:
-        return None, None
+    if not m: return None, None
     num = float(m.group(1).replace(",", "."))
-    unit = (m.group(2) or "").strip()
+    unit = (m.group(2) or "").strip() or None
     return num, unit
 
-def slug(s: str, keep_slash: bool = False) -> str:
-    s = unicodedata.normalize("NFKD", s or "")
-    s = "".join(c for c in s if not unicodedata.combining(c))
-    s = s.lower().strip()
-    s = re.sub(r"\s+", "_", s)
-    if keep_slash:
-        s = re.sub(r"[^a-z0-9_\/]+", "", s)
-    else:
-        s = re.sub(r"[^a-z0-9_]+", "", s)
-    s = re.sub(r"_+", "_", s).strip("_")
-    return s or "x"
+def parse_xml(xml_text: str) -> ET.Element:
+    return ET.fromstring(xml_text)
+
+def is_content_of(xml_text: str, page_id: str, page_title: str) -> bool:
+    if re.search(r"<\s*Content(\s|>)", xml_text or "", re.I):
+        if page_id and re.search(rf"id\s*=\s*['\"]{re.escape(page_id)}['\"]", xml_text):
+            return True
+        try:
+            root = parse_xml(xml_text)
+            if (root.tag.lower() == "content") and root.findtext("name") == page_title:
+                return True
+        except Exception:
+            pass
+    return False
+
+def walk_nav_leaves(elem: ET.Element, ancestors):
+    for it in elem.findall("./item"):
+        name_el = it.find("name")
+        if name_el is None:
+            continue
+        name = name_el.text or ""
+        path = ancestors + [name]
+        if it.find("./item") is not None:
+            for leaf in walk_nav_leaves(it, path):
+                yield leaf
+        else:
+            yield {"id": it.get("id") or "", "name": name, "path": "/".join(path)}
+
+def parse_content(root: ET.Element):
+    title = root.findtext("name") or "Content"
+    rows = []
+    for it in root.findall("item"):
+        name = it.findtext("name") or ""
+        value = it.findtext("value") or ""
+        item_id = it.get("id") or ""
+        unit = it.findtext("unit")
+        raw = it.findtext("raw")
+        div_txt = it.findtext("div")
+        try:
+            div = float(div_txt) if div_txt is not None else 1.0
+        except Exception:
+            div = 1.0
+        opts = []
+        for opt in it.findall("option"):
+            opts.append({"text": (opt.text or ""), "val": opt.get("value")})
+        rows.append({"name": name, "value": value, "id": item_id, "unit": unit, "raw": raw, "div": div, "options": opts})
+    return title, rows
+
+def slug(s: str, keep_slash=False):
+    s = (s or "").lower().strip()
+    s = s.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    out = []
+    for ch in s:
+        if ch.isalnum() or ch in ("_", " ", "/", "-"):
+            out.append(ch)
+        else:
+            out.append("_")
+    s = "".join(out).replace(" ", "_").replace("-", "_")
+    s = re.sub(r"_+", "_", s)
+    if not keep_slash:
+        s = s.replace("/", "_")
+    s = re.sub(r"/+", "/", s)
+    return s.strip("_/")
+
+def print_table(title: str, rows, page_path: str):
+    name_w = max([4] + [len(r["name"]) for r in rows])
+    val_w  = max([5] + [len(r["value"]) for r in rows])
+    id_w   = max([2] + [len(r["id"]) for r in rows])
+    print(f"[{ts()}] === {title} ({page_path}) ===", flush=True)
+    print(f"{'Name'.ljust(name_w)}  {'Value'.ljust(val_w)}  {'Id'.ljust(id_w)}", flush=True)
+    print(f"{'-'*name_w}  {'-'*val_w}  {'-'*id_w}", flush=True)
+    for r in rows:
+        print(f"{r['name'].ljust(name_w)}  {r['value'].ljust(val_w)}  {r['id'].ljust(id_w)}", flush=True)
+    print("", flush=True)
 
 class MqttBridge:
-    def __init__(self, host, port, username, password, discovery_prefix, state_base_topic):
-        self.host = host
-        self.port = int(port)
-        self.username = username
-        self.password = password
+    def __init__(self, host, port, user, pw, discovery_prefix, state_base_topic):
         self.discovery = discovery_prefix.rstrip("/")
-        self.state_base = state_base_topic.strip("/")
-
-        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-        if username:
-            self.client.username_pw_set(username, password)
-
-        self.client.on_connect = self._on_connect
-        self.client.on_message = self._on_message
+        self.state_base = state_base_topic.rstrip("/")
+        client_id = f"cs19i_bridge_{int(time.time())}"
+        self.client = mqtt.Client(client_id=client_id)
+        if user:
+            self.client.username_pw_set(user, pw)
         self.on_press_start = None
 
-    def device(self):
-        return {
-            "identifiers": ["cta_cs19i_bridge"],
-            "name": "CTA CS19i Bridge",
-            "manufacturer": "CTA",
-            "model": "CS19i",
-        }
+        def on_connect(c, u, flags, rc):
+            print(f"[mqtt] on_connect rc={rc}", flush=True)
+            c.publish(f"{self.state_base}/status", "online", retain=True)
+            c.subscribe(f"{self.state_base}/command/start_heating")
 
-    def _on_connect(self, client, userdata, flags, reason_code, properties):
-        print(ts(), "MQTT connected:", reason_code)
-        self.client.publish(f"{self.state_base}/status", "online", retain=True)
-        self.client.subscribe(f"{self.state_base}/command/#")
-        self.pub_button_start()
+        def on_message(c, u, msg):
+            if msg.topic.endswith("/command/start_heating") and self.on_press_start:
+                asyncio.get_event_loop().create_task(self.on_press_start())
 
-    def _on_message(self, client, userdata, msg):
-        try:
-            topic = msg.topic
-            payload = (msg.payload or b"").decode("utf-8", errors="ignore")
-            if topic == f"{self.state_base}/command/start_heating" and payload.strip().upper() == "PRESS":
-                if self.on_press_start:
-                    self.on_press_start()
-        except Exception as e:
-            print(ts(), "MQTT on_message error:", e)
+        self.client.on_connect = on_connect
+        self.client.on_message = on_message
+        self.host, self.port = host, int(port)
 
-    def connect(self):
-        self.client.will_set(f"{self.state_base}/status", "offline", retain=True)
-        self.client.connect(self.host, self.port, keepalive=60)
+    def connect_async(self):
+        self.client.connect_async(self.host, self.port, keepalive=60)
         self.client.loop_start()
 
-    def disconnect(self):
+    def stop(self):
         try:
             self.client.publish(f"{self.state_base}/status", "offline", retain=True)
         except Exception:
@@ -82,36 +127,36 @@ class MqttBridge:
             self.client.loop_stop()
         except Exception:
             pass
-        try:
-            self.client.disconnect()
-        except Exception:
-            pass
+
+    def device(self):
+        return {"identifiers": [self.state_base], "name": "CTA CS19i", "manufacturer": "CTA", "model": "CS19i"}
 
     def pub_sensor(self, page_title: str, row: dict, page_path: str):
         page_slug = slug(page_path, keep_slash=True).replace("/", "_")
-        name_slug = slug(row["name"])
+        name_slug = slug(row['name'])
         uniq = f"{self.state_base}_{page_slug}_{name_slug}"
         st_topic = f"{self.state_base}/{slug(page_path, keep_slash=True)}/{name_slug}"
         cfg_topic = f"{self.discovery}/sensor/{uniq}/config"
 
-        num, unit = extract_number(row.get("value", ""))
+        num, unit = extract_number(row["value"])
+        state_payload = None
         device_class = None
         state_class = None
 
         if num is not None and unit:
             state_payload = f"{num}"
-            u = (unit or "").strip()
+            u = (unit or '').strip()
             if u in ("°C", "C", "degC"):
                 device_class = "temperature"
             elif u in ("V", "Volt", "volts"):
                 device_class = "voltage"
             state_class = "measurement"
         else:
-            state_payload = row.get("value", "")
+            state_payload = row["value"]
             unit = None
 
         payload = {
-            "name": f"{page_title}: {row.get('name','')}",
+            "name": f"{page_title}: {row['name']}",
             "unique_id": uniq,
             # FIX: deprecated object_id -> default_entity_id
             "default_entity_id": f"sensor.{uniq}",
@@ -148,177 +193,172 @@ class CTAClient:
     def __init__(self, host, port, password):
         self.host, self.port, self.password = host, int(port), password
         self.ws = None
+        self.uri = f"ws://{host}:{port}"
 
     async def connect(self):
-        uri = f"ws://{self.host}:{self.port}/ws"
-        self.ws = await websockets.connect(uri)
-        await self.ws.send(self.password)
+        headers = [("Origin", f"http://{self.host}")]
+        self.ws = await websockets.connect(self.uri, subprotocols=["Lux_WS"], extra_headers=headers, ping_interval=20, ping_timeout=10)
+        await self.send(f"LOGIN;{self.password}")
+        await asyncio.sleep(0.2)
 
     async def close(self):
         if self.ws:
-            try:
-                await self.ws.close()
-            except Exception:
-                pass
+            try: await self.ws.close(code=1000)
+            except Exception: pass
             self.ws = None
 
-    async def request(self, path: str):
-        if not self.ws:
-            raise RuntimeError("Not connected")
-        msg = json.dumps({"path": path})
-        await self.ws.send(msg)
-        resp = await self.ws.recv()
-        return resp
+    async def send(self, text: str):
+        if self.ws is None: return
+        await self.ws.send(text)
 
-def parse_table(xml_text: str):
-    try:
-        root = ET.fromstring(xml_text)
-    except Exception:
-        return None
+    async def recv_once(self, timeout: float):
+        if self.ws is None: return None
+        try:
+            return await asyncio.wait_for(self.ws.recv(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
 
-    title = root.attrib.get("title") or root.findtext("title") or ""
-    path = root.attrib.get("path") or root.findtext("path") or ""
+    async def get_navigation(self) -> ET.Element:
+        await self.send("GET;NAV;1")
+        buf = ""
+        t0 = time.time()
+        while time.time() - t0 < 4:
+            msg = await self.recv_once(1.0)
+            if msg is None:
+                continue
+            buf += msg
+            if re.search(r"</\s*Navigation\s*>", buf, re.I):
+                return parse_xml(buf)
+        raise RuntimeError("Navigation timeout")
 
-    rows = []
-    for r in root.findall(".//row"):
-        name = r.attrib.get("name") or r.findtext("name") or ""
-        value = r.attrib.get("value") or r.findtext("value") or ""
-        name = (name or "").strip()
-        value = (value or "").strip()
-        if not name and not value:
-            continue
-        rows.append({"name": name, "value": value})
+    async def get_page(self, page_id: str, page_title: str) -> ET.Element:
+        await self.send(f"GET;{page_id};1")
+        buf = ""
+        t0 = time.time()
+        while time.time() - t0 < 4:
+            msg = await self.recv_once(1.0)
+            if msg is None:
+                continue
+            buf += msg
+            if "</Content>" in buf or re.search(r"</\s*Content\s*>", buf, re.I):
+                if is_content_of(buf, page_id, page_title):
+                    return parse_xml(buf)
+        raise RuntimeError(f"Page timeout id={page_id} title={page_title}")
 
-    return {"title": title, "path": path, "rows": rows}
-
-def diff_rows(prev: dict, curr: dict):
-    if not prev:
-        return curr.get("rows", [])
-    prev_map = {slug(r["name"]): r.get("value") for r in prev.get("rows", [])}
-    changed = []
-    for r in curr.get("rows", []):
-        k = slug(r["name"])
-        if prev_map.get(k) != r.get("value"):
-            changed.append(r)
-    return changed
-
-def normalize_pages(log_pages_value):
-    """
-    Your stored add-on options currently contain log_pages=True (bool).
-    Convert that into a sensible default list.
-    """
-    if isinstance(log_pages_value, bool):
-        return ["/informationen/abschaltungen"] if log_pages_value else []
-    if isinstance(log_pages_value, str):
-        pages = [p.strip() for p in log_pages_value.split(",") if p.strip()]
-        return pages
-    return ["/informationen/abschaltungen"]
-
-async def run_bridge(
-    controller_host: str,
-    controller_port: int,
-    controller_password: str,
-    mqtt_host: str,
-    mqtt_port: int,
-    mqtt_user: str,
-    mqtt_pass: str,
-    poll_interval: int,
-    discovery_prefix: str,
-    state_base_topic: str,
-    log_pages_value,
-    log_changes_only: bool,
-):
-    bridge = MqttBridge(mqtt_host, mqtt_port, mqtt_user, mqtt_pass, discovery_prefix, state_base_topic)
-    cta = CTAClient(controller_host, controller_port, controller_password)
-
-    last_pages = {}
-    last_press = 0.0
-
-    def do_start_press():
-        nonlocal last_press
-        now = time.time()
-        if now - last_press < 2.0:
-            return
-        last_press = now
-        print(ts(), "Start Heating requested via MQTT button")
-        asyncio.create_task(cta.request("/command/start_heating"))
-
-    bridge.on_press_start = do_start_press
-
-    pages = normalize_pages(log_pages_value)
-
-    bridge.connect()
+async def run(host, port, password, mqtt_host, mqtt_port, mqtt_user, mqtt_pass,
+              poll_interval, delta_c, discovery_prefix, state_base_topic,
+              log_pages, log_changes_only):
+    cta = CTAClient(host, port, password)
     await cta.connect()
+
+    mqttb = MqttBridge(mqtt_host, mqtt_port, mqtt_user, mqtt_pass, discovery_prefix, state_base_topic)
+    mqttb.connect_async()
+    mqttb.pub_button_start()
+
+    prev = {}
+
+    async def start_heating():
+        try:
+            nav = await cta.get_navigation()
+            leaves = list(walk_nav_leaves(nav, []))
+            p_temp_info = next((l for l in leaves if l["path"].startswith("Informationen/Temperaturen")), None)
+            p_temp_set  = next((l for l in leaves if l["path"].startswith("Einstellungen/Temperaturen")), None)
+            if not all([p_temp_info, p_temp_set]): return
+            info = await cta.get_page(p_temp_info["id"], "Temperaturen")
+            _, rows = parse_content(info)
+            rueck = next((r for r in rows if r["name"] == "Rücklauf"), None)
+            if not rueck: return
+            num, _ = extract_number(rueck["value"])
+            if num is None: return
+            target = num + float(delta_c)
+            te = await cta.get_page(p_temp_set["id"], "Temperaturen")
+            _, rows = parse_content(te)
+            minr = next((r for r in rows if r["name"].startswith("Min. Rückl.Solltemp")), None)
+            cap  = next((r for r in rows if r["name"] == "Rückl.-Begr."), None)
+            if cap:
+                cnum, _ = extract_number(cap["value"])
+                if cnum is not None and target > cnum: target = cnum
+            if minr:
+                cur, _ = extract_number(minr["value"])
+                div = minr.get("div", 1.0) if isinstance(minr.get("div", 1.0), (int, float)) else 1.0
+                if (cur is None) or (cur < target - 0.05):
+                    raw = int(round(target * div))
+                    await cta.send(f"SET;{minr['id']};{raw}")
+                    await cta.send("SAVE;1")
+                    await asyncio.sleep(0.5)
+        except Exception as e:
+            print(f"[start_heating] {e}", flush=True)
+
+    mqttb.on_press_start = start_heating
 
     try:
         while True:
-            for page in pages:
+            try:
+                nav = await cta.get_navigation()
+            except Exception as e:
+                print(f"[nav] {e}", flush=True)
+                await cta.close()
+                await asyncio.sleep(2)
+                await cta.connect()
+                continue
+
+            leaves = list(walk_nav_leaves(nav, []))
+            for leaf in leaves:
                 try:
-                    resp = await cta.request(page)
-                    parsed = parse_table(resp)
-                    if not parsed:
-                        continue
+                    page = await cta.get_page(leaf["id"], leaf["name"])
+                    title, rows = parse_content(page)
+                    for r in rows:
+                        mqttb.pub_sensor(title, r, leaf["path"])
 
-                    title = parsed.get("title") or page
-                    path = parsed.get("path") or page
+                    if log_pages:
+                        if log_changes_only:
+                            changed = []
+                            for r in rows:
+                                key = (slug(leaf["path"]), r["name"])
+                                val = r["value"]
+                                if prev.get(key) != val:
+                                    changed.append(r); prev[key] = val
+                            if changed:
+                                print_table(title, changed, leaf["path"])
+                        else:
+                            print_table(title, rows, leaf["path"])
+                            for r in rows:
+                                prev[(slug(leaf["path"]), r["name"])] = r["value"]
 
-                    rows_to_publish = parsed.get("rows", [])
-                    if log_changes_only:
-                        rows_to_publish = diff_rows(last_pages.get(page), parsed)
-
-                    for row in rows_to_publish:
-                        bridge.pub_sensor(title, row, path)
-
-                    last_pages[page] = parsed
                 except Exception as e:
-                    print(ts(), f"Error polling page {page}:", e)
-
+                    print(f"[page {leaf['path']}] {e}", flush=True)
+                await asyncio.sleep(0.15)
             await asyncio.sleep(int(poll_interval))
     finally:
         await cta.close()
-        bridge.disconnect()
+        mqttb.stop()
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--hostname", default="10.80.23.11")
-    ap.add_argument("--controller-port", default=8214)
-    ap.add_argument("--controller-password", default="999990")
-    ap.add_argument("--poll-interval", type=int, default=30)
-    ap.add_argument("--discovery-prefix", default="homeassistant")
-    ap.add_argument("--state-base-topic", default="cta_cs19i")
-    ap.add_argument("--mqtt-host", default="core-mosquitto")
-    ap.add_argument("--mqtt-port", default=1883)
-    ap.add_argument("--mqtt-user", default="")
-    ap.add_argument("--mqtt-pass", default="")
-    ap.add_argument("--mqtt-username", default="")
-    ap.add_argument("--mqtt-password", default="")
-    ap.add_argument("--log-pages", default="/informationen/abschaltungen")
-    ap.add_argument("--log-changes-only", action="store_true")
-    args = ap.parse_args()
-
-    # Prefer mqtt_user/mqtt_pass, but support mqtt_username/mqtt_password too
-    mqtt_user = args.mqtt_user or args.mqtt_username or ""
-    mqtt_pass = args.mqtt_pass or args.mqtt_password or ""
-
-    asyncio.run(
-        run_bridge(
-            args.hostname,
-            args.controller_port,
-            args.controller_password,
-            args.mqtt_host,
-            args.mqtt_port,
-            mqtt_user,
-            mqtt_pass,
-            args.poll_interval,
-            args.discovery_prefix,
-            args.state_base_topic,
-            args.log_pages,
-            args.log_changes_only,
-        )
-    )
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--host", required=True)
+    p.add_argument("--port", type=int, default=8214)
+    p.add_argument("--password", required=True)
+    p.add_argument("--mqtt-host", required=True)
+    p.add_argument("--mqtt-port", type=int, default=1883)
+    p.add_argument("--mqtt-user", default="")
+    p.add_argument("--mqtt-pass", default="")
+    p.add_argument("--poll-interval", type=int, default=30)
+    p.add_argument("--demand-delta", type=float, default=5.0)
+    p.add_argument("--discovery-prefix", default="homeassistant")
+    p.add_argument("--state-base-topic", default="cta_cs19i")
+    # NOTE: keep as flag (no argument) – matches run.sh
+    p.add_argument("--log-pages", action="store_true")
+    p.add_argument("--log-changes-only", action="store_true")
+    return p.parse_args()
 
 if __name__ == "__main__":
+    args = parse_args()
     try:
-        main()
+        asyncio.run(run(
+            args.host, args.port, args.password,
+            args.mqtt_host, args.mqtt_port, args.mqtt_user, args.mqtt_pass,
+            args.poll_interval, args.demand_delta, args.discovery_prefix, args.state_base_topic,
+            args.log_pages, args.log_changes_only
+        ))
     except KeyboardInterrupt:
         pass

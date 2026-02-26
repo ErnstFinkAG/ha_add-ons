@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OPTS="/data/options.json"
-
 jget() {
 python3 - "$1" <<'PY'
 import json, sys
@@ -21,14 +19,22 @@ HOSTNAME="$(jget hostname)"
 CTRLP="$(jget controller_port)"
 CTRLPASS="$(jget controller_password)"
 POLL="$(jget poll_interval)"
-DELTA="$(jget demand_delta_c)"
 
 DISCOVERY="$(jget discovery_prefix)"
 MQTTHOST="$(jget mqtt_host)"
 MQTTPORT="$(jget mqtt_port)"
-MQTTUSER="$(jget mqtt_username)"
-MQTTPASS="$(jget mqtt_password)"
 STATEBASE="$(jget state_base_topic)"
+
+# prefer mqtt_user/mqtt_pass, fallback to mqtt_username/mqtt_password
+MQTTUSER="$(jget mqtt_user)"
+MQTTPASS="$(jget mqtt_pass)"
+if [ -z "${MQTTUSER}" ]; then MQTTUSER="$(jget mqtt_username)"; fi
+if [ -z "${MQTTPASS}" ]; then MQTTPASS="$(jget mqtt_password)"; fi
+
+# prefer demand_delta, fallback to demand_delta_c
+DELTA="$(jget demand_delta)"
+if [ -z "${DELTA}" ]; then DELTA="$(jget demand_delta_c)"; fi
+if [ -z "${DELTA}" ]; then DELTA="5"; fi
 
 LOGP="$(jget log_pages)"
 LOGC="$(jget log_changes_only)"
@@ -45,6 +51,7 @@ ARGS=(
   --poll-interval "$POLL" --demand-delta "$DELTA"
 )
 
+# IMPORTANT: log_pages is a flag in main.py
 if [ "$LOGP" = "true" ]; then ARGS+=(--log-pages); fi
 if [ "$LOGC" = "true" ]; then ARGS+=(--log-changes-only); fi
 
