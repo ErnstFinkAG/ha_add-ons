@@ -4,6 +4,9 @@ from websockets.exceptions import ConnectionClosed
 import xml.etree.ElementTree as ET
 from paho.mqtt import client as mqtt
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+TZ = ZoneInfo("Europe/Zurich")
 
 def ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -15,6 +18,21 @@ def extract_number(value: str):
     num = float(m.group(1).replace(",", "."))
     unit = (m.group(2) or "").strip() or None
     return num, unit
+
+def parse_ddmmyy_hhmmss(s: str):
+    """
+    Parses "26.02.26 08:07:25" -> ISO 8601 string with Europe/Zurich TZ.
+    Returns None if it doesn't match.
+    """
+    if not s:
+        return None
+    m = re.match(r"^\s*(\d{2})\.(\d{2})\.(\d{2})\s+(\d{2}):(\d{2}):(\d{2})\s*$", s)
+    if not m:
+        return None
+    dd, mm, yy, hh, mi, ss = map(int, m.groups())
+    year = 2000 + yy
+    dt = datetime(year, mm, dd, hh, mi, ss, tzinfo=TZ)
+    return dt.isoformat()
 
 def parse_xml(xml_text: str) -> ET.Element:
     return ET.fromstring(xml_text)
@@ -169,7 +187,7 @@ class MqttBridge:
         payload = {
             "name": f"{page_title}: {row['name']}",
             "unique_id": uniq,
-            # FIX: deprecated object_id -> default_entity_id
+            # deprecated object_id -> default_entity_id
             "default_entity_id": f"sensor.{uniq}",
             "state_topic": st_topic,
             "availability_topic": f"{self.state_base}/status",
@@ -191,7 +209,7 @@ class MqttBridge:
         payload = {
             "name": "CTA Start Heating",
             "unique_id": uniq,
-            # FIX: deprecated object_id -> default_entity_id
+            # deprecated object_id -> default_entity_id
             "default_entity_id": f"button.{uniq}",
             "command_topic": f"{self.state_base}/command/start_heating",
             "payload_press": "PRESS",
@@ -199,6 +217,42 @@ class MqttBridge:
             "device": self.device(),
         }
         self.client.publish(cfg_topic, json.dumps(payload), retain=True)
+
+    def pub_abschaltungen_latest(self, title: str, page_path: str, rows: list, keep_last: int = 50):
+        """
+        Publish ONE sensor for Abschaltungen, with entries in attributes.
+        We assume: row["name"] = "dd.mm.yy hh:mm:ss", row["value"] = reason/text
+        """
+        entries = []
+        for r in rows:
+            ts_iso = parse_ddmmyy_hhmmss(r.get("name", ""))
+            if ts_iso:
+                entries.append({"ts": ts_iso, "text": (r.get("value") or "").strip()})
+
+        entries.sort(key=lambda x: x["ts"], reverse=True)
+        entries = entries[:keep_last]
+        latest_ts = entries[0]["ts"] if entries else ""
+        latest_text = entries[0]["text"] if entries else ""
+
+        uniq = f"{self.state_base}_informationen_abschaltungen_latest"
+        cfg_topic = f"{self.discovery}/sensor/{uniq}/config"
+        st_topic = f"{self.state_base}/informationen/abschaltungen/latest"
+        attr_topic = f"{self.state_base}/informationen/abschaltungen/attributes"
+
+        payload = {
+            "name": f"{title}: Latest",
+            "unique_id": uniq,
+            "default_entity_id": f"sensor.{uniq}",
+            "state_topic": st_topic,
+            "availability_topic": f"{self.state_base}/status",
+            "device": self.device(),
+            "device_class": "timestamp",
+            "json_attributes_topic": attr_topic,
+        }
+
+        self.client.publish(cfg_topic, json.dumps(payload), retain=True)
+        self.client.publish(st_topic, latest_ts, retain=False)
+        self.client.publish(attr_topic, json.dumps({"latest_text": latest_text, "entries": entries}), retain=False)
 
 class CTAClient:
     def __init__(self, host, port, password):
@@ -351,7 +405,6 @@ async def run(
 
     try:
         while True:
-            # NAV loop with reconnect on WS close
             try:
                 nav = await cta.get_navigation()
             except Exception as e:
@@ -379,8 +432,12 @@ async def run(
                     page = await cta.get_page(leaf["id"], leaf["name"])
                     title, rows = parse_content(page)
 
-                    for r in rows:
-                        mqttb.pub_sensor(title, r, leaf["path"])
+                    # SPECIAL: Abschaltungen -> publish ONE aggregated sensor
+                    if leaf["path"].lower().startswith("informationen/abschaltungen"):
+                        mqttb.pub_abschaltungen_latest(title, leaf["path"], rows, keep_last=50)
+                    else:
+                        for r in rows:
+                            mqttb.pub_sensor(title, r, leaf["path"])
 
                     if log_pages:
                         if log_changes_only:
