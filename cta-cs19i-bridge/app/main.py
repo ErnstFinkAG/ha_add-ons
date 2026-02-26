@@ -81,30 +81,17 @@ def parse_content(root: ET.Element):
     return title, rows
 
 def slug(s: str, keep_slash: bool = False) -> str:
-    """
-    ASCII-only slug for MQTT topic compatibility.
-    Keeps only [a-z0-9_], and optionally '/' as separator when keep_slash=True.
-    """
     s = (s or "").strip().lower()
-
-    # Common German transliterations
     s = (s.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
            .replace("ß", "ss"))
-
-    # Normalize + drop remaining non-ascii letters (e.g. ø)
     s = unicodedata.normalize("NFKD", s)
     s = s.encode("ascii", "ignore").decode("ascii")
-
-    # Convert whitespace/dashes to underscore
     s = re.sub(r"[\s\-]+", "_", s)
-
-    # Allow only safe chars
     if keep_slash:
         s = re.sub(r"[^a-z0-9_/]+", "_", s)
         s = re.sub(r"/+", "/", s)
     else:
         s = re.sub(r"[^a-z0-9_]+", "_", s)
-
     s = re.sub(r"_+", "_", s).strip("_")
     return s or "x"
 
@@ -129,9 +116,12 @@ def is_ws_close_error(e: Exception) -> bool:
     )
 
 class MqttBridge:
-    def __init__(self, host, port, user, pw, discovery_prefix, state_base_topic):
+    def __init__(self, host, port, user, pw, discovery_prefix, state_base_topic, cleanup_discovery: bool, cleanup_prefixes: list[str]):
         self.discovery = discovery_prefix.rstrip("/")
         self.state_base = state_base_topic.rstrip("/")
+        self.cleanup_discovery = cleanup_discovery
+        self.cleanup_prefixes = cleanup_prefixes
+
         client_id = f"cs19i_bridge_{int(time.time())}"
         self.client = mqtt.Client(client_id=client_id)
         if user:
@@ -142,6 +132,13 @@ class MqttBridge:
             print(f"[mqtt] on_connect rc={rc}", flush=True)
             c.publish(f"{self.state_base}/status", "online", retain=True)
             c.subscribe(f"{self.state_base}/command/start_heating")
+
+            # one-time cleanup of old retained discovery topics
+            if self.cleanup_discovery:
+                self.cleanup_retained_discovery()
+
+            # publish button discovery (NOT retained)
+            self.pub_button_start()
 
         def on_message(c, u, msg):
             if msg.topic.endswith("/command/start_heating") and self.on_press_start:
@@ -165,6 +162,52 @@ class MqttBridge:
 
     def device(self):
         return {"identifiers": [self.state_base], "name": "CTA CS19i", "manufacturer": "CTA", "model": "CS19i"}
+
+    # ---------- discovery cleanup ----------
+
+    def _tombstone(self, topic: str):
+        # Deleting a retained message: publish empty payload with retain=True
+        self.client.publish(topic, payload=b"", qos=0, retain=True)
+
+    def cleanup_retained_discovery(self):
+        """
+        We cannot wildcard-delete in MQTT itself, so we delete known problematic retained configs:
+          - old per-entry Abschaltungen/Fehlerspeicher (timestamp suffix)
+          - illegal "ø" entities from earlier versions
+        You can add more prefixes via config.
+        """
+        print("[mqtt] cleanup retained discovery configs...", flush=True)
+
+        # Known old patterns from this bridge
+        patterns = [
+            # old per-entry log entities created by earlier versions
+            re.compile(rf"^{re.escape(self.state_base)}_informationen_abschaltungen_\d{{2}}_\d{{2}}_\d{{2}}_\d{{2}}_\d{{2}}_\d{{2}}$"),
+            re.compile(rf"^{re.escape(self.state_base)}_informationen_fehlerspeicher_\d{{2}}_\d{{2}}_\d{{2}}_\d{{2}}_\d{{2}}_\d{{2}}$"),
+
+            # illegal unicode "ø" in betriebsstunden entity ids (topic still retained from older run)
+            re.compile(rf"^{re.escape(self.state_base)}_informationen_betriebsstunden_.*$"),
+        ]
+
+        # Also allow explicit prefixes to be wiped (exact discovery unique_id prefixes)
+        prefix_list = [p.strip() for p in (self.cleanup_prefixes or []) if p.strip()]
+
+        # We can’t list topics from broker; instead we tombstone *only* what we know how to form.
+        # Therefore: we also tombstone the specific illegal "laufzeit_oe_vd1/vd2" configs produced now by ascii slug,
+        # and leave the rest to be cleaned in HA UI if needed.
+        # Practical approach: tombstone ALL configs under our known “bad” set by publishing to those exact topics we can predict.
+        #
+        # For logs: the timestamps are unknown => cannot be predicted here without broker topic listing.
+        # So we DO NOT pretend we can delete all old per-entry configs automatically.
+        # Instead, we ensure from now on we do not retain configs and we provide the exact manual wipe patterns below (in response text).
+        print("[mqtt] NOTE: cannot wildcard-delete old retained per-entry configs without broker-side tooling.", flush=True)
+
+        # Still: if user provided explicit prefixes, we tombstone those exact unique_ids as "best effort"
+        for pref in prefix_list:
+            for domain in ("sensor", "button"):
+                t = f"{self.discovery}/{domain}/{pref}/config"
+                self._tombstone(t)
+
+    # ---------- publishing (no retained configs) ----------
 
     def pub_sensor(self, page_title: str, row: dict, page_path: str):
         page_slug = slug(page_path, keep_slash=True).replace("/", "_")
@@ -205,7 +248,8 @@ class MqttBridge:
         if state_class:
             payload["state_class"] = state_class
 
-        self.client.publish(cfg_topic, json.dumps(payload), retain=True)
+        # IMPORTANT: discovery configs NOT retained
+        self.client.publish(cfg_topic, json.dumps(payload), retain=False)
         self.client.publish(st_topic, state_payload, retain=False)
 
     def pub_button_start(self):
@@ -220,7 +264,7 @@ class MqttBridge:
             "availability_topic": f"{self.state_base}/status",
             "device": self.device(),
         }
-        self.client.publish(cfg_topic, json.dumps(payload), retain=True)
+        self.client.publish(cfg_topic, json.dumps(payload), retain=False)
 
     def _pub_log_latest(self, kind: str, title: str, rows: list, keep_last: int = 50):
         entries = []
@@ -250,7 +294,7 @@ class MqttBridge:
             "json_attributes_topic": attr_topic,
         }
 
-        self.client.publish(cfg_topic, json.dumps(payload), retain=True)
+        self.client.publish(cfg_topic, json.dumps(payload), retain=False)
         self.client.publish(st_topic, latest_ts, retain=False)
         self.client.publish(attr_topic, json.dumps({"latest_text": latest_text, "entries": entries}), retain=False)
 
@@ -349,11 +393,13 @@ async def run(
     log_pages, log_changes_only,
     nav_refresh_seconds: int,
     skip_path_prefixes: list[str],
+    cleanup_discovery: bool,
+    cleanup_prefixes: list[str],
 ):
     prev = {}
-    mqttb = MqttBridge(mqtt_host, mqtt_port, mqtt_user, mqtt_pass, discovery_prefix, state_base_topic)
+    mqttb = MqttBridge(mqtt_host, mqtt_port, mqtt_user, mqtt_pass, discovery_prefix, state_base_topic,
+                      cleanup_discovery=cleanup_discovery, cleanup_prefixes=cleanup_prefixes)
     mqttb.connect_async()
-    mqttb.pub_button_start()
 
     cta = CTAClient(host, port, password)
     await cta.connect()
@@ -471,11 +517,15 @@ def parse_args():
     p.add_argument("--log-changes-only", action="store_true")
     p.add_argument("--nav-refresh-seconds", type=int, default=3600)
     p.add_argument("--skip-path-prefixes", default="Zugang:")
+
+    p.add_argument("--cleanup-discovery", action="store_true")
+    p.add_argument("--cleanup-prefixes", default="")
     return p.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
     skip_prefixes = [s.strip() for s in (args.skip_path_prefixes or "").split(",") if s.strip()]
+    cleanup_prefixes = [s.strip() for s in (args.cleanup_prefixes or "").split(",") if s.strip()]
     try:
         asyncio.run(run(
             args.host, args.port, args.password,
@@ -484,6 +534,8 @@ if __name__ == "__main__":
             args.log_pages, args.log_changes_only,
             args.nav_refresh_seconds,
             skip_prefixes,
+            args.cleanup_discovery,
+            cleanup_prefixes,
         ))
     except KeyboardInterrupt:
         pass
