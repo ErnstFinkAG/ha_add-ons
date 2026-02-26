@@ -583,7 +583,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 cfg_payload = {
                     "name": display_name,
                     "unique_id": unique_id,
-                        "object_id": object_id,
+                        "default_entity_id": f"sensor.{object_id}",
                     "state_topic": state_topic,
                     "unit_of_measurement": unit or None,
                     "device": ha_device,
