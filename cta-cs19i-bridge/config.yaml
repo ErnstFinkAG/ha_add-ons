@@ -1,5 +1,5 @@
 name: CTA CS19i Bridge
-version: "0.0.2"
+version: "0.0.3"
 slug: cta_cs19i_bridge
 description: CTA CS19i → MQTT bridge (sensors + Start Heating button) + log tables
 arch:
@@ -11,31 +11,52 @@ startup: services
 boot: auto
 init: false
 homeassistant: true
+
 options:
-  hostname: 10.80.23.11          # controller host/IP
+  hostname: 10.80.23.11
   controller_port: 8214
   controller_password: "999990"
   poll_interval: 30
+
+  # New / preferred option name (we keep demand_delta too for compatibility)
   demand_delta: 0.2
+  demand_delta_c: 5.0
+
   discovery_prefix: homeassistant
   state_base_topic: cta_cs19i
+
   mqtt_host: core-mosquitto
   mqtt_port: 1883
+
+  # Support BOTH naming variants that exist in your stored options
   mqtt_user: ""
   mqtt_pass: ""
+  mqtt_username: "mqtt_user"
+  mqtt_password: "mqtt_password"
+
+  # Allow boolean OR string to avoid breaking existing stored options
   log_pages: "/informationen/abschaltungen"
   log_changes_only: false
+
 schema:
   hostname: str
   controller_port: int
   controller_password: str
   poll_interval: int
+
   demand_delta: float
+  demand_delta_c: float?
+
   discovery_prefix: str
   state_base_topic: str
+
   mqtt_host: str
   mqtt_port: int
-  mqtt_user: str
-  mqtt_pass: str
-  log_pages: str
+  mqtt_user: str?
+  mqtt_pass: str?
+  mqtt_username: str?
+  mqtt_password: str?
+
+  # accept either string or bool (your stored option has True)
+  log_pages: str|bool
   log_changes_only: bool

@@ -9,10 +9,9 @@ def ts():
 
 def extract_number(value: str):
     m = re.match(r"^\s*([\-+]?\d+(?:[.,]\d+)?)\s*([^\d\s].*)?$", value or "")
-    if not m: return None, None
-    num = float(
-        m.group(1).replace(",", ".")
-    )
+    if not m:
+        return None, None
+    num = float(m.group(1).replace(",", "."))
     unit = (m.group(2) or "").strip()
     return num, unit
 
@@ -56,11 +55,7 @@ class MqttBridge:
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         print(ts(), "MQTT connected:", reason_code)
         self.client.publish(f"{self.state_base}/status", "online", retain=True)
-
-        # subscribe to commands
         self.client.subscribe(f"{self.state_base}/command/#")
-
-        # publish discovery for the button
         self.pub_button_start()
 
     def _on_message(self, client, userdata, msg):
@@ -94,31 +89,31 @@ class MqttBridge:
 
     def pub_sensor(self, page_title: str, row: dict, page_path: str):
         page_slug = slug(page_path, keep_slash=True).replace("/", "_")
-        name_slug = slug(row['name'])
+        name_slug = slug(row["name"])
         uniq = f"{self.state_base}_{page_slug}_{name_slug}"
         st_topic = f"{self.state_base}/{slug(page_path, keep_slash=True)}/{name_slug}"
         cfg_topic = f"{self.discovery}/sensor/{uniq}/config"
 
-        num, unit = extract_number(row["value"])
-        state_payload = None
+        num, unit = extract_number(row.get("value", ""))
         device_class = None
         state_class = None
 
         if num is not None and unit:
             state_payload = f"{num}"
-            u = (unit or '').strip()
+            u = (unit or "").strip()
             if u in ("°C", "C", "degC"):
                 device_class = "temperature"
             elif u in ("V", "Volt", "volts"):
                 device_class = "voltage"
             state_class = "measurement"
         else:
-            state_payload = row["value"]
+            state_payload = row.get("value", "")
             unit = None
 
         payload = {
-            "name": f"{page_title}: {row['name']}",
+            "name": f"{page_title}: {row.get('name','')}",
             "unique_id": uniq,
+            # FIX: deprecated object_id -> default_entity_id
             "default_entity_id": f"sensor.{uniq}",
             "state_topic": st_topic,
             "availability_topic": f"{self.state_base}/status",
@@ -140,6 +135,7 @@ class MqttBridge:
         payload = {
             "name": "CTA Start Heating",
             "unique_id": uniq,
+            # FIX: deprecated object_id -> default_entity_id
             "default_entity_id": f"button.{uniq}",
             "command_topic": f"{self.state_base}/command/start_heating",
             "payload_press": "PRESS",
@@ -167,7 +163,6 @@ class CTAClient:
             self.ws = None
 
     async def request(self, path: str):
-        # Path is specific to controller; this function assumes controller supports a request message style.
         if not self.ws:
             raise RuntimeError("Not connected")
         msg = json.dumps({"path": path})
@@ -176,8 +171,6 @@ class CTAClient:
         return resp
 
 def parse_table(xml_text: str):
-    # Expecting a simple XML structure containing rows with name/value (custom to controller)
-    # If this doesn't match your controller, adjust here.
     try:
         root = ET.fromstring(xml_text)
     except Exception:
@@ -190,13 +183,15 @@ def parse_table(xml_text: str):
     for r in root.findall(".//row"):
         name = r.attrib.get("name") or r.findtext("name") or ""
         value = r.attrib.get("value") or r.findtext("value") or ""
-        if name.strip() == "" and value.strip() == "":
+        name = (name or "").strip()
+        value = (value or "").strip()
+        if not name and not value:
             continue
-        rows.append({"name": name.strip(), "value": (value or "").strip()})
+        rows.append({"name": name, "value": value})
+
     return {"title": title, "path": path, "rows": rows}
 
 def diff_rows(prev: dict, curr: dict):
-    # Return list of rows that changed by name
     if not prev:
         return curr.get("rows", [])
     prev_map = {slug(r["name"]): r.get("value") for r in prev.get("rows", [])}
@@ -207,6 +202,18 @@ def diff_rows(prev: dict, curr: dict):
             changed.append(r)
     return changed
 
+def normalize_pages(log_pages_value):
+    """
+    Your stored add-on options currently contain log_pages=True (bool).
+    Convert that into a sensible default list.
+    """
+    if isinstance(log_pages_value, bool):
+        return ["/informationen/abschaltungen"] if log_pages_value else []
+    if isinstance(log_pages_value, str):
+        pages = [p.strip() for p in log_pages_value.split(",") if p.strip()]
+        return pages
+    return ["/informationen/abschaltungen"]
+
 async def run_bridge(
     controller_host: str,
     controller_port: int,
@@ -216,10 +223,9 @@ async def run_bridge(
     mqtt_user: str,
     mqtt_pass: str,
     poll_interval: int,
-    demand_delta: float,
     discovery_prefix: str,
     state_base_topic: str,
-    log_pages: list,
+    log_pages_value,
     log_changes_only: bool,
 ):
     bridge = MqttBridge(mqtt_host, mqtt_port, mqtt_user, mqtt_pass, discovery_prefix, state_base_topic)
@@ -235,19 +241,18 @@ async def run_bridge(
             return
         last_press = now
         print(ts(), "Start Heating requested via MQTT button")
-        # Controller-specific "start heating" action would go here.
-        # If your controller needs a specific path or command, implement it:
-        # asyncio.create_task(cta.request("/command/start_heating"))
         asyncio.create_task(cta.request("/command/start_heating"))
 
     bridge.on_press_start = do_start_press
+
+    pages = normalize_pages(log_pages_value)
 
     bridge.connect()
     await cta.connect()
 
     try:
         while True:
-            for page in log_pages:
+            for page in pages:
                 try:
                     resp = await cta.request(page)
                     parsed = parse_table(resp)
@@ -256,16 +261,15 @@ async def run_bridge(
 
                     title = parsed.get("title") or page
                     path = parsed.get("path") or page
-                    curr = parsed
 
-                    rows_to_publish = curr.get("rows", [])
+                    rows_to_publish = parsed.get("rows", [])
                     if log_changes_only:
-                        rows_to_publish = diff_rows(last_pages.get(page), curr)
+                        rows_to_publish = diff_rows(last_pages.get(page), parsed)
 
                     for row in rows_to_publish:
                         bridge.pub_sensor(title, row, path)
 
-                    last_pages[page] = curr
+                    last_pages[page] = parsed
                 except Exception as e:
                     print(ts(), f"Error polling page {page}:", e)
 
@@ -280,28 +284,38 @@ def main():
     ap.add_argument("--controller-port", default=8214)
     ap.add_argument("--controller-password", default="999990")
     ap.add_argument("--poll-interval", type=int, default=30)
-    ap.add_argument("--demand-delta", type=float, default=0.2)
     ap.add_argument("--discovery-prefix", default="homeassistant")
     ap.add_argument("--state-base-topic", default="cta_cs19i")
     ap.add_argument("--mqtt-host", default="core-mosquitto")
     ap.add_argument("--mqtt-port", default=1883)
     ap.add_argument("--mqtt-user", default="")
     ap.add_argument("--mqtt-pass", default="")
+    ap.add_argument("--mqtt-username", default="")
+    ap.add_argument("--mqtt-password", default="")
     ap.add_argument("--log-pages", default="/informationen/abschaltungen")
     ap.add_argument("--log-changes-only", action="store_true")
-
     args = ap.parse_args()
 
-    pages = [p.strip() for p in (args.log_pages or "").split(",") if p.strip()]
-    if not pages:
-        pages = ["/informationen/abschaltungen"]
+    # Prefer mqtt_user/mqtt_pass, but support mqtt_username/mqtt_password too
+    mqtt_user = args.mqtt_user or args.mqtt_username or ""
+    mqtt_pass = args.mqtt_pass or args.mqtt_password or ""
 
-    asyncio.run(run_bridge(
-        args.hostname, args.controller_port, args.controller_password,
-        args.mqtt_host, args.mqtt_port, args.mqtt_user, args.mqtt_pass,
-        args.poll_interval, args.demand_delta, args.discovery_prefix, args.state_base_topic,
-        pages, args.log_changes_only
-    ))
+    asyncio.run(
+        run_bridge(
+            args.hostname,
+            args.controller_port,
+            args.controller_password,
+            args.mqtt_host,
+            args.mqtt_port,
+            mqtt_user,
+            mqtt_pass,
+            args.poll_interval,
+            args.discovery_prefix,
+            args.state_base_topic,
+            args.log_pages,
+            args.log_changes_only,
+        )
+    )
 
 if __name__ == "__main__":
     try:
