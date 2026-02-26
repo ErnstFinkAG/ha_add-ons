@@ -235,9 +235,9 @@ CUTOUT_DETECT_SCALES = _dedupe_sorted(_parse_float_list(cutout_detect_scales_raw
 # ------------------------------------------------------------
 _defaults = opts.get("defaults") if isinstance(opts.get("defaults"), dict) else {}
 
-DEFAULT_INTERVAL_S = _parse_int(_defaults.get("interval_s", _defaults.get("interval_seconds", opts.get("interval_seconds", 60))), 60)
-DEFAULT_REQUIRED = _parse_int(_defaults.get("required", _defaults.get("required_consistency", opts.get("required_consistency", 3))), 3)
-DEFAULT_RESTRICT_TO_ZONES = _parse_bool(_defaults.get("restrict_to_zones", opts.get("restrict_to_zones", False)), False)
+DEFAULT_INTERVAL_S = _parse_int(_defaults.get("interval_s", 60), 60)
+DEFAULT_REQUIRED = _parse_int(_defaults.get("required", 3), 3)
+DEFAULT_RESTRICT_TO_ZONES = _parse_bool(_defaults.get("restrict_to_zones", False), False)
 
 # TLS verify: global default, can be overridden per camera.stream.tls_verify
 TLS_VERIFY_DEFAULT = _parse_bool(opts.get("tls_verify", False), False)
@@ -255,12 +255,9 @@ _LOG_LEVEL_MAP = {
 logger.setLevel(_LOG_LEVEL_MAP.get(_log_level, logging.INFO))
 
 # Debug zones (GLOBAL): list of zone names like ["A1","A2","Y1"].
-# Backward compat: old single debug_zone: "Z10"
-_debug_zones_raw = opts.get("debug_zones", _defaults.get("debug_zones", []))
-_debug_zone_legacy = _opt_str("debug_zone", "").strip()
+# Use ["*"] to debug all zones on all cameras.
+_debug_zones_raw = opts.get("debug_zones", [])
 DEBUG_ZONES = set(_parse_str_list(_debug_zones_raw))
-if _debug_zone_legacy:
-    DEBUG_ZONES.add(_debug_zone_legacy)
 DEBUG_ALL_ZONES = ("*" in DEBUG_ZONES)
 if DEBUG_ALL_ZONES:
     DEBUG_ZONES.discard("*")
@@ -387,21 +384,6 @@ def _parse_cameras():
         if any(_conf_has_url(c) for c in out.values()):
             return out
         out = {}
-
-    # Legacy single-camera options
-    legacy_url = opts.get("rtsp_url")
-    if isinstance(legacy_url, str) and legacy_url.strip():
-        out["cam1"] = {
-            "name": "camera1",
-            "stream": {"rtsp_url": legacy_url.strip(), "tls_verify": TLS_VERIFY_DEFAULT},
-            "zones": _parse_legacy_zones(),
-            "settings": {
-                "interval_s": DEFAULT_INTERVAL_S,
-                "required": DEFAULT_REQUIRED,
-                "restrict_to_zones": DEFAULT_RESTRICT_TO_ZONES,
-                "enabled": True,
-            },
-        }
     return out
 
 _CAMERAS_RAW = _parse_cameras()
@@ -413,14 +395,14 @@ def _build_camera_runtime(cam_id: str, conf: dict):
     url = stream.get("rtsp_url") or conf.get("rtsp_url") or ""
     url = str(url).strip()
 
-    tls_verify = _parse_bool(stream.get("tls_verify", TLS_VERIFY_DEFAULT), TLS_VERIFY_DEFAULT)
+    tls_verify = _parse_bool(stream.get("tls_verify", conf.get("tls_verify", TLS_VERIFY_DEFAULT)), TLS_VERIFY_DEFAULT)
 
     settings = conf.get("settings") if isinstance(conf.get("settings"), dict) else {}
-    enabled = _parse_bool(settings.get("enabled", True), True)
+    enabled = _parse_bool(settings.get("enabled", conf.get("enabled", True)), True)
 
-    interval_s = _parse_int(settings.get("interval_s", settings.get("interval_seconds", DEFAULT_INTERVAL_S)), DEFAULT_INTERVAL_S)
-    required_n = _parse_int(settings.get("required", settings.get("required_consistency", DEFAULT_REQUIRED)), DEFAULT_REQUIRED)
-    restrict = _parse_bool(settings.get("restrict_to_zones", DEFAULT_RESTRICT_TO_ZONES), DEFAULT_RESTRICT_TO_ZONES)
+    interval_s = _parse_int(settings.get("interval_s", conf.get("interval_s", DEFAULT_INTERVAL_S)), DEFAULT_INTERVAL_S)
+    required_n = _parse_int(settings.get("required", conf.get("required", DEFAULT_REQUIRED)), DEFAULT_REQUIRED)
+    restrict = _parse_bool(settings.get("restrict_to_zones", conf.get("restrict_to_zones", DEFAULT_RESTRICT_TO_ZONES)), DEFAULT_RESTRICT_TO_ZONES)
 
     # Stream info logging interval: can be global only for now
     stream_info_interval_minutes = _parse_int(opts.get("stream_info_interval_minutes", 0), 0)

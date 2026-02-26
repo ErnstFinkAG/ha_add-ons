@@ -1,7 +1,7 @@
 name: QR Inventory
 version: "0.6.1"
 slug: qr_inventory
-description: "Scan QR codes from one or more RTSPS/RTSP cameras, map them to zones, and serve per-camera overlay/debug endpoints via HTTP."
+description: "Scan QR codes from one or more RTSPS/RTSP cameras, map them to storage zones, and serve per-camera overlay/debug endpoints via HTTP."
 arch:
   - amd64
   - aarch64
@@ -17,29 +17,24 @@ ports_description:
 webui: "http://[HOST]:[PORT:8099]/"
 
 options:
-  # New multi-camera config (recommended)
+  # Global defaults (used for each camera unless overridden)
   defaults:
     interval_s: 60
     required: 3
     restrict_to_zones: false
     log_level: info
 
+  # GLOBAL: debug output for these zone names across all cameras (e.g. [A1, A2]).
+  # Use ["*"] to debug all zones.
   debug_zones: []
+
   overlay_http_port: 8099
   overlay_route_prefix: /overlays
   frame_route_prefix: /frames
 
-  cameras: {}
+  # Multi-camera list (each camera has px zones; zones is JSON string mapping zone->rect_px)
+  cameras: []
 
-  # Legacy single-camera config (still supported; used if cameras is empty or has no URLs)
-  camera_mode: rtsps
-  rtsp_url: ""
-  interval_seconds: 60
-  required_consistency: 3
-  zones: "{}"
-  tls_verify: false
-  overlay_png_name: overlay.png
-  debug_zone: ""
 
   # Decoder / overlay tuning (global, shared by all cameras)
   use_preprocess: true
@@ -96,7 +91,6 @@ options:
   stream_info_interval_minutes: 0
 
 schema:
-  # New multi-camera config
   defaults:
     interval_s: int
     required: int
@@ -105,38 +99,32 @@ schema:
 
   debug_zones:
     - match(^(\*|[A-Za-z0-9_-]+)$)
+
   overlay_http_port: port
   overlay_route_prefix: str
   frame_route_prefix: str
 
   cameras:
-    str:
+    - id: match(^[A-Za-z0-9_-]+$)
       name: str?
-      stream:
-        rtsp_url: str
-        tls_verify: bool?
-      zones:
-        - zone: match(^[A-Za-z0-9_-]+$)
-          rect_px:
-            - int
-            - int
-            - int
-            - int
-      settings:
-        enabled: bool?
-        interval_s: int?
-        required: int?
-        restrict_to_zones: bool?
+      rtsp_url: str
+      tls_verify: bool?
+      enabled: bool?
+      interval_s: int?
+      required: int?
+      restrict_to_zones: bool?
+      zones: str
 
-  # Legacy single-camera config (optional)
-  camera_mode: list(rtsp|rtsps)
-  rtsp_url: str
-  interval_seconds: int
-  required_consistency: int
-  zones: str
-  tls_verify: bool
-  overlay_png_name: str
-  debug_zone: str
+  # Old single-camera keys (ignored; kept optional to allow upgrades without errors)
+  camera_mode: "str?"
+  rtsp_url: "str?"
+  interval_seconds: "int?"
+  required_consistency: "int?"
+  zones: "str?"
+  tls_verify: "bool?"
+  overlay_png_name: "str?"
+  debug_zone: "str?"
+
 
   # Decoder / overlay tuning
   use_preprocess: bool
