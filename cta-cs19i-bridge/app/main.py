@@ -80,23 +80,33 @@ def parse_content(root: ET.Element):
         )
     return title, rows
 
-def slug(s: str, keep_slash=False):
-    s = (s or "").lower().strip()
-    s = s.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+def slug(s: str, keep_slash: bool = False) -> str:
+    """
+    ASCII-only slug for MQTT topic compatibility.
+    Keeps only [a-z0-9_], and optionally '/' as separator when keep_slash=True.
+    """
+    s = (s or "").strip().lower()
+
+    # Common German transliterations
+    s = (s.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
+           .replace("ß", "ss"))
+
+    # Normalize + drop remaining non-ascii letters (e.g. ø)
     s = unicodedata.normalize("NFKD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    out = []
-    for ch in s:
-        if ch.isalnum() or ch in ("_", " ", "/", "-"):
-            out.append(ch)
-        else:
-            out.append("_")
-    s = "".join(out).replace(" ", "_").replace("-", "_")
-    s = re.sub(r"_+", "_", s)
-    if not keep_slash:
-        s = s.replace("/", "_")
-    s = re.sub(r"/+", "/", s)
-    return s.strip("_/")
+    s = s.encode("ascii", "ignore").decode("ascii")
+
+    # Convert whitespace/dashes to underscore
+    s = re.sub(r"[\s\-]+", "_", s)
+
+    # Allow only safe chars
+    if keep_slash:
+        s = re.sub(r"[^a-z0-9_/]+", "_", s)
+        s = re.sub(r"/+", "/", s)
+    else:
+        s = re.sub(r"[^a-z0-9_]+", "_", s)
+
+    s = re.sub(r"_+", "_", s).strip("_")
+    return s or "x"
 
 def print_table(title: str, rows, page_path: str):
     name_w = max([4] + [len(r["name"]) for r in rows])
@@ -160,6 +170,7 @@ class MqttBridge:
         page_slug = slug(page_path, keep_slash=True).replace("/", "_")
         name_slug = slug(row["name"])
         uniq = f"{self.state_base}_{page_slug}_{name_slug}"
+
         st_topic = f"{self.state_base}/{slug(page_path, keep_slash=True)}/{name_slug}"
         cfg_topic = f"{self.discovery}/sensor/{uniq}/config"
 
@@ -212,10 +223,6 @@ class MqttBridge:
         self.client.publish(cfg_topic, json.dumps(payload), retain=True)
 
     def _pub_log_latest(self, kind: str, title: str, rows: list, keep_last: int = 50):
-        """
-        Generic log publisher for pages where row.name = "dd.mm.yy hh:mm:ss" and row.value = text.
-        Creates ONE timestamp sensor + attributes list.
-        """
         entries = []
         for r in rows:
             ts_iso = parse_ddmmyy_hhmmss(r.get("name", ""))
@@ -388,47 +395,6 @@ async def run(
         cached_leaves = None
         cached_at = 0.0
         await refresh_nav(force=True)
-
-    async def start_heating():
-        try:
-            leaves = await refresh_nav(force=False)
-            p_temp_info = next((l for l in leaves if l["path"].startswith("Informationen/Temperaturen")), None)
-            p_temp_set  = next((l for l in leaves if l["path"].startswith("Einstellungen/Temperaturen")), None)
-            if not all([p_temp_info, p_temp_set]):
-                return
-
-            info = await cta.get_page(p_temp_info["id"], "Temperaturen")
-            _, rows = parse_content(info)
-            rueck = next((r for r in rows if r["name"] == "Rücklauf"), None)
-            if not rueck:
-                return
-            num, _ = extract_number(rueck["value"])
-            if num is None:
-                return
-
-            target = num + float(delta_c)
-
-            te = await cta.get_page(p_temp_set["id"], "Temperaturen")
-            _, rows = parse_content(te)
-            minr = next((r for r in rows if r["name"].startswith("Min. Rückl.Solltemp")), None)
-            cap  = next((r for r in rows if r["name"] == "Rückl.-Begr."), None)
-            if cap:
-                cnum, _ = extract_number(cap["value"])
-                if cnum is not None and target > cnum:
-                    target = cnum
-
-            if minr:
-                cur, _ = extract_number(minr["value"])
-                div = minr.get("div", 1.0) if isinstance(minr.get("div", 1.0), (int, float)) else 1.0
-                if (cur is None) or (cur < target - 0.05):
-                    raw = int(round(target * div))
-                    await cta.send(f"SET;{minr['id']};{raw}")
-                    await cta.send("SAVE;1")
-                    await asyncio.sleep(0.5)
-        except Exception as e:
-            print(f"[start_heating] {e}", flush=True)
-
-    mqttb.on_press_start = start_heating
 
     try:
         await refresh_nav(force=True)
