@@ -20,10 +20,6 @@ def extract_number(value: str):
     return num, unit
 
 def parse_ddmmyy_hhmmss(s: str):
-    """
-    Parses "26.02.26 08:07:25" -> ISO 8601 string with Europe/Zurich TZ.
-    Returns None if it doesn't match.
-    """
     if not s:
         return None
     m = re.match(r"^\s*(\d{2})\.(\d{2})\.(\d{2})\s+(\d{2}):(\d{2}):(\d{2})\s*$", s)
@@ -187,7 +183,6 @@ class MqttBridge:
         payload = {
             "name": f"{page_title}: {row['name']}",
             "unique_id": uniq,
-            # deprecated object_id -> default_entity_id
             "default_entity_id": f"sensor.{uniq}",
             "state_topic": st_topic,
             "availability_topic": f"{self.state_base}/status",
@@ -209,7 +204,6 @@ class MqttBridge:
         payload = {
             "name": "CTA Start Heating",
             "unique_id": uniq,
-            # deprecated object_id -> default_entity_id
             "default_entity_id": f"button.{uniq}",
             "command_topic": f"{self.state_base}/command/start_heating",
             "payload_press": "PRESS",
@@ -219,10 +213,6 @@ class MqttBridge:
         self.client.publish(cfg_topic, json.dumps(payload), retain=True)
 
     def pub_abschaltungen_latest(self, title: str, page_path: str, rows: list, keep_last: int = 50):
-        """
-        Publish ONE sensor for Abschaltungen, with entries in attributes.
-        We assume: row["name"] = "dd.mm.yy hh:mm:ss", row["value"] = reason/text
-        """
         entries = []
         for r in rows:
             ts_iso = parse_ddmmyy_hhmmss(r.get("name", ""))
@@ -262,7 +252,6 @@ class CTAClient:
 
     async def connect(self):
         headers = [("Origin", f"http://{self.host}")]
-        # Controller/embedded servers often don't like ping/pong -> disable.
         self.ws = await websockets.connect(
             self.uri,
             subprotocols=["Lux_WS"],
@@ -303,7 +292,11 @@ class CTAClient:
             self.ws = None
             raise RuntimeError(f"WS closed: {e}") from e
 
-    async def get_navigation(self, tries=10, timeout=8.0):
+    async def get_navigation(self, tries=15, timeout=8.0):
+        """
+        Some firmwares start sending <values> updates; that's NOT navigation.
+        We only consider navigation valid if we see <Navigation>.
+        """
         last = None
         for _ in range(tries):
             await self.send("REFRESH")
@@ -312,10 +305,9 @@ class CTAClient:
                 continue
             last = txt
             if re.search(r"<\s*Navigation(\s|>)", txt, re.I):
-                try:
-                    return parse_xml(txt)
-                except Exception:
-                    await asyncio.sleep(0.2)
+                return parse_xml(txt)
+            # If it's <values> just keep trying a bit.
+            await asyncio.sleep(0.2)
         raise RuntimeError(f"No Navigation received. Last:\n{last}")
 
     async def get_page(self, page_id: str, title: str, per_read=4.0, overall=25.0, poll_ms=300):
@@ -334,10 +326,7 @@ class CTAClient:
                 continue
             last = txt
             if is_content_of(txt, page_id, title):
-                try:
-                    return parse_xml(txt)
-                except Exception:
-                    pass
+                return parse_xml(txt)
             await asyncio.sleep(poll_ms / 1000)
 
         raise RuntimeError(f"Timed out waiting for Content of {title} ({page_id}). Last:\n{last}")
@@ -346,7 +335,9 @@ async def run(
     host, port, password,
     mqtt_host, mqtt_port, mqtt_user, mqtt_pass,
     poll_interval, delta_c, discovery_prefix, state_base_topic,
-    log_pages, log_changes_only
+    log_pages, log_changes_only,
+    nav_refresh_seconds: int,
+    skip_path_prefixes: list[str],
 ):
     prev = {}
     mqttb = MqttBridge(mqtt_host, mqtt_port, mqtt_user, mqtt_pass, discovery_prefix, state_base_topic)
@@ -356,10 +347,36 @@ async def run(
     cta = CTAClient(host, port, password)
     await cta.connect()
 
+    cached_leaves = None
+    cached_at = 0.0
+
+    async def refresh_nav(force=False):
+        nonlocal cached_leaves, cached_at
+        now = time.time()
+        if (not force) and cached_leaves and (now - cached_at) < nav_refresh_seconds:
+            return cached_leaves
+
+        nav = await cta.get_navigation()
+        leaves = list(walk_nav_leaves(nav, []))
+
+        # apply skip list
+        if skip_path_prefixes:
+            out = []
+            for l in leaves:
+                p = l["path"]
+                if any(p.startswith(pref) for pref in skip_path_prefixes):
+                    continue
+                out.append(l)
+            leaves = out
+
+        cached_leaves = leaves
+        cached_at = now
+        print(f"[nav] cached {len(leaves)} leaves (refresh={nav_refresh_seconds}s)", flush=True)
+        return leaves
+
     async def start_heating():
         try:
-            nav = await cta.get_navigation()
-            leaves = list(walk_nav_leaves(nav, []))
+            leaves = await refresh_nav(force=False)
             p_temp_info = next((l for l in leaves if l["path"].startswith("Informationen/Temperaturen")), None)
             p_temp_set  = next((l for l in leaves if l["path"].startswith("Einstellungen/Temperaturen")), None)
             if not all([p_temp_info, p_temp_set]):
@@ -395,44 +412,42 @@ async def run(
                     await asyncio.sleep(0.5)
         except Exception as e:
             print(f"[start_heating] {e}", flush=True)
-            if is_ws_close_error(e):
-                try:
-                    await cta.close()
-                except Exception:
-                    pass
 
     mqttb.on_press_start = start_heating
 
+    async def reconnect():
+        nonlocal cached_leaves, cached_at
+        try:
+            await cta.close()
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+        await cta.connect()
+        # after reconnect, force nav refresh once
+        cached_leaves = None
+        cached_at = 0.0
+        await refresh_nav(force=True)
+
     try:
+        # initial nav fetch
+        await refresh_nav(force=True)
+
         while True:
             try:
-                nav = await cta.get_navigation()
+                leaves = await refresh_nav(force=False)
             except Exception as e:
                 print(f"[nav] {e}", flush=True)
                 if is_ws_close_error(e):
-                    try:
-                        await cta.close()
-                    except Exception:
-                        pass
-                    await asyncio.sleep(1)
-                    try:
-                        await cta.connect()
-                    except Exception as e2:
-                        print(f"[reconnect] {e2}", flush=True)
-                        await asyncio.sleep(2)
-                else:
-                    await asyncio.sleep(2)
+                    await reconnect()
+                    continue
+                await asyncio.sleep(2)
                 continue
-
-            leaves = list(walk_nav_leaves(nav, []))
-            reconnect_needed = False
 
             for leaf in leaves:
                 try:
                     page = await cta.get_page(leaf["id"], leaf["name"])
                     title, rows = parse_content(page)
 
-                    # SPECIAL: Abschaltungen -> publish ONE aggregated sensor
                     if leaf["path"].lower().startswith("informationen/abschaltungen"):
                         mqttb.pub_abschaltungen_latest(title, leaf["path"], rows, keep_last=50)
                     else:
@@ -458,23 +473,10 @@ async def run(
                 except Exception as e:
                     print(f"[page {leaf['path']}] {e}", flush=True)
                     if is_ws_close_error(e):
-                        reconnect_needed = True
+                        await reconnect()
                         break
 
                 await asyncio.sleep(0.15)
-
-            if reconnect_needed:
-                try:
-                    await cta.close()
-                except Exception:
-                    pass
-                await asyncio.sleep(1)
-                try:
-                    await cta.connect()
-                except Exception as e2:
-                    print(f"[reconnect] {e2}", flush=True)
-                    await asyncio.sleep(2)
-                continue
 
             await asyncio.sleep(int(poll_interval))
 
@@ -497,16 +499,21 @@ def parse_args():
     p.add_argument("--state-base-topic", default="cta_cs19i")
     p.add_argument("--log-pages", action="store_true")
     p.add_argument("--log-changes-only", action="store_true")
+    p.add_argument("--nav-refresh-seconds", type=int, default=3600)
+    p.add_argument("--skip-path-prefixes", default="Zugang:")
     return p.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
+    skip_prefixes = [s.strip() for s in (args.skip_path_prefixes or "").split(",") if s.strip()]
     try:
         asyncio.run(run(
             args.host, args.port, args.password,
             args.mqtt_host, args.mqtt_port, args.mqtt_user, args.mqtt_pass,
             args.poll_interval, args.demand_delta, args.discovery_prefix, args.state_base_topic,
-            args.log_pages, args.log_changes_only
+            args.log_pages, args.log_changes_only,
+            args.nav_refresh_seconds,
+            skip_prefixes,
         ))
     except KeyboardInterrupt:
         pass
