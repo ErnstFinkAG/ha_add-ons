@@ -13,3 +13,7 @@ This package contains a minimal working setup; it reads the first entry of each 
 - `type`: Controller types (GA15VP13, GA15VS23A)
 - `mqtt_*`: MQTT connection details
 - `discovery_prefix`: MQTT discovery prefix
+
+## Notes
+- Metrics with unit `count` (and status `code`) are published **without** `unit_of_measurement` so they show as plain numbers
+  and do not break long-term statistics when Home Assistant previously stored those sensors as unitless.

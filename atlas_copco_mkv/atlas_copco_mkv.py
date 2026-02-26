@@ -313,6 +313,22 @@ def interactive_select() -> str:
 def slugify(s: str) -> str:
     return re.sub(r"[^a-z0-9_]+", "_", s.strip().lower().replace(" ", "_"))
 
+# Units that should not be published to Home Assistant as unit_of_measurement.
+#
+# Why?
+# - Home Assistant's recorder/statistics pipeline treats a unit change as incompatible
+#   with previously compiled statistics (e.g. None -> "count"), and suppresses LTS.
+# - For counters/status codes you typically want a plain number without any unit in the UI.
+UNITLESS_UNITS = {"count", "code"}
+
+def should_publish_unit(unit: str) -> bool:
+    u = (unit or "").strip()
+    if not u:
+        return False
+    if u.lower() in UNITLESS_UNITS:
+        return False
+    return True
+
 def guess_device_class(name: str, unit: str) -> Optional[str]:
     unit = (unit or "").strip()
     n = (name or "").lower()
@@ -583,11 +599,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                 cfg_payload = {
                     "name": display_name,
                     "unique_id": unique_id,
-                        "default_entity_id": f"sensor.{object_id}",
+                    "default_entity_id": f"sensor.{object_id}",
                     "state_topic": state_topic,
-                    "unit_of_measurement": unit or None,
                     "device": ha_device,
                 }
+
+                # Publish unit_of_measurement only when it is meaningful and stable.
+                # (Do NOT publish for count/code; keep those sensors unitless in HA.)
+                if should_publish_unit(unit):
+                    cfg_payload["unit_of_measurement"] = unit
                 if device_class:
                     cfg_payload["device_class"] = device_class
                 if state_class:
