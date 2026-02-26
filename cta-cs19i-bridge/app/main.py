@@ -164,7 +164,6 @@ class MqttBridge:
         cfg_topic = f"{self.discovery}/sensor/{uniq}/config"
 
         num, unit = extract_number(row["value"])
-        state_payload = None
         device_class = None
         state_class = None
 
@@ -212,7 +211,11 @@ class MqttBridge:
         }
         self.client.publish(cfg_topic, json.dumps(payload), retain=True)
 
-    def pub_abschaltungen_latest(self, title: str, page_path: str, rows: list, keep_last: int = 50):
+    def _pub_log_latest(self, kind: str, title: str, rows: list, keep_last: int = 50):
+        """
+        Generic log publisher for pages where row.name = "dd.mm.yy hh:mm:ss" and row.value = text.
+        Creates ONE timestamp sensor + attributes list.
+        """
         entries = []
         for r in rows:
             ts_iso = parse_ddmmyy_hhmmss(r.get("name", ""))
@@ -224,10 +227,10 @@ class MqttBridge:
         latest_ts = entries[0]["ts"] if entries else ""
         latest_text = entries[0]["text"] if entries else ""
 
-        uniq = f"{self.state_base}_informationen_abschaltungen_latest"
+        uniq = f"{self.state_base}_informationen_{kind}_latest"
         cfg_topic = f"{self.discovery}/sensor/{uniq}/config"
-        st_topic = f"{self.state_base}/informationen/abschaltungen/latest"
-        attr_topic = f"{self.state_base}/informationen/abschaltungen/attributes"
+        st_topic = f"{self.state_base}/informationen/{kind}/latest"
+        attr_topic = f"{self.state_base}/informationen/{kind}/attributes"
 
         payload = {
             "name": f"{title}: Latest",
@@ -243,6 +246,12 @@ class MqttBridge:
         self.client.publish(cfg_topic, json.dumps(payload), retain=True)
         self.client.publish(st_topic, latest_ts, retain=False)
         self.client.publish(attr_topic, json.dumps({"latest_text": latest_text, "entries": entries}), retain=False)
+
+    def pub_abschaltungen_latest(self, title: str, rows: list, keep_last: int = 50):
+        self._pub_log_latest("abschaltungen", title, rows, keep_last=keep_last)
+
+    def pub_fehlerspeicher_latest(self, title: str, rows: list, keep_last: int = 50):
+        self._pub_log_latest("fehlerspeicher", title, rows, keep_last=keep_last)
 
 class CTAClient:
     def __init__(self, host, port, password):
@@ -293,10 +302,6 @@ class CTAClient:
             raise RuntimeError(f"WS closed: {e}") from e
 
     async def get_navigation(self, tries=15, timeout=8.0):
-        """
-        Some firmwares start sending <values> updates; that's NOT navigation.
-        We only consider navigation valid if we see <Navigation>.
-        """
         last = None
         for _ in range(tries):
             await self.send("REFRESH")
@@ -306,7 +311,6 @@ class CTAClient:
             last = txt
             if re.search(r"<\s*Navigation(\s|>)", txt, re.I):
                 return parse_xml(txt)
-            # If it's <values> just keep trying a bit.
             await asyncio.sleep(0.2)
         raise RuntimeError(f"No Navigation received. Last:\n{last}")
 
@@ -359,7 +363,6 @@ async def run(
         nav = await cta.get_navigation()
         leaves = list(walk_nav_leaves(nav, []))
 
-        # apply skip list
         if skip_path_prefixes:
             out = []
             for l in leaves:
@@ -373,6 +376,18 @@ async def run(
         cached_at = now
         print(f"[nav] cached {len(leaves)} leaves (refresh={nav_refresh_seconds}s)", flush=True)
         return leaves
+
+    async def reconnect():
+        nonlocal cached_leaves, cached_at
+        try:
+            await cta.close()
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+        await cta.connect()
+        cached_leaves = None
+        cached_at = 0.0
+        await refresh_nav(force=True)
 
     async def start_heating():
         try:
@@ -415,21 +430,7 @@ async def run(
 
     mqttb.on_press_start = start_heating
 
-    async def reconnect():
-        nonlocal cached_leaves, cached_at
-        try:
-            await cta.close()
-        except Exception:
-            pass
-        await asyncio.sleep(1)
-        await cta.connect()
-        # after reconnect, force nav refresh once
-        cached_leaves = None
-        cached_at = 0.0
-        await refresh_nav(force=True)
-
     try:
-        # initial nav fetch
         await refresh_nav(force=True)
 
         while True:
@@ -448,8 +449,11 @@ async def run(
                     page = await cta.get_page(leaf["id"], leaf["name"])
                     title, rows = parse_content(page)
 
-                    if leaf["path"].lower().startswith("informationen/abschaltungen"):
-                        mqttb.pub_abschaltungen_latest(title, leaf["path"], rows, keep_last=50)
+                    p = leaf["path"].lower()
+                    if p.startswith("informationen/abschaltungen"):
+                        mqttb.pub_abschaltungen_latest(title, rows, keep_last=50)
+                    elif p.startswith("informationen/fehlerspeicher"):
+                        mqttb.pub_fehlerspeicher_latest(title, rows, keep_last=50)
                     else:
                         for r in rows:
                             mqttb.pub_sensor(title, r, leaf["path"])
