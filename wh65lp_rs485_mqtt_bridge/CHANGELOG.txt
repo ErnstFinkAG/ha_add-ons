@@ -1,6 +1,8 @@
 WH65LP RS485 to MQTT Bridge - Change Log
 ========================================
 
+## 1.2.4 - 2026-02-27
+- Winddirection sanitycheck added
 
 ## 1.1.6 - 2025-08-04
 - debug: windirection now 360°, fixed 255 limit

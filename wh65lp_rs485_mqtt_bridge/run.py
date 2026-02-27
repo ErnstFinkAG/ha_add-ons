@@ -72,7 +72,13 @@ def decode_wh65lp_payload(p: bytes) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
     debug["family_code"] = p[0]
     debug["security_code"] = p[1]
 
-    wind["wind_direction_deg"] = int(p[2])
+    # Wind direction is a 9-bit value:
+    #   - low 8 bits in p[2]
+    #   - bit8 is the MSB of p[3] (matches manual example "65E" => 357°)
+    wind_dir_raw = p[2] | ((p[3] & 0x80) << 1)  # adds 256 if p[3] bit7 is set
+
+    # Optional sanity: only publish plausible degree values (0..360)
+    wind["wind_direction_deg"] = int(wind_dir_raw) if wind_dir_raw <= 360 else None
 
     low_battery = bool((p[3] >> 3) & 0x01)
     temp_raw = ((p[3] & 0x07) << 8) | p[4]
