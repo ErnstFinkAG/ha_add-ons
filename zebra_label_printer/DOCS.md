@@ -24,10 +24,9 @@ ha_add-ons/
 
 ## What it prints
 
-- **Text string 1** as:
-  - Human-readable text on the label
-  - The QR-code payload
+- **Text string 1** as human-readable text on the label
 - **Text string 2** as additional human-readable text under the QR code
+- QR-code payload from a configurable template, defaulting to **Text string 1**
 
 Example:
 
@@ -89,15 +88,34 @@ label_width_mm: 170
 label_height_mm: 305
 qr_size_mm: 150
 top_margin_mm: 5
+field1_label: Project
+field2_label: Element
+qr_value_template: "{text1} | {text2}"
 ```
+
+### QR payload template
+
+`qr_value_template` supports these placeholders:
+
+- `{text1}`
+- `{text2}`
+
+Examples:
+
+- `"{text1}"` → QR contains only field 1
+- `"{text2}"` → QR contains only field 2
+- `"{text1} | {text2}"` → QR contains both values
+- `"Project={text1};Element={text2}"` → QR contains custom formatted data
 
 ## Usage
 
 Open the add-on UI and fill in:
 
-- **Text string 1**
-- **Text string 2**
+- the value for **field 1**
+- the value for **field 2**
 - **Copies**
+
+The visible labels for field 1 and field 2 come from add-on config, and the QR content is built from `qr_value_template` using `{text1}` and `{text2}` placeholders.
 
 Then review the embedded PNG preview and click **Print label** when it looks correct.
 
@@ -144,10 +162,11 @@ The add-on sends UTF-8 ZPL (`^CI28`), but printed output still depends on the fo
 
 ## Notes
 
+- Version 0.1.4 adds configurable field labels and a configurable `qr_value_template`, so the QR payload can be built from `{text1}`, `{text2}`, or both.
 - Version 0.1.3 adds a PNG label preview rendered from the same layout coordinates as the ZPL output and embeds that preview in the add-on UI.
 - Version 0.1.1 fixes Home Assistant Ingress form actions so **Print label** and **Preview ZPL** work correctly when opened via **Open Web UI**.
 
 
 ## Live preview
 
-The PNG preview updates automatically when you change **Text string 1**, **Text string 2**, or **Copies** in the web UI.
+The PNG preview updates automatically when you change the field values or **Copies** in the web UI.

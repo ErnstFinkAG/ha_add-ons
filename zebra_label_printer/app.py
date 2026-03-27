@@ -23,6 +23,27 @@ FONT_CANDIDATES = [
 ]
 
 
+DEFAULT_OPTIONS = {
+    "printer_host": "192.168.1.50",
+    "printer_port": 9100,
+    "label_width_mm": 170.0,
+    "label_height_mm": 305.0,
+    "qr_size_mm": 150.0,
+    "top_margin_mm": 5.0,
+    "field1_label": "Text string 1",
+    "field2_label": "Text string 2",
+    "qr_value_template": "{text1}",
+}
+
+DEFAULT_FORM = {
+    "text1": "250001 - Test Project",
+    "text2": "Element 1e",
+    "copies": "1",
+}
+
+ALLOWED_QR_PLACEHOLDERS = ("text1", "text2")
+
+
 def ingress_base_path() -> str:
     base = request.headers.get("X-Ingress-Path") or request.script_root or ""
     return base.rstrip("/")
@@ -70,7 +91,7 @@ HTML = """
       box-shadow: 0 10px 30px rgba(0,0,0,0.25);
       margin-bottom: 20px;
     }
-    h1, h2 {
+    h1, h2, h3 {
       margin-top: 0;
     }
     label {
@@ -166,6 +187,14 @@ HTML = """
       font-size: 0.95rem;
       color: var(--muted);
     }
+    .config-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+    }
+    .config-list li + li {
+      margin-top: 8px;
+    }
   </style>
 </head>
 <body>
@@ -179,10 +208,10 @@ HTML = """
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
       {% endif %}
       <form id="label-form" method="post" action="{{ ingress_base }}/print">
-        <label for="text1">Text string 1</label>
+        <label for="text1">{{ field1_label }}</label>
         <textarea id="text1" name="text1" required>{{ form.text1 }}</textarea>
 
-        <label for="text2">Text string 2</label>
+        <label for="text2">{{ field2_label }}</label>
         <input id="text2" name="text2" value="{{ form.text2 }}" required>
 
         <div class="row">
@@ -220,6 +249,16 @@ HTML = """
     </div>
 
     <div class="card">
+      <h2>Configured label mapping</h2>
+      <ul class="config-list">
+        <li><strong>Field 1 label:</strong> <code>{{ field1_label }}</code></li>
+        <li><strong>Field 2 label:</strong> <code>{{ field2_label }}</code></li>
+        <li><strong>QR template:</strong> <code>{{ qr_value_template }}</code></li>
+        <li><strong>Current QR payload:</strong> <code>{{ qr_preview }}</code></li>
+      </ul>
+    </div>
+
+    <div class="card">
       <h2>Layout</h2>
       <p class="muted">
         Requested label: {{ requested_width_mm }} × {{ requested_height_mm }} mm<br>
@@ -230,7 +269,7 @@ HTML = """
       <p class="warn">{{ width_warning }}</p>
       {% endif %}
       <p class="muted">
-        The QR code encodes Text string 1. Both strings are printed below the QR code.
+        The QR code uses the configured template above. Both fields are printed below the QR code.
       </p>
     </div>
   </div>
@@ -294,22 +333,20 @@ HTML = """
 
 
 def load_options() -> Dict:
-    defaults = {
-        "printer_host": "192.168.1.50",
-        "printer_port": 9100,
-        "label_width_mm": 170.0,
-        "label_height_mm": 305.0,
-        "qr_size_mm": 150.0,
-        "top_margin_mm": 5.0,
-    }
+    options = dict(DEFAULT_OPTIONS)
     if os.path.exists(OPTIONS_PATH):
         try:
             with open(OPTIONS_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            defaults.update(data)
+            if isinstance(data, dict):
+                options.update(data)
         except Exception:
             pass
-    return defaults
+
+    options["field1_label"] = str(options.get("field1_label") or DEFAULT_OPTIONS["field1_label"]).strip() or DEFAULT_OPTIONS["field1_label"]
+    options["field2_label"] = str(options.get("field2_label") or DEFAULT_OPTIONS["field2_label"]).strip() or DEFAULT_OPTIONS["field2_label"]
+    options["qr_value_template"] = str(options.get("qr_value_template") or DEFAULT_OPTIONS["qr_value_template"])
+    return options
 
 
 def mm_to_dots(mm_value: float) -> int:
@@ -389,6 +426,27 @@ def zpl_escape_utf8(text: str) -> str:
     return "".join(out)
 
 
+def build_qr_payload(text1: str, text2: str, opts: Dict) -> str:
+    template = str(opts.get("qr_value_template") or DEFAULT_OPTIONS["qr_value_template"])
+    values = {
+        "text1": text1,
+        "text2": text2,
+    }
+    try:
+        payload = template.format_map(values)
+    except KeyError as exc:
+        placeholder = exc.args[0]
+        allowed = ", ".join(f"{{{name}}}" for name in ALLOWED_QR_PLACEHOLDERS)
+        raise ValueError(f"qr_value_template uses unknown placeholder {{{placeholder}}}. Allowed placeholders: {allowed}.")
+    except ValueError as exc:
+        raise ValueError(f"qr_value_template is invalid: {exc}")
+
+    payload = payload.strip()
+    if not payload:
+        raise ValueError("QR payload is empty. Adjust qr_value_template or enter field values.")
+    return payload
+
+
 def font_for_text(text: str, primary: bool) -> Tuple[int, int, int]:
     length = len(text.strip())
     if primary:
@@ -406,6 +464,8 @@ def font_for_text(text: str, primary: bool) -> Tuple[int, int, int]:
 
 def build_zpl(text1: str, text2: str, copies: int, opts: Dict) -> str:
     layout = effective_layout(opts)
+    qr_payload = build_qr_payload(text1, text2, opts)
+
     pw = layout["effective_width_dots"]
     ll = layout["requested_height_dots"]
     qr_size = min(layout["qr_size_dots"], pw)
@@ -420,7 +480,7 @@ def build_zpl(text1: str, text2: str, copies: int, opts: Dict) -> str:
     primary_y = qr_top + qr_size + mm_to_dots(8)
     secondary_y = primary_y + (primary_h * primary_lines) + mm_to_dots(8)
 
-    qr_img = build_qr_image(text1, qr_size)
+    qr_img = build_qr_image(qr_payload, qr_size)
     total_bytes, bytes_per_row, graphic_hex = image_to_gfa(qr_img)
 
     esc1 = zpl_escape_utf8(text1)
@@ -518,6 +578,8 @@ def render_centered_lines(
 
 def render_preview_image(text1: str, text2: str, opts: Dict) -> Image.Image:
     layout = effective_layout(opts)
+    qr_payload = build_qr_payload(text1, text2, opts)
+
     requested_w = layout["requested_width_dots"]
     requested_h = layout["requested_height_dots"]
     pw = layout["effective_width_dots"]
@@ -528,14 +590,13 @@ def render_preview_image(text1: str, text2: str, opts: Dict) -> Image.Image:
     img = Image.new("L", (requested_w, requested_h), color=255)
     draw = ImageDraw.Draw(img)
 
-    # Subtle indication of the non-printable width beyond the printer's 168 mm limit.
     if requested_w > pw:
         draw.rectangle((pw, 0, requested_w - 1, requested_h - 1), fill=244)
         draw.line((pw, 0, pw, requested_h), fill=180, width=1)
 
     draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=205, width=2)
 
-    qr_img = build_qr_image(text1, qr_size).convert("L")
+    qr_img = build_qr_image(qr_payload, qr_size).convert("L")
     img.paste(qr_img, (qr_left, qr_top))
 
     margin_x = max((pw - qr_size) // 2, mm_to_dots(8))
@@ -562,6 +623,41 @@ def send_to_printer(host: str, port: int, payload: str) -> None:
         sock.sendall(data)
 
 
+def form_data_from_request() -> Dict[str, str]:
+    return {
+        "text1": request.values.get("text1", DEFAULT_FORM["text1"]),
+        "text2": request.values.get("text2", DEFAULT_FORM["text2"]),
+        "copies": request.values.get("copies", DEFAULT_FORM["copies"]),
+    }
+
+
+def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) -> str:
+    layout = effective_layout(opts)
+    try:
+        qr_preview = build_qr_payload(form.get("text1", ""), form.get("text2", ""), opts)
+    except Exception as exc:
+        qr_preview = f"Configuration error: {exc}"
+
+    return render_template_string(
+        HTML,
+        form=form,
+        result=result,
+        printer_host=opts["printer_host"],
+        printer_port=opts["printer_port"],
+        field1_label=opts["field1_label"],
+        field2_label=opts["field2_label"],
+        qr_value_template=opts["qr_value_template"],
+        qr_preview=qr_preview,
+        requested_width_mm=opts["label_width_mm"],
+        requested_height_mm=opts["label_height_mm"],
+        requested_qr_mm=opts["qr_size_mm"],
+        effective_width_mm=dots_to_mm(layout["effective_width_dots"]),
+        effective_width_dots=layout["effective_width_dots"],
+        width_warning=layout["width_warning"],
+        ingress_base=ingress_base_path(),
+    )
+
+
 @APP.before_request
 def restrict_ingress():
     remote = request.remote_addr
@@ -574,26 +670,8 @@ def restrict_ingress():
 @APP.route("/", methods=["GET"])
 def index():
     opts = load_options()
-    layout = effective_layout(opts)
-    form = {
-        "text1": request.args.get("text1", "250001 - Test Project"),
-        "text2": request.args.get("text2", "Element 1e"),
-        "copies": request.args.get("copies", "1"),
-    }
-    return render_template_string(
-        HTML,
-        form=form,
-        result=None,
-        printer_host=opts["printer_host"],
-        printer_port=opts["printer_port"],
-        requested_width_mm=opts["label_width_mm"],
-        requested_height_mm=opts["label_height_mm"],
-        requested_qr_mm=opts["qr_size_mm"],
-        effective_width_mm=dots_to_mm(layout["effective_width_dots"]),
-        effective_width_dots=layout["effective_width_dots"],
-        width_warning=layout["width_warning"],
-        ingress_base=ingress_base_path(),
-    )
+    form = form_data_from_request()
+    return render_page(form, opts, result=None)
 
 
 @APP.route("/print", methods=["POST"])
@@ -601,48 +679,35 @@ def print_label():
     opts = load_options()
     text1 = request.form.get("text1", "").strip()
     text2 = request.form.get("text2", "").strip()
-    copies_raw = request.form.get("copies", "1").strip()
+    copies_raw = request.form.get("copies", DEFAULT_FORM["copies"]).strip()
 
     result = {"success": False, "message": "Unknown error"}
     try:
         if not text1:
-            raise ValueError("Text string 1 is required.")
+            raise ValueError(f"{opts['field1_label']} is required.")
         if not text2:
-            raise ValueError("Text string 2 is required.")
+            raise ValueError(f"{opts['field2_label']} is required.")
         copies = max(1, min(50, int(copies_raw)))
         zpl = build_zpl(text1, text2, copies, opts)
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
+        qr_payload = build_qr_payload(text1, text2, opts)
         result = {
             "success": True,
-            "message": f"Sent {copies} label(s) to {opts['printer_host']}:{opts['printer_port']}.",
+            "message": f"Sent {copies} label(s) to {opts['printer_host']}:{opts['printer_port']}. QR payload: {qr_payload}",
         }
     except Exception as exc:
         result = {"success": False, "message": f"Print failed: {exc}"}
 
-    layout = effective_layout(opts)
-    form = {"text1": text1, "text2": text2, "copies": copies_raw or "1"}
-    return render_template_string(
-        HTML,
-        form=form,
-        result=result,
-        printer_host=opts["printer_host"],
-        printer_port=opts["printer_port"],
-        requested_width_mm=opts["label_width_mm"],
-        requested_height_mm=opts["label_height_mm"],
-        requested_qr_mm=opts["qr_size_mm"],
-        effective_width_mm=dots_to_mm(layout["effective_width_dots"]),
-        effective_width_dots=layout["effective_width_dots"],
-        width_warning=layout["width_warning"],
-        ingress_base=ingress_base_path(),
-    )
+    form = {"text1": text1, "text2": text2, "copies": copies_raw or DEFAULT_FORM["copies"]}
+    return render_page(form, opts, result=result)
 
 
 @APP.route("/preview", methods=["GET"])
 def preview():
     opts = load_options()
-    text1 = request.args.get("text1", "250001 - Test Project")
-    text2 = request.args.get("text2", "Element 1e")
-    copies = max(1, min(50, int(request.args.get("copies", "1"))))
+    text1 = request.args.get("text1", DEFAULT_FORM["text1"])
+    text2 = request.args.get("text2", DEFAULT_FORM["text2"])
+    copies = max(1, min(50, int(request.args.get("copies", DEFAULT_FORM["copies"]))))
     zpl = build_zpl(text1, text2, copies, opts)
     return Response(zpl, mimetype="text/plain; charset=utf-8")
 
@@ -650,8 +715,8 @@ def preview():
 @APP.route("/preview.png", methods=["GET"])
 def preview_png():
     opts = load_options()
-    text1 = request.args.get("text1", "250001 - Test Project")
-    text2 = request.args.get("text2", "Element 1e")
+    text1 = request.args.get("text1", DEFAULT_FORM["text1"])
+    text2 = request.args.get("text2", DEFAULT_FORM["text2"])
     img = render_preview_image(text1, text2, opts)
     bio = BytesIO()
     img.save(bio, format="PNG", dpi=(203, 203), optimize=True)
@@ -667,11 +732,19 @@ def api_print():
     text2 = str(payload.get("text2", "")).strip()
     copies = max(1, min(50, int(payload.get("copies", 1))))
     if not text1 or not text2:
-        return jsonify({"ok": False, "error": "text1 and text2 are required"}), 400
+        return jsonify({
+            "ok": False,
+            "error": f"Both {opts['field1_label']} and {opts['field2_label']} are required.",
+        }), 400
     try:
         zpl = build_zpl(text1, text2, copies, opts)
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
-        return jsonify({"ok": True, "printer": opts["printer_host"], "copies": copies})
+        return jsonify({
+            "ok": True,
+            "printer": opts["printer_host"],
+            "copies": copies,
+            "qr_payload": build_qr_payload(text1, text2, opts),
+        })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
 

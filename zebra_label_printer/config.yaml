@@ -1,5 +1,5 @@
 name: "Zebra Label Printer"
-version: "0.1.3"
+version: "0.1.4"
 slug: "zebra_label_printer"
 description: >-
   Print large QR-code project labels to a Zebra ZT420/ZT421 over TCP (port 9100)
@@ -23,6 +23,9 @@ options:
   label_height_mm: 305
   qr_size_mm: 150
   top_margin_mm: 5
+  field1_label: "Text string 1"
+  field2_label: "Text string 2"
+  qr_value_template: "{text1}"
 schema:
   printer_host: str
   printer_port: port
@@ -30,3 +33,6 @@ schema:
   label_height_mm: float
   qr_size_mm: float
   top_margin_mm: float
+  field1_label: str
+  field2_label: str
+  qr_value_template: str
