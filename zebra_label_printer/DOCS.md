@@ -99,7 +99,9 @@ Open the add-on UI and fill in:
 - **Text string 2**
 - **Copies**
 
-Then click **Print label**.
+Then review the embedded PNG preview and click **Print label** when it looks correct.
+
+Use **Open PNG preview** for a full-resolution export. The PNG is written at **203 dpi** so the image geometry matches the printer layout, although on-screen physical size still depends on browser zoom and monitor scaling.
 
 ## API
 
@@ -142,4 +144,5 @@ The add-on sends UTF-8 ZPL (`^CI28`), but printed output still depends on the fo
 
 ## Notes
 
+- Version 0.1.2 adds a PNG label preview rendered from the same layout coordinates as the ZPL output and embeds that preview in the add-on UI.
 - Version 0.1.1 fixes Home Assistant Ingress form actions so **Print label** and **Preview ZPL** work correctly when opened via **Open Web UI**.

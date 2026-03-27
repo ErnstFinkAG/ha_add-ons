@@ -4,6 +4,7 @@ FROM $BUILD_FROM
 RUN apk add --no-cache \
     python3 \
     py3-pip \
+    ttf-dejavu \
   && pip3 install --no-cache-dir --break-system-packages \
     flask==3.1.0 \
     qrcode==8.2 \

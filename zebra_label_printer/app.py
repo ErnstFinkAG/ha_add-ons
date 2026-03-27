@@ -3,11 +3,11 @@ import math
 import os
 import socket
 from io import BytesIO
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
-from flask import Flask, Response, jsonify, render_template_string, request
+from flask import Flask, Response, jsonify, render_template_string, request, send_file
 import qrcode
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 
 APP = Flask(__name__)
@@ -16,6 +16,11 @@ PRINTER_MAX_WIDTH_DOTS = 1344  # Zebra ZT420/ZT421 203 dpi maximum print width
 INGRESS_ALLOWED_IP = "172.30.32.2"
 LOCAL_ALLOWED_IPS = {"127.0.0.1", "::1", None}
 OPTIONS_PATH = "/data/options.json"
+FONT_CANDIDATES = [
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+]
 
 
 def ingress_base_path() -> str:
@@ -41,6 +46,10 @@ HTML = """
       --danger: #ef4444;
       --ok: #10b981;
       --border: #374151;
+      --label-bg: #ffffff;
+      --label-ink: #111111;
+      --label-edge: #d1d5db;
+      --label-no-print: #f3f4f6;
     }
     body {
       margin: 0;
@@ -49,7 +58,7 @@ HTML = """
       color: var(--text);
     }
     .wrap {
-      max-width: 900px;
+      max-width: 1100px;
       margin: 0 auto;
       padding: 24px;
     }
@@ -124,6 +133,39 @@ HTML = """
     }
     .muted { color: var(--muted); }
     .warn { color: #fbbf24; }
+    .preview-wrap {
+      overflow: auto;
+      background: #0b1220;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+    }
+    .preview-stage {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      min-width: min-content;
+    }
+    .preview-frame {
+      width: min(100%, 420px);
+      max-width: 100%;
+      aspect-ratio: {{ requested_width_mm }} / {{ requested_height_mm }};
+      background: var(--label-bg);
+      border: 1px solid var(--label-edge);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.28);
+    }
+    .preview-frame img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: white;
+    }
+    .preview-meta {
+      margin-top: 12px;
+      font-size: 0.95rem;
+      color: var(--muted);
+    }
   </style>
 </head>
 <body>
@@ -157,8 +199,24 @@ HTML = """
         <div class="btns">
           <button type="submit">Print label</button>
           <a class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}">Preview ZPL</a>
+          <a class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}" target="_blank" rel="noopener">Open PNG preview</a>
         </div>
       </form>
+    </div>
+
+    <div class="card">
+      <h2>Preview</h2>
+      <div class="preview-wrap">
+        <div class="preview-stage">
+          <div class="preview-frame">
+            <img src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}" alt="Label preview">
+          </div>
+        </div>
+      </div>
+      <div class="preview-meta">
+        PNG is rendered from the same layout coordinates as the generated ZPL and exported at 203 dpi.
+        Screen size can still vary with browser zoom and display scaling.
+      </div>
     </div>
 
     <div class="card">
@@ -327,6 +385,123 @@ def build_zpl(text1: str, text2: str, copies: int, opts: Dict) -> str:
     return zpl
 
 
+def get_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    for path in FONT_CANDIDATES:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size=size)
+    return ImageFont.load_default()
+
+
+def text_line_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
+    bbox = draw.textbbox((0, 0), "Ag", font=font)
+    return max(1, bbox[3] - bbox[1])
+
+
+def wrap_text_lines(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int, max_lines: int) -> List[str]:
+    text = (text or "").strip()
+    if not text:
+        return [""]
+
+    raw_parts = []
+    for paragraph in text.splitlines() or [text]:
+        paragraph = paragraph.strip()
+        if not paragraph:
+            raw_parts.append("")
+            continue
+        words = paragraph.split()
+        if not words:
+            raw_parts.append("")
+            continue
+        current = words[0]
+        for word in words[1:]:
+            trial = f"{current} {word}"
+            bbox = draw.textbbox((0, 0), trial, font=font)
+            if (bbox[2] - bbox[0]) <= max_width:
+                current = trial
+            else:
+                raw_parts.append(current)
+                current = word
+        raw_parts.append(current)
+
+    if len(raw_parts) <= max_lines:
+        return raw_parts
+
+    trimmed = raw_parts[:max_lines]
+    overflow = " ".join(raw_parts[max_lines - 1:]).strip()
+    if not overflow:
+        return trimmed
+
+    ellipsis = "..."
+    last = overflow
+    while last:
+        bbox = draw.textbbox((0, 0), last + ellipsis, font=font)
+        if (bbox[2] - bbox[0]) <= max_width:
+            trimmed[-1] = last + ellipsis
+            return trimmed
+        last = last[:-1].rstrip()
+    trimmed[-1] = ellipsis
+    return trimmed
+
+
+def render_centered_lines(
+    draw: ImageDraw.ImageDraw,
+    lines: List[str],
+    y: int,
+    width: int,
+    font: ImageFont.ImageFont,
+    fill: int,
+    line_spacing: int,
+) -> None:
+    x_center = width // 2
+    line_h = text_line_height(draw, font)
+    current_y = y
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        text_w = bbox[2] - bbox[0]
+        draw.text((x_center - text_w / 2, current_y), line, font=font, fill=fill)
+        current_y += line_h + line_spacing
+
+
+def render_preview_image(text1: str, text2: str, opts: Dict) -> Image.Image:
+    layout = effective_layout(opts)
+    requested_w = layout["requested_width_dots"]
+    requested_h = layout["requested_height_dots"]
+    pw = layout["effective_width_dots"]
+    qr_size = min(layout["qr_size_dots"], pw)
+    qr_left = max((pw - qr_size) // 2, 0)
+    qr_top = layout["top_margin_dots"]
+
+    img = Image.new("L", (requested_w, requested_h), color=255)
+    draw = ImageDraw.Draw(img)
+
+    # Subtle indication of the non-printable width beyond the printer's 168 mm limit.
+    if requested_w > pw:
+        draw.rectangle((pw, 0, requested_w - 1, requested_h - 1), fill=244)
+        draw.line((pw, 0, pw, requested_h), fill=180, width=1)
+
+    draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=205, width=2)
+
+    qr_img = build_qr_image(text1, qr_size).convert("L")
+    img.paste(qr_img, (qr_left, qr_top))
+
+    margin_x = max((pw - qr_size) // 2, mm_to_dots(8))
+    text_width = pw - (margin_x * 2)
+    primary_h, _primary_w, primary_lines = font_for_text(text1, primary=True)
+    secondary_h, _secondary_w, secondary_lines = font_for_text(text2, primary=False)
+    primary_y = qr_top + qr_size + mm_to_dots(8)
+    secondary_y = primary_y + (primary_h * primary_lines) + mm_to_dots(8)
+
+    primary_font = get_font(primary_h)
+    secondary_font = get_font(secondary_h)
+    primary_wrapped = wrap_text_lines(draw, text1, primary_font, text_width, primary_lines)
+    secondary_wrapped = wrap_text_lines(draw, text2, secondary_font, text_width, secondary_lines)
+
+    render_centered_lines(draw, primary_wrapped, primary_y, pw, primary_font, fill=0, line_spacing=14)
+    render_centered_lines(draw, secondary_wrapped, secondary_y, pw, secondary_font, fill=0, line_spacing=10)
+
+    return img.convert("1")
+
+
 def send_to_printer(host: str, port: int, payload: str) -> None:
     data = payload.encode("utf-8")
     with socket.create_connection((host, int(port)), timeout=10) as sock:
@@ -416,6 +591,18 @@ def preview():
     copies = max(1, min(50, int(request.args.get("copies", "1"))))
     zpl = build_zpl(text1, text2, copies, opts)
     return Response(zpl, mimetype="text/plain; charset=utf-8")
+
+
+@APP.route("/preview.png", methods=["GET"])
+def preview_png():
+    opts = load_options()
+    text1 = request.args.get("text1", "250001 - Test Project")
+    text2 = request.args.get("text2", "Element 1e")
+    img = render_preview_image(text1, text2, opts)
+    bio = BytesIO()
+    img.save(bio, format="PNG", dpi=(203, 203), optimize=True)
+    bio.seek(0)
+    return send_file(bio, mimetype="image/png", download_name="label-preview.png")
 
 
 @APP.route("/api/print", methods=["POST"])
