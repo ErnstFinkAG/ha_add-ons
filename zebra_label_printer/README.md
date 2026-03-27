@@ -138,3 +138,8 @@ The add-on also exposes a simple JSON endpoint inside the container on `/api/pri
 ### Unicode characters
 
 The add-on sends UTF-8 ZPL (`^CI28`), but printed output still depends on the font support available on the printer.
+
+
+## Notes
+
+- Version 0.1.1 fixes Home Assistant Ingress form actions so **Print label** and **Preview ZPL** work correctly when opened via **Open Web UI**.

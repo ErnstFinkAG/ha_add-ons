@@ -5,7 +5,7 @@ import socket
 from io import BytesIO
 from typing import Dict, Tuple
 
-from flask import Flask, Response, jsonify, redirect, render_template_string, request, url_for
+from flask import Flask, Response, jsonify, render_template_string, request
 import qrcode
 from PIL import Image
 
@@ -16,6 +16,12 @@ PRINTER_MAX_WIDTH_DOTS = 1344  # Zebra ZT420/ZT421 203 dpi maximum print width
 INGRESS_ALLOWED_IP = "172.30.32.2"
 LOCAL_ALLOWED_IPS = {"127.0.0.1", "::1", None}
 OPTIONS_PATH = "/data/options.json"
+
+
+def ingress_base_path() -> str:
+    base = request.headers.get("X-Ingress-Path") or request.script_root or ""
+    return base.rstrip("/")
+
 
 HTML = """
 <!doctype html>
@@ -130,7 +136,7 @@ HTML = """
       {% if result %}
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
       {% endif %}
-      <form method="post" action="{{ url_for('print_label') }}">
+      <form method="post" action="{{ ingress_base }}/print">
         <label for="text1">Text string 1</label>
         <textarea id="text1" name="text1" required>{{ form.text1 }}</textarea>
 
@@ -150,7 +156,7 @@ HTML = """
 
         <div class="btns">
           <button type="submit">Print label</button>
-          <a class="button-link secondary" href="{{ url_for('preview') }}?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}">Preview ZPL</a>
+          <a class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}">Preview ZPL</a>
         </div>
       </form>
     </div>
@@ -330,6 +336,8 @@ def send_to_printer(host: str, port: int, payload: str) -> None:
 @APP.before_request
 def restrict_ingress():
     remote = request.remote_addr
+    if request.headers.get("X-Ingress-Path"):
+        return None
     if remote not in LOCAL_ALLOWED_IPS and remote != INGRESS_ALLOWED_IP:
         return Response("Forbidden", status=403)
 
@@ -355,6 +363,7 @@ def index():
         effective_width_mm=dots_to_mm(layout["effective_width_dots"]),
         effective_width_dots=layout["effective_width_dots"],
         width_warning=layout["width_warning"],
+        ingress_base=ingress_base_path(),
     )
 
 
@@ -395,6 +404,7 @@ def print_label():
         effective_width_mm=dots_to_mm(layout["effective_width_dots"]),
         effective_width_dots=layout["effective_width_dots"],
         width_warning=layout["width_warning"],
+        ingress_base=ingress_base_path(),
     )
 
 

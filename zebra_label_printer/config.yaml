@@ -1,5 +1,5 @@
 name: "Zebra Label Printer"
-version: "0.1.0"
+version: "0.1.1"
 slug: "zebra_label_printer"
 description: >-
   Print large QR-code project labels to a Zebra ZT420/ZT421 over TCP (port 9100)
