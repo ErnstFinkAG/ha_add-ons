@@ -25,8 +25,9 @@ ha_add-ons/
 ## What it prints
 
 - **Text string 1** as human-readable text on the label
-- **Text string 2** as additional human-readable text under the QR code
-- QR-code payload from a configurable template, defaulting to **Text string 1**
+- **Text string 2** as human-readable text under the QR code
+- **Text string 3** as additional human-readable text under the QR code
+- QR-code payload from a configurable template string using `text1`, `text2`, and `text3` tokens
 
 Example:
 
@@ -90,22 +91,23 @@ qr_size_mm: 150
 top_margin_mm: 5
 field1_label: Project
 field2_label: Element
-qr_value_template: "{text1} | {text2}"
+field3_label: Zone
+qr_value_template: "text1 - text2 text3"
 ```
 
 ### QR payload template
 
-`qr_value_template` supports these placeholders:
-
-- `{text1}`
-- `{text2}`
+`qr_value_template` is a free-text template string. Any occurrence of `text1`, `text2`, or `text3` is replaced with the current field value. Static text, dashes, slashes, punctuation, and spaces are all allowed.
 
 Examples:
 
-- `"{text1}"` → QR contains only field 1
-- `"{text2}"` → QR contains only field 2
-- `"{text1} | {text2}"` → QR contains both values
-- `"Project={text1};Element={text2}"` → QR contains custom formatted data
+- `"text1"` → QR contains only field 1
+- `"text2"` → QR contains only field 2
+- `"text1 - text2"` → QR contains field 1, then ` - `, then field 2
+- `"text1 / text2 / text3"` → QR contains all three values
+- `"Project text1 Element text2 Zone text3"` → QR contains custom formatted data
+
+Any field that is not referenced in `qr_value_template` is still printed on the label in human-readable form.
 
 ## Usage
 
@@ -113,9 +115,10 @@ Open the add-on UI and fill in:
 
 - the value for **field 1**
 - the value for **field 2**
+- the value for **field 3**
 - **Copies**
 
-The visible labels for field 1 and field 2 come from add-on config, and the QR content is built from `qr_value_template` using `{text1}` and `{text2}` placeholders.
+The visible labels for all three fields come from add-on config, and the QR content is built from `qr_value_template` by replacing `text1`, `text2`, and `text3` tokens. Fields not included in the QR template are still printed on the label in human-readable form.
 
 Then review the embedded PNG preview and click **Print label** when it looks correct.
 
@@ -129,6 +132,7 @@ The add-on also exposes a simple JSON endpoint inside the container on `/api/pri
 {
   "text1": "250001 - Test Project",
   "text2": "Element 1e",
+  "text3": "Zone A",
   "copies": 1
 }
 ```
@@ -162,7 +166,7 @@ The add-on sends UTF-8 ZPL (`^CI28`), but printed output still depends on the fo
 
 ## Notes
 
-- Version 0.1.4 adds configurable field labels and a configurable `qr_value_template`, so the QR payload can be built from `{text1}`, `{text2}`, or both.
+- Version 0.1.5 adds a third configurable field, renamable field labels for all three inputs, and a free-text `qr_value_template` that can mix `text1`, `text2`, `text3`, spaces, and punctuation. Fields omitted from the QR template remain human-readable on the label only.
 - Version 0.1.3 adds a PNG label preview rendered from the same layout coordinates as the ZPL output and embeds that preview in the add-on UI.
 - Version 0.1.1 fixes Home Assistant Ingress form actions so **Print label** and **Preview ZPL** work correctly when opened via **Open Web UI**.
 

@@ -3,6 +3,7 @@ import math
 import os
 import socket
 from io import BytesIO
+import re
 from typing import Dict, List, Tuple
 
 from flask import Flask, Response, jsonify, render_template_string, request, send_file
@@ -32,16 +33,18 @@ DEFAULT_OPTIONS = {
     "top_margin_mm": 5.0,
     "field1_label": "Text string 1",
     "field2_label": "Text string 2",
-    "qr_value_template": "{text1}",
+    "field3_label": "Text string 3",
+    "qr_value_template": "text1",
 }
 
 DEFAULT_FORM = {
     "text1": "250001 - Test Project",
     "text2": "Element 1e",
+    "text3": "Zone A",
     "copies": "1",
 }
 
-ALLOWED_QR_PLACEHOLDERS = ("text1", "text2")
+ALLOWED_QR_TOKENS = ("text1", "text2", "text3")
 
 
 def ingress_base_path() -> str:
@@ -214,6 +217,9 @@ HTML = """
         <label for="text2">{{ field2_label }}</label>
         <input id="text2" name="text2" value="{{ form.text2 }}" required>
 
+        <label for="text3">{{ field3_label }}</label>
+        <input id="text3" name="text3" value="{{ form.text3 }}" required>
+
         <div class="row">
           <div>
             <label for="copies">Copies</label>
@@ -227,8 +233,8 @@ HTML = """
 
         <div class="btns">
           <button type="submit">Print label</button>
-          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}">Preview ZPL</a>
-          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}" target="_blank" rel="noopener">Open PNG preview</a>
+          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&copies={{ form.copies }}">Preview ZPL</a>
+          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&copies={{ form.copies }}" target="_blank" rel="noopener">Open PNG preview</a>
         </div>
       </form>
     </div>
@@ -238,7 +244,7 @@ HTML = """
       <div class="preview-wrap">
         <div class="preview-stage">
           <div class="preview-frame">
-            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}" alt="Label preview">
+            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&copies={{ form.copies }}" alt="Label preview">
           </div>
         </div>
       </div>
@@ -253,6 +259,7 @@ HTML = """
       <ul class="config-list">
         <li><strong>Field 1 label:</strong> <code>{{ field1_label }}</code></li>
         <li><strong>Field 2 label:</strong> <code>{{ field2_label }}</code></li>
+        <li><strong>Field 3 label:</strong> <code>{{ field3_label }}</code></li>
         <li><strong>QR template:</strong> <code>{{ qr_value_template }}</code></li>
         <li><strong>Current QR payload:</strong> <code>{{ qr_preview }}</code></li>
       </ul>
@@ -269,7 +276,7 @@ HTML = """
       <p class="warn">{{ width_warning }}</p>
       {% endif %}
       <p class="muted">
-        The QR code uses the configured template above. Both fields are printed below the QR code.
+        The QR code uses the configured template above. All three fields are printed below the QR code in human-readable form.
       </p>
     </div>
   </div>
@@ -278,12 +285,13 @@ HTML = """
       const ingressBase = {{ ingress_base|tojson }};
       const text1 = document.getElementById("text1");
       const text2 = document.getElementById("text2");
+      const text3 = document.getElementById("text3");
       const copies = document.getElementById("copies");
       const previewImage = document.getElementById("preview-image");
       const previewPngLink = document.getElementById("preview-png-link");
       const previewZplLink = document.getElementById("preview-zpl-link");
 
-      if (!text1 || !text2 || !copies || !previewImage || !previewPngLink || !previewZplLink) {
+      if (!text1 || !text2 || !text3 || !copies || !previewImage || !previewPngLink || !previewZplLink) {
         return;
       }
 
@@ -300,6 +308,7 @@ HTML = """
         const params = new URLSearchParams();
         params.set("text1", text1.value || "");
         params.set("text2", text2.value || "");
+        params.set("text3", text3.value || "");
         params.set("copies", normalizedCopies());
         return params;
       }
@@ -321,7 +330,7 @@ HTML = """
         refreshTimer = window.setTimeout(applyPreviewUpdate, 180);
       }
 
-      [text1, text2, copies].forEach((input) => {
+      [text1, text2, text3, copies].forEach((input) => {
         input.addEventListener("input", schedulePreviewUpdate);
         input.addEventListener("change", applyPreviewUpdate);
       });
@@ -345,6 +354,7 @@ def load_options() -> Dict:
 
     options["field1_label"] = str(options.get("field1_label") or DEFAULT_OPTIONS["field1_label"]).strip() or DEFAULT_OPTIONS["field1_label"]
     options["field2_label"] = str(options.get("field2_label") or DEFAULT_OPTIONS["field2_label"]).strip() or DEFAULT_OPTIONS["field2_label"]
+    options["field3_label"] = str(options.get("field3_label") or DEFAULT_OPTIONS["field3_label"]).strip() or DEFAULT_OPTIONS["field3_label"]
     options["qr_value_template"] = str(options.get("qr_value_template") or DEFAULT_OPTIONS["qr_value_template"])
     return options
 
@@ -426,21 +436,25 @@ def zpl_escape_utf8(text: str) -> str:
     return "".join(out)
 
 
-def build_qr_payload(text1: str, text2: str, opts: Dict) -> str:
+def build_qr_payload(text1: str, text2: str, text3: str, opts: Dict) -> str:
     template = str(opts.get("qr_value_template") or DEFAULT_OPTIONS["qr_value_template"])
     values = {
         "text1": text1,
         "text2": text2,
+        "text3": text3,
     }
-    try:
-        payload = template.format_map(values)
-    except KeyError as exc:
-        placeholder = exc.args[0]
-        allowed = ", ".join(f"{{{name}}}" for name in ALLOWED_QR_PLACEHOLDERS)
-        raise ValueError(f"qr_value_template uses unknown placeholder {{{placeholder}}}. Allowed placeholders: {allowed}.")
-    except ValueError as exc:
-        raise ValueError(f"qr_value_template is invalid: {exc}")
 
+    invalid_tokens = sorted({token.lower() for token in re.findall(r"\btext\d+\b", template, flags=re.IGNORECASE)} - set(ALLOWED_QR_TOKENS))
+    if invalid_tokens:
+        allowed = ", ".join(ALLOWED_QR_TOKENS)
+        raise ValueError(
+            f"qr_value_template uses unsupported token(s): {', '.join(invalid_tokens)}. Allowed tokens: {allowed}."
+        )
+
+    def replace_token(match: re.Match[str]) -> str:
+        return values[match.group(0).lower()]
+
+    payload = re.sub(r"\b(?:text1|text2|text3)\b", replace_token, template, flags=re.IGNORECASE)
     payload = payload.strip()
     if not payload:
         raise ValueError("QR payload is empty. Adjust qr_value_template or enter field values.")
@@ -462,9 +476,9 @@ def font_for_text(text: str, primary: bool) -> Tuple[int, int, int]:
     return 68, 54, 3
 
 
-def build_zpl(text1: str, text2: str, copies: int, opts: Dict) -> str:
+def build_zpl(text1: str, text2: str, text3: str, copies: int, opts: Dict) -> str:
     layout = effective_layout(opts)
-    qr_payload = build_qr_payload(text1, text2, opts)
+    qr_payload = build_qr_payload(text1, text2, text3, opts)
 
     pw = layout["effective_width_dots"]
     ll = layout["requested_height_dots"]
@@ -476,15 +490,18 @@ def build_zpl(text1: str, text2: str, copies: int, opts: Dict) -> str:
     text_width = pw - (margin_x * 2)
     primary_h, primary_w, primary_lines = font_for_text(text1, primary=True)
     secondary_h, secondary_w, secondary_lines = font_for_text(text2, primary=False)
+    tertiary_h, tertiary_w, tertiary_lines = font_for_text(text3, primary=False)
 
     primary_y = qr_top + qr_size + mm_to_dots(8)
     secondary_y = primary_y + (primary_h * primary_lines) + mm_to_dots(8)
+    tertiary_y = secondary_y + (secondary_h * secondary_lines) + mm_to_dots(6)
 
     qr_img = build_qr_image(qr_payload, qr_size)
     total_bytes, bytes_per_row, graphic_hex = image_to_gfa(qr_img)
 
     esc1 = zpl_escape_utf8(text1)
     esc2 = zpl_escape_utf8(text2)
+    esc3 = zpl_escape_utf8(text3)
 
     zpl = f"""^XA
 ^CI28
@@ -494,6 +511,7 @@ def build_zpl(text1: str, text2: str, copies: int, opts: Dict) -> str:
 ^FO{qr_left},{qr_top}^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_hex}^FS
 ^FO{margin_x},{primary_y}^A0N,{primary_h},{primary_w}^FB{text_width},{primary_lines},14,C,0^FH\\^FD{esc1}^FS
 ^FO{margin_x},{secondary_y}^A0N,{secondary_h},{secondary_w}^FB{text_width},{secondary_lines},10,C,0^FH\\^FD{esc2}^FS
+^FO{margin_x},{tertiary_y}^A0N,{tertiary_h},{tertiary_w}^FB{text_width},{tertiary_lines},10,C,0^FH\\^FD{esc3}^FS
 ^PQ{copies},0,1,N
 ^XZ"""
     return zpl
@@ -576,9 +594,9 @@ def render_centered_lines(
         current_y += line_h + line_spacing
 
 
-def render_preview_image(text1: str, text2: str, opts: Dict) -> Image.Image:
+def render_preview_image(text1: str, text2: str, text3: str, opts: Dict) -> Image.Image:
     layout = effective_layout(opts)
-    qr_payload = build_qr_payload(text1, text2, opts)
+    qr_payload = build_qr_payload(text1, text2, text3, opts)
 
     requested_w = layout["requested_width_dots"]
     requested_h = layout["requested_height_dots"]
@@ -603,16 +621,21 @@ def render_preview_image(text1: str, text2: str, opts: Dict) -> Image.Image:
     text_width = pw - (margin_x * 2)
     primary_h, _primary_w, primary_lines = font_for_text(text1, primary=True)
     secondary_h, _secondary_w, secondary_lines = font_for_text(text2, primary=False)
+    tertiary_h, _tertiary_w, tertiary_lines = font_for_text(text3, primary=False)
     primary_y = qr_top + qr_size + mm_to_dots(8)
     secondary_y = primary_y + (primary_h * primary_lines) + mm_to_dots(8)
+    tertiary_y = secondary_y + (secondary_h * secondary_lines) + mm_to_dots(6)
 
     primary_font = get_font(primary_h)
     secondary_font = get_font(secondary_h)
+    tertiary_font = get_font(tertiary_h)
     primary_wrapped = wrap_text_lines(draw, text1, primary_font, text_width, primary_lines)
     secondary_wrapped = wrap_text_lines(draw, text2, secondary_font, text_width, secondary_lines)
+    tertiary_wrapped = wrap_text_lines(draw, text3, tertiary_font, text_width, tertiary_lines)
 
     render_centered_lines(draw, primary_wrapped, primary_y, pw, primary_font, fill=0, line_spacing=14)
     render_centered_lines(draw, secondary_wrapped, secondary_y, pw, secondary_font, fill=0, line_spacing=10)
+    render_centered_lines(draw, tertiary_wrapped, tertiary_y, pw, tertiary_font, fill=0, line_spacing=10)
 
     return img.convert("1")
 
@@ -627,6 +650,7 @@ def form_data_from_request() -> Dict[str, str]:
     return {
         "text1": request.values.get("text1", DEFAULT_FORM["text1"]),
         "text2": request.values.get("text2", DEFAULT_FORM["text2"]),
+        "text3": request.values.get("text3", DEFAULT_FORM["text3"]),
         "copies": request.values.get("copies", DEFAULT_FORM["copies"]),
     }
 
@@ -634,7 +658,7 @@ def form_data_from_request() -> Dict[str, str]:
 def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) -> str:
     layout = effective_layout(opts)
     try:
-        qr_preview = build_qr_payload(form.get("text1", ""), form.get("text2", ""), opts)
+        qr_preview = build_qr_payload(form.get("text1", ""), form.get("text2", ""), form.get("text3", ""), opts)
     except Exception as exc:
         qr_preview = f"Configuration error: {exc}"
 
@@ -646,6 +670,7 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
         printer_port=opts["printer_port"],
         field1_label=opts["field1_label"],
         field2_label=opts["field2_label"],
+        field3_label=opts["field3_label"],
         qr_value_template=opts["qr_value_template"],
         qr_preview=qr_preview,
         requested_width_mm=opts["label_width_mm"],
@@ -679,6 +704,7 @@ def print_label():
     opts = load_options()
     text1 = request.form.get("text1", "").strip()
     text2 = request.form.get("text2", "").strip()
+    text3 = request.form.get("text3", "").strip()
     copies_raw = request.form.get("copies", DEFAULT_FORM["copies"]).strip()
 
     result = {"success": False, "message": "Unknown error"}
@@ -687,10 +713,12 @@ def print_label():
             raise ValueError(f"{opts['field1_label']} is required.")
         if not text2:
             raise ValueError(f"{opts['field2_label']} is required.")
+        if not text3:
+            raise ValueError(f"{opts['field3_label']} is required.")
         copies = max(1, min(50, int(copies_raw)))
-        zpl = build_zpl(text1, text2, copies, opts)
+        zpl = build_zpl(text1, text2, text3, copies, opts)
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
-        qr_payload = build_qr_payload(text1, text2, opts)
+        qr_payload = build_qr_payload(text1, text2, text3, opts)
         result = {
             "success": True,
             "message": f"Sent {copies} label(s) to {opts['printer_host']}:{opts['printer_port']}. QR payload: {qr_payload}",
@@ -698,7 +726,7 @@ def print_label():
     except Exception as exc:
         result = {"success": False, "message": f"Print failed: {exc}"}
 
-    form = {"text1": text1, "text2": text2, "copies": copies_raw or DEFAULT_FORM["copies"]}
+    form = {"text1": text1, "text2": text2, "text3": text3, "copies": copies_raw or DEFAULT_FORM["copies"]}
     return render_page(form, opts, result=result)
 
 
@@ -707,8 +735,9 @@ def preview():
     opts = load_options()
     text1 = request.args.get("text1", DEFAULT_FORM["text1"])
     text2 = request.args.get("text2", DEFAULT_FORM["text2"])
+    text3 = request.args.get("text3", DEFAULT_FORM["text3"])
     copies = max(1, min(50, int(request.args.get("copies", DEFAULT_FORM["copies"]))))
-    zpl = build_zpl(text1, text2, copies, opts)
+    zpl = build_zpl(text1, text2, text3, copies, opts)
     return Response(zpl, mimetype="text/plain; charset=utf-8")
 
 
@@ -717,7 +746,8 @@ def preview_png():
     opts = load_options()
     text1 = request.args.get("text1", DEFAULT_FORM["text1"])
     text2 = request.args.get("text2", DEFAULT_FORM["text2"])
-    img = render_preview_image(text1, text2, opts)
+    text3 = request.args.get("text3", DEFAULT_FORM["text3"])
+    img = render_preview_image(text1, text2, text3, opts)
     bio = BytesIO()
     img.save(bio, format="PNG", dpi=(203, 203), optimize=True)
     bio.seek(0)
@@ -730,20 +760,21 @@ def api_print():
     payload = request.get_json(force=True, silent=False) or {}
     text1 = str(payload.get("text1", "")).strip()
     text2 = str(payload.get("text2", "")).strip()
+    text3 = str(payload.get("text3", "")).strip()
     copies = max(1, min(50, int(payload.get("copies", 1))))
-    if not text1 or not text2:
+    if not text1 or not text2 or not text3:
         return jsonify({
             "ok": False,
-            "error": f"Both {opts['field1_label']} and {opts['field2_label']} are required.",
+            "error": f"{opts['field1_label']}, {opts['field2_label']}, and {opts['field3_label']} are required.",
         }), 400
     try:
-        zpl = build_zpl(text1, text2, copies, opts)
+        zpl = build_zpl(text1, text2, text3, copies, opts)
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
         return jsonify({
             "ok": True,
             "printer": opts["printer_host"],
             "copies": copies,
-            "qr_payload": build_qr_payload(text1, text2, opts),
+            "qr_payload": build_qr_payload(text1, text2, text3, opts),
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
