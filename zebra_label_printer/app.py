@@ -178,7 +178,7 @@ HTML = """
       {% if result %}
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
       {% endif %}
-      <form method="post" action="{{ ingress_base }}/print">
+      <form id="label-form" method="post" action="{{ ingress_base }}/print">
         <label for="text1">Text string 1</label>
         <textarea id="text1" name="text1" required>{{ form.text1 }}</textarea>
 
@@ -198,8 +198,8 @@ HTML = """
 
         <div class="btns">
           <button type="submit">Print label</button>
-          <a class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}">Preview ZPL</a>
-          <a class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}" target="_blank" rel="noopener">Open PNG preview</a>
+          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}">Preview ZPL</a>
+          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}" target="_blank" rel="noopener">Open PNG preview</a>
         </div>
       </form>
     </div>
@@ -209,7 +209,7 @@ HTML = """
       <div class="preview-wrap">
         <div class="preview-stage">
           <div class="preview-frame">
-            <img src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}" alt="Label preview">
+            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&copies={{ form.copies }}" alt="Label preview">
           </div>
         </div>
       </div>
@@ -234,6 +234,60 @@ HTML = """
       </p>
     </div>
   </div>
+  <script>
+    (function () {
+      const ingressBase = {{ ingress_base|tojson }};
+      const text1 = document.getElementById("text1");
+      const text2 = document.getElementById("text2");
+      const copies = document.getElementById("copies");
+      const previewImage = document.getElementById("preview-image");
+      const previewPngLink = document.getElementById("preview-png-link");
+      const previewZplLink = document.getElementById("preview-zpl-link");
+
+      if (!text1 || !text2 || !copies || !previewImage || !previewPngLink || !previewZplLink) {
+        return;
+      }
+
+      let refreshTimer = null;
+      let previewNonce = Date.now();
+
+      function normalizedCopies() {
+        const raw = parseInt(copies.value || "1", 10);
+        if (Number.isNaN(raw)) return "1";
+        return String(Math.max(1, Math.min(50, raw)));
+      }
+
+      function buildQuery() {
+        const params = new URLSearchParams();
+        params.set("text1", text1.value || "");
+        params.set("text2", text2.value || "");
+        params.set("copies", normalizedCopies());
+        return params;
+      }
+
+      function applyPreviewUpdate() {
+        const params = buildQuery();
+        previewNonce += 1;
+
+        const pngParams = new URLSearchParams(params);
+        pngParams.set("_", String(previewNonce));
+        const pngUrl = `${ingressBase}/preview.png?${pngParams.toString()}`;
+        previewImage.src = pngUrl;
+        previewPngLink.href = `${ingressBase}/preview.png?${params.toString()}`;
+        previewZplLink.href = `${ingressBase}/preview?${params.toString()}`;
+      }
+
+      function schedulePreviewUpdate() {
+        window.clearTimeout(refreshTimer);
+        refreshTimer = window.setTimeout(applyPreviewUpdate, 180);
+      }
+
+      [text1, text2, copies].forEach((input) => {
+        input.addEventListener("input", schedulePreviewUpdate);
+        input.addEventListener("change", applyPreviewUpdate);
+      });
+    })();
+  </script>
 </body>
 </html>
 """

@@ -144,5 +144,10 @@ The add-on sends UTF-8 ZPL (`^CI28`), but printed output still depends on the fo
 
 ## Notes
 
-- Version 0.1.2 adds a PNG label preview rendered from the same layout coordinates as the ZPL output and embeds that preview in the add-on UI.
+- Version 0.1.3 adds a PNG label preview rendered from the same layout coordinates as the ZPL output and embeds that preview in the add-on UI.
 - Version 0.1.1 fixes Home Assistant Ingress form actions so **Print label** and **Preview ZPL** work correctly when opened via **Open Web UI**.
+
+
+## Live preview
+
+The PNG preview updates automatically when you change **Text string 1**, **Text string 2**, or **Copies** in the web UI.
