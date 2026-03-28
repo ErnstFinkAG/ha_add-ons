@@ -1,2 +1,2 @@
 #!/usr/bin/with-contenv bashio
-python3 /app/app.py
+waitress-serve --listen=0.0.0.0:8099 app:APP

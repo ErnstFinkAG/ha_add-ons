@@ -1190,4 +1190,6 @@ def api_print():
 
 
 if __name__ == "__main__":
-    APP.run(host="0.0.0.0", port=8099, debug=False)
+    from waitress import serve
+
+    serve(APP, host="0.0.0.0", port=8099)

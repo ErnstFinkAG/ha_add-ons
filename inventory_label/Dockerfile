@@ -7,6 +7,7 @@ RUN apk add --no-cache \
     ttf-dejavu \
   && pip3 install --no-cache-dir --break-system-packages \
     flask==3.1.0 \
+    waitress==3.0.2 \
     qrcode==8.2 \
     pillow==11.1.0
 
