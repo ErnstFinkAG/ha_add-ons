@@ -218,7 +218,7 @@ HTML = """
       font-weight: 600;
       margin-bottom: 8px;
     }
-    input, textarea {
+    input {
       width: 100%;
       box-sizing: border-box;
       border-radius: 12px;
@@ -229,7 +229,6 @@ HTML = """
       font: inherit;
       margin-bottom: 16px;
     }
-    textarea { min-height: 84px; }
     .row {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -331,13 +330,13 @@ HTML = """
   <div class="wrap">
     <div class="card">
       <h1>Inventory Label</h1>
-      <p class="muted">Prints one large QR code label to a networked Zebra printer using raw ZPL over TCP.</p>
+      <p class="muted">Prints one large QR code label to a networked Zebra printer using raw ZPL over TCP. {{ field1_label }} accepts digits only.</p>
       {% if result %}
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
       {% endif %}
       <form id="label-form" method="post" action="{{ ingress_base }}/print">
         <label for="text1">{{ field1_label }}</label>
-        <textarea id="text1" name="text1" required>{{ form.text1 }}</textarea>
+        <input id="text1" name="text1" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" required value="{{ form.text1 }}">
 
         <label for="text2">{{ field2_label }}</label>
         <input id="text2" name="text2" value="{{ form.text2 }}">
@@ -470,10 +469,27 @@ HTML = """
         refreshTimer = window.setTimeout(applyPreviewUpdate, 180);
       }
 
-      [text1, text2, text3, footer, printText2, printText3, printFooter, copies].forEach((input) => {
+      const sanitizeText1 = () => {
+        const digits = (text1.value || "").replace(/[^0-9]+/g, "");
+        if (digits !== text1.value) text1.value = digits;
+      };
+
+      text1.addEventListener("input", () => {
+        sanitizeText1();
+        schedulePreviewUpdate();
+      });
+      text1.addEventListener("change", () => {
+        sanitizeText1();
+        applyPreviewUpdate();
+      });
+
+      [text2, text3, footer, printText2, printText3, printFooter, copies].forEach((input) => {
         input.addEventListener("input", schedulePreviewUpdate);
         input.addEventListener("change", applyPreviewUpdate);
       });
+
+      sanitizeText1();
+      applyPreviewUpdate();
     })();
   </script>
 </body>
@@ -591,7 +607,7 @@ def load_options() -> Dict:
 
 def default_form_from_options(opts: Dict) -> Dict[str, str]:
     return {
-        "text1": str(opts.get("field1_default_value") or ""),
+        "text1": digits_only(opts.get("field1_default_value") or ""),
         "text2": str(opts.get("field2_default_value") or ""),
         "text3": str(opts.get("field3_default_value") or ""),
         "footer": str(opts.get("footer_default_value") or ""),
@@ -605,7 +621,7 @@ def default_form_from_options(opts: Dict) -> Dict[str, str]:
 def form_data_from_request(opts: Dict) -> Dict[str, str]:
     defaults = default_form_from_options(opts)
     return {
-        "text1": request.values.get("text1", defaults["text1"]),
+        "text1": digits_only(request.values.get("text1", defaults["text1"]), defaults["text1"]),
         "text2": request.values.get("text2", defaults["text2"]),
         "text3": request.values.get("text3", defaults["text3"]),
         "footer": request.values.get("footer", defaults["footer"]),
@@ -620,6 +636,20 @@ def normalize_form_checkbox(value: object, default: str = "0") -> str:
     if value is None:
         return default
     return "1" if normalize_bool(value, False) else "0"
+
+
+def digits_only(value: object, fallback: str = "") -> str:
+    text = fallback if value is None else str(value)
+    return re.sub(r"\D+", "", text)
+
+
+def validate_text1_numeric(value: object, field1_label: str) -> str:
+    text = str(value if value is not None else "").strip()
+    if not text:
+        raise ValueError(f"{field1_label} is required.")
+    if not text.isdigit():
+        raise ValueError(f"{field1_label} must contain numbers only.")
+    return text
 
 
 def parse_print_toggles(data: Dict[str, str]) -> Dict[str, bool]:
@@ -1071,7 +1101,7 @@ def print_label():
     opts = load_options()
     defaults = default_form_from_options(opts)
     form = {
-        "text1": request.form.get("text1", defaults["text1"]).strip(),
+        "text1": digits_only(request.form.get("text1", defaults["text1"]), defaults["text1"]),
         "text2": request.form.get("text2", defaults["text2"]).strip(),
         "text3": request.form.get("text3", defaults["text3"]).strip(),
         "footer": request.form.get("footer", defaults["footer"]).strip(),
@@ -1083,14 +1113,14 @@ def print_label():
 
     result = {"success": False, "message": "Unknown error"}
     try:
-        text1 = form["text1"]
+        raw_text1 = request.form.get("text1", defaults["text1"])
+        text1 = validate_text1_numeric(raw_text1, opts["field1_label"])
+        form["text1"] = text1
         text2 = form["text2"]
         text3 = form["text3"]
         footer = form["footer"]
         copies = max(1, min(50, int(form["copies"])))
         print_toggles = parse_print_toggles(form)
-        if not text1:
-            raise ValueError(f"{opts['field1_label']} is required.")
         zpl = build_zpl(text1, text2, text3, footer, copies, opts, print_toggles=print_toggles)
         qr_payload = build_qr_payload(text1, text2, text3, opts)
         LOGGER.info(
@@ -1117,40 +1147,50 @@ def print_label():
 def preview():
     opts = load_options()
     defaults = default_form_from_options(opts)
-    text1 = request.args.get("text1", defaults["text1"])
+    raw_text1 = request.args.get("text1", defaults["text1"])
     text2 = request.args.get("text2", defaults["text2"])
     text3 = request.args.get("text3", defaults["text3"])
     footer = request.args.get("footer", defaults["footer"])
-    copies = max(1, min(50, int(request.args.get("copies", DEFAULT_FORM["copies"]))))
-    print_toggles = parse_print_toggles({
-        "print_text2": request.args.get("print_text2", defaults["print_text2"]),
-        "print_text3": request.args.get("print_text3", defaults["print_text3"]),
-        "print_footer": request.args.get("print_footer", defaults["print_footer"]),
-    })
-    zpl = build_zpl(text1, text2, text3, footer, copies, opts, print_toggles=print_toggles)
-    LOGGER.info("Generated ZPL preview for copies=%s with toggles=%s", copies, print_toggles)
-    return Response(zpl, mimetype="text/plain; charset=utf-8")
+    try:
+        text1 = validate_text1_numeric(raw_text1, opts["field1_label"])
+        copies = max(1, min(50, int(request.args.get("copies", DEFAULT_FORM["copies"]))))
+        print_toggles = parse_print_toggles({
+            "print_text2": request.args.get("print_text2", defaults["print_text2"]),
+            "print_text3": request.args.get("print_text3", defaults["print_text3"]),
+            "print_footer": request.args.get("print_footer", defaults["print_footer"]),
+        })
+        zpl = build_zpl(text1, text2, text3, footer, copies, opts, print_toggles=print_toggles)
+        LOGGER.info("Generated ZPL preview for copies=%s with toggles=%s", copies, print_toggles)
+        return Response(zpl, mimetype="text/plain; charset=utf-8")
+    except Exception as exc:
+        LOGGER.exception("ZPL preview failed")
+        return Response(f"Preview failed: {exc}", status=400, mimetype="text/plain; charset=utf-8")
 
 
 @APP.route("/preview.png", methods=["GET"])
 def preview_png():
     opts = load_options()
     defaults = default_form_from_options(opts)
-    text1 = request.args.get("text1", defaults["text1"])
+    raw_text1 = request.args.get("text1", defaults["text1"])
     text2 = request.args.get("text2", defaults["text2"])
     text3 = request.args.get("text3", defaults["text3"])
     footer = request.args.get("footer", defaults["footer"])
-    print_toggles = parse_print_toggles({
-        "print_text2": request.args.get("print_text2", defaults["print_text2"]),
-        "print_text3": request.args.get("print_text3", defaults["print_text3"]),
-        "print_footer": request.args.get("print_footer", defaults["print_footer"]),
-    })
-    LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r footer=%r toggles=%s", text1, text2, text3, footer, print_toggles)
-    img = render_label_image(text1, text2, text3, footer, opts, preview=True, print_toggles=print_toggles)
-    bio = BytesIO()
-    img.save(bio, format="PNG", dpi=(203, 203), optimize=True)
-    bio.seek(0)
-    return send_file(bio, mimetype="image/png", download_name="label-preview.png")
+    try:
+        text1 = validate_text1_numeric(raw_text1, opts["field1_label"])
+        print_toggles = parse_print_toggles({
+            "print_text2": request.args.get("print_text2", defaults["print_text2"]),
+            "print_text3": request.args.get("print_text3", defaults["print_text3"]),
+            "print_footer": request.args.get("print_footer", defaults["print_footer"]),
+        })
+        LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r footer=%r toggles=%s", text1, text2, text3, footer, print_toggles)
+        img = render_label_image(text1, text2, text3, footer, opts, preview=True, print_toggles=print_toggles)
+        bio = BytesIO()
+        img.save(bio, format="PNG", dpi=(203, 203), optimize=True)
+        bio.seek(0)
+        return send_file(bio, mimetype="image/png", download_name="label-preview.png")
+    except Exception as exc:
+        LOGGER.exception("PNG preview failed")
+        return Response(f"Preview failed: {exc}", status=400, mimetype="text/plain; charset=utf-8")
 
 
 @APP.route("/api/print", methods=["POST"])
@@ -1158,7 +1198,7 @@ def api_print():
     opts = load_options()
     defaults = default_form_from_options(opts)
     payload = request.get_json(force=True, silent=False) or {}
-    text1 = str(payload.get("text1", defaults["text1"])).strip()
+    raw_text1 = payload.get("text1", defaults["text1"])
     text2 = str(payload.get("text2", defaults["text2"])).strip()
     text3 = str(payload.get("text3", defaults["text3"])).strip()
     footer = str(payload.get("footer", defaults["footer"])).strip()
@@ -1168,12 +1208,8 @@ def api_print():
         "print_text3": normalize_form_checkbox(payload.get("print_text3"), "1"),
         "print_footer": normalize_form_checkbox(payload.get("print_footer"), "1"),
     })
-    if not text1:
-        return jsonify({
-            "ok": False,
-            "error": f"{opts['field1_label']} is required.",
-        }), 400
     try:
+        text1 = validate_text1_numeric(raw_text1, opts["field1_label"])
         zpl = build_zpl(text1, text2, text3, footer, copies, opts, print_toggles=print_toggles)
         LOGGER.info("API print request received: copies=%s footer=%r toggles=%s", copies, footer, print_toggles)
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
@@ -1184,6 +1220,9 @@ def api_print():
             "qr_payload": build_qr_payload(text1, text2, text3, opts),
             "print_toggles": print_toggles,
         })
+    except ValueError as exc:
+        LOGGER.info("API print rejected: %s", exc)
+        return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
         LOGGER.exception("API print failed")
         return jsonify({"ok": False, "error": str(exc)}), 500

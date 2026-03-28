@@ -16,6 +16,7 @@ This repository is intended to be hosted at:
 - per-field defaults, alignment, font family, font size, bold, italic, and underline
 - per-print checkboxes in the UI to hide field 2, field 3, and the footer
 - configurable QR payload template using `text1`, `text2`, and `text3`
+- numeric-only first field input in the UI for project or inventory numbers
 - configurable QR quiet zone and QR error-correction level
 - ZPL preview and JSON print API
 
@@ -238,4 +239,4 @@ The add-on renders text as graphics for consistent preview and print styling, bu
 
 ## Version in this bundle
 
-This synced documentation bundle corresponds to add-on version `0.1.15`.
+This synced documentation bundle corresponds to add-on version `0.1.16`.
