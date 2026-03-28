@@ -1,5 +1,5 @@
 name: "Zebra Label Printer"
-version: "0.1.8"
+version: "0.1.9"
 slug: "zebra_label_printer"
 description: >-
   Print large QR-code project labels to a Zebra ZT420/ZT421 over TCP (port 9100)
@@ -17,27 +17,27 @@ arch:
   - armv7
   - i386
 options:
-  printer_host: "192.168.1.50"
+  printer_host: "10.50.20.12"
   printer_port: 9100
   label_width_mm: 170
   label_height_mm: 305
-  qr_size_mm: 150
-  top_margin_mm: 5
-  field1_label: "Text string 1"
-  field2_label: "Text string 2"
-  field3_label: "Text string 3"
-  field1_default_value: "250001 - Test Project"
-  field2_default_value: "Element 1e"
-  field3_default_value: "Zone A"
+  qr_size_mm: 170
+  top_margin_mm: 0
+  field1_label: "Projektnummer"
+  field2_label: "Projektname"
+  field3_label: "Element"
+  field1_default_value: "250001"
+  field2_default_value: "EFH Huggentobbler Biel"
+  field3_default_value: "DE1"
   field1_alignment: "center"
   field2_alignment: "center"
   field3_alignment: "center"
   field1_font_family: "sans"
   field2_font_family: "sans"
   field3_font_family: "sans"
-  field1_font_size_mm: 12
-  field2_font_size_mm: 10
-  field3_font_size_mm: 8.5
+  field1_font_size_mm: 18
+  field2_font_size_mm: 13
+  field3_font_size_mm: 9
   field1_bold: true
   field2_bold: false
   field3_bold: false
@@ -47,8 +47,16 @@ options:
   field1_underline: false
   field2_underline: false
   field3_underline: false
-  qr_value_template: "text1"
-  qr_quiet_zone_modules: 4
+  footer_label: "Footer"
+  footer_default_value: ""
+  footer_alignment: "center"
+  footer_font_family: "sans"
+  footer_font_size_mm: 7
+  footer_bold: false
+  footer_italic: false
+  footer_underline: false
+  qr_value_template: "text1 - text2"
+  qr_quiet_zone_modules: 3
   qr_error_correction: "M"
 schema:
   printer_host: str
@@ -60,27 +68,35 @@ schema:
   field1_label: str
   field2_label: str
   field3_label: str
+  footer_label: str
   field1_default_value: str
   field2_default_value: str
   field3_default_value: str
+  footer_default_value: str
   field1_alignment: str
   field2_alignment: str
   field3_alignment: str
+  footer_alignment: str
   field1_font_family: str
   field2_font_family: str
   field3_font_family: str
+  footer_font_family: str
   field1_font_size_mm: float
   field2_font_size_mm: float
   field3_font_size_mm: float
+  footer_font_size_mm: float
   field1_bold: bool
   field2_bold: bool
   field3_bold: bool
+  footer_bold: bool
   field1_italic: bool
   field2_italic: bool
   field3_italic: bool
+  footer_italic: bool
   field1_underline: bool
   field2_underline: bool
   field3_underline: bool
+  footer_underline: bool
   qr_value_template: str
   qr_quiet_zone_modules: int
   qr_error_correction: str

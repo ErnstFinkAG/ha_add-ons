@@ -40,8 +40,9 @@ FIELD_COUNT = 3
 ALLOWED_QR_TOKENS = ("text1", "text2", "text3")
 ALIGNMENTS = {"left", "center", "right"}
 FONT_FAMILIES = {"sans", "serif", "mono"}
-FIELD_GAPS_MM = {1: 8.0, 2: 6.0, 3: 0.0}
+FIELD_GAPS_MM = {1: 8.0, 2: 6.0, 3: 4.0}
 FIELD_MAX_LINES = {1: 4, 2: 3, 3: 3}
+FOOTER_MAX_LINES = 3
 
 FONT_PATHS = {
     "sans": {
@@ -113,27 +114,27 @@ FONT_PATHS = {
 }
 
 DEFAULT_OPTIONS = {
-    "printer_host": "192.168.1.50",
+    "printer_host": "10.50.20.12",
     "printer_port": 9100,
     "label_width_mm": 170.0,
     "label_height_mm": 305.0,
-    "qr_size_mm": 150.0,
-    "top_margin_mm": 5.0,
-    "field1_label": "Text string 1",
-    "field2_label": "Text string 2",
-    "field3_label": "Text string 3",
-    "field1_default_value": "250001 - Test Project",
-    "field2_default_value": "Element 1e",
-    "field3_default_value": "Zone A",
+    "qr_size_mm": 170.0,
+    "top_margin_mm": 0.0,
+    "field1_label": "Projektnummer",
+    "field2_label": "Projektname",
+    "field3_label": "Element",
+    "field1_default_value": "250001",
+    "field2_default_value": "EFH Huggentobbler Biel",
+    "field3_default_value": "DE1",
     "field1_alignment": "center",
     "field2_alignment": "center",
     "field3_alignment": "center",
     "field1_font_family": "sans",
     "field2_font_family": "sans",
     "field3_font_family": "sans",
-    "field1_font_size_mm": 12.0,
-    "field2_font_size_mm": 10.0,
-    "field3_font_size_mm": 8.5,
+    "field1_font_size_mm": 18.0,
+    "field2_font_size_mm": 13.0,
+    "field3_font_size_mm": 9.0,
     "field1_bold": True,
     "field2_bold": False,
     "field3_bold": False,
@@ -143,8 +144,16 @@ DEFAULT_OPTIONS = {
     "field1_underline": False,
     "field2_underline": False,
     "field3_underline": False,
-    "qr_value_template": "text1",
-    "qr_quiet_zone_modules": 4,
+    "footer_label": "Footer",
+    "footer_default_value": "",
+    "footer_alignment": "center",
+    "footer_font_family": "sans",
+    "footer_font_size_mm": 7.0,
+    "footer_bold": False,
+    "footer_italic": False,
+    "footer_underline": False,
+    "qr_value_template": "text1 - text2",
+    "qr_quiet_zone_modules": 3,
     "qr_error_correction": "M",
 }
 
@@ -319,6 +328,9 @@ HTML = """
         <label for="text3">{{ field3_label }}</label>
         <input id="text3" name="text3" value="{{ form.text3 }}" required>
 
+        <label for="footer">{{ footer_label }}</label>
+        <input id="footer" name="footer" value="{{ form.footer }}">
+
         <div class="row">
           <div>
             <label for="copies">Copies</label>
@@ -332,8 +344,8 @@ HTML = """
 
         <div class="btns">
           <button type="submit">Print label</button>
-          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&copies={{ form.copies }}">Preview ZPL</a>
-          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&copies={{ form.copies }}" target="_blank" rel="noopener">Open PNG preview</a>
+          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}">Preview ZPL</a>
+          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}" target="_blank" rel="noopener">Open PNG preview</a>
         </div>
       </form>
     </div>
@@ -343,7 +355,7 @@ HTML = """
       <div class="preview-wrap">
         <div class="preview-stage">
           <div class="preview-frame">
-            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&copies={{ form.copies }}" alt="Label preview">
+            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}" alt="Label preview">
           </div>
         </div>
       </div>
@@ -359,6 +371,7 @@ HTML = """
         <li><strong>Field 1 label:</strong> <code>{{ field1_label }}</code> · <strong>default:</strong> <code>{{ field1_default_value }}</code> · <strong>style:</strong> <code>{{ field1_style_summary }}</code></li>
         <li><strong>Field 2 label:</strong> <code>{{ field2_label }}</code> · <strong>default:</strong> <code>{{ field2_default_value }}</code> · <strong>style:</strong> <code>{{ field2_style_summary }}</code></li>
         <li><strong>Field 3 label:</strong> <code>{{ field3_label }}</code> · <strong>default:</strong> <code>{{ field3_default_value }}</code> · <strong>style:</strong> <code>{{ field3_style_summary }}</code></li>
+        <li><strong>Footer label:</strong> <code>{{ footer_label }}</code> · <strong>default:</strong> <code>{{ footer_default_value }}</code> · <strong>style:</strong> <code>{{ footer_style_summary }}</code></li>
         <li><strong>QR template:</strong> <code>{{ qr_value_template }}</code></li>
         <li><strong>QR quiet zone:</strong> <code>{{ qr_quiet_zone_modules }} module(s)</code></li>
         <li><strong>QR error correction:</strong> <code>{{ qr_error_correction }}</code></li>
@@ -377,7 +390,7 @@ HTML = """
       {% if width_warning %}
       <p class="warn">{{ width_warning }}</p>
       {% endif %}
-      <p class="muted">All three fields are printed in human-readable form. The QR code follows the configured template above.</p>
+      <p class="muted">All configured text fields are printed in human-readable form, including the footer. The QR code follows the configured template above.</p>
     </div>
   </div>
   <script>
@@ -386,11 +399,12 @@ HTML = """
       const text1 = document.getElementById("text1");
       const text2 = document.getElementById("text2");
       const text3 = document.getElementById("text3");
+      const footer = document.getElementById("footer");
       const copies = document.getElementById("copies");
       const previewImage = document.getElementById("preview-image");
       const previewPngLink = document.getElementById("preview-png-link");
       const previewZplLink = document.getElementById("preview-zpl-link");
-      if (!text1 || !text2 || !text3 || !copies || !previewImage || !previewPngLink || !previewZplLink) return;
+      if (!text1 || !text2 || !text3 || !footer || !copies || !previewImage || !previewPngLink || !previewZplLink) return;
 
       let refreshTimer = null;
       let previewNonce = Date.now();
@@ -406,6 +420,7 @@ HTML = """
         params.set("text1", text1.value || "");
         params.set("text2", text2.value || "");
         params.set("text3", text3.value || "");
+        params.set("footer", footer.value || "");
         params.set("copies", normalizedCopies());
         return params;
       }
@@ -425,7 +440,7 @@ HTML = """
         refreshTimer = window.setTimeout(applyPreviewUpdate, 180);
       }
 
-      [text1, text2, text3, copies].forEach((input) => {
+      [text1, text2, text3, footer, copies].forEach((input) => {
         input.addEventListener("input", schedulePreviewUpdate);
         input.addEventListener("change", applyPreviewUpdate);
       });
@@ -532,6 +547,14 @@ def load_options() -> Dict:
         options[f"field{idx}_bold"] = normalize_bool(options.get(f"field{idx}_bold"), DEFAULT_OPTIONS[f"field{idx}_bold"])
         options[f"field{idx}_italic"] = normalize_bool(options.get(f"field{idx}_italic"), DEFAULT_OPTIONS[f"field{idx}_italic"])
         options[f"field{idx}_underline"] = normalize_bool(options.get(f"field{idx}_underline"), DEFAULT_OPTIONS[f"field{idx}_underline"])
+    options["footer_label"] = normalize_string(options.get("footer_label"), DEFAULT_OPTIONS["footer_label"])
+    options["footer_default_value"] = str(options.get("footer_default_value") or DEFAULT_OPTIONS["footer_default_value"])
+    options["footer_alignment"] = normalize_alignment(options.get("footer_alignment"), DEFAULT_OPTIONS["footer_alignment"])
+    options["footer_font_family"] = normalize_font_family(options.get("footer_font_family"), DEFAULT_OPTIONS["footer_font_family"])
+    options["footer_font_size_mm"] = normalize_float(options.get("footer_font_size_mm"), DEFAULT_OPTIONS["footer_font_size_mm"], 2.0, 30.0)
+    options["footer_bold"] = normalize_bool(options.get("footer_bold"), DEFAULT_OPTIONS["footer_bold"])
+    options["footer_italic"] = normalize_bool(options.get("footer_italic"), DEFAULT_OPTIONS["footer_italic"])
+    options["footer_underline"] = normalize_bool(options.get("footer_underline"), DEFAULT_OPTIONS["footer_underline"])
     return options
 
 
@@ -540,6 +563,7 @@ def default_form_from_options(opts: Dict) -> Dict[str, str]:
         "text1": str(opts.get("field1_default_value") or ""),
         "text2": str(opts.get("field2_default_value") or ""),
         "text3": str(opts.get("field3_default_value") or ""),
+        "footer": str(opts.get("footer_default_value") or ""),
         "copies": DEFAULT_FORM["copies"],
     }
 
@@ -550,6 +574,7 @@ def form_data_from_request(opts: Dict) -> Dict[str, str]:
         "text1": request.values.get("text1", defaults["text1"]),
         "text2": request.values.get("text2", defaults["text2"]),
         "text3": request.values.get("text3", defaults["text3"]),
+        "footer": request.values.get("footer", defaults["footer"]),
         "copies": request.values.get("copies", defaults["copies"]),
     }
 
@@ -643,19 +668,27 @@ def build_qr_payload(text1: str, text2: str, text3: str, opts: Dict) -> str:
     return payload
 
 
-def field_style_summary(opts: Dict, idx: int) -> str:
+def style_summary_from_prefix(opts: Dict, prefix: str) -> str:
     parts = [
-        f"{opts[f'field{idx}_alignment']}",
-        f"{opts[f'field{idx}_font_family']}",
-        f"{opts[f'field{idx}_font_size_mm']} mm",
+        f"{opts[f'{prefix}_alignment']}",
+        f"{opts[f'{prefix}_font_family']}",
+        f"{opts[f'{prefix}_font_size_mm']} mm",
     ]
-    if opts.get(f"field{idx}_bold"):
+    if opts.get(f"{prefix}_bold"):
         parts.append("bold")
-    if opts.get(f"field{idx}_italic"):
+    if opts.get(f"{prefix}_italic"):
         parts.append("italic")
-    if opts.get(f"field{idx}_underline"):
+    if opts.get(f"{prefix}_underline"):
         parts.append("underline")
     return ", ".join(parts)
+
+
+def field_style_summary(opts: Dict, idx: int) -> str:
+    return style_summary_from_prefix(opts, f"field{idx}")
+
+
+def footer_style_summary(opts: Dict) -> str:
+    return style_summary_from_prefix(opts, "footer")
 
 
 def get_field_config(opts: Dict, idx: int) -> Dict:
@@ -670,6 +703,21 @@ def get_field_config(opts: Dict, idx: int) -> Dict:
         "underline": opts[f"field{idx}_underline"],
         "max_lines": FIELD_MAX_LINES[idx],
         "gap_after_dots": mm_to_dots(FIELD_GAPS_MM[idx]),
+    }
+
+
+def get_footer_config(opts: Dict) -> Dict:
+    return {
+        "label": opts["footer_label"],
+        "default_value": opts["footer_default_value"],
+        "alignment": opts["footer_alignment"],
+        "font_family": opts["footer_font_family"],
+        "font_size_mm": opts["footer_font_size_mm"],
+        "bold": opts["footer_bold"],
+        "italic": opts["footer_italic"],
+        "underline": opts["footer_underline"],
+        "max_lines": FOOTER_MAX_LINES,
+        "gap_after_dots": 0,
     }
 
 
@@ -782,7 +830,7 @@ def draw_aligned_text_lines(
     return current_y
 
 
-def render_label_image(text1: str, text2: str, text3: str, opts: Dict, preview: bool) -> Image.Image:
+def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Dict, preview: bool) -> Image.Image:
     layout = effective_layout(opts)
     qr_payload = build_qr_payload(text1, text2, text3, opts)
 
@@ -837,14 +885,33 @@ def render_label_image(text1: str, text2: str, text3: str, opts: Dict, preview: 
         )
         current_y += cfg["gap_after_dots"]
 
+    footer_text = (footer or "").strip()
+    if footer_text:
+        footer_cfg = get_footer_config(opts)
+        font, lines, resolved_font_size = fit_field_lines(draw, footer_text, footer_cfg, text_width)
+        line_spacing = max(4, resolved_font_size // 7)
+        current_y = draw_aligned_text_lines(
+            draw,
+            lines,
+            current_y,
+            margin_x,
+            text_width,
+            font,
+            footer_cfg["alignment"],
+            footer_cfg["underline"],
+            fill=(0, 0, 0),
+            line_spacing=line_spacing,
+        )
+        current_y += footer_cfg["gap_after_dots"]
+
     return img
 
 
-def build_zpl(text1: str, text2: str, text3: str, copies: int, opts: Dict) -> str:
+def build_zpl(text1: str, text2: str, text3: str, footer: str, copies: int, opts: Dict) -> str:
     layout = effective_layout(opts)
     pw = layout["effective_width_dots"]
     ll = layout["requested_height_dots"]
-    label_img = render_label_image(text1, text2, text3, opts, preview=False).convert("1")
+    label_img = render_label_image(text1, text2, text3, footer, opts, preview=False).convert("1")
     total_bytes, bytes_per_row, graphic_hex = image_to_gfa(label_img)
     return f"""^XA
 ^CI28
@@ -886,6 +953,9 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
         field1_style_summary=field_style_summary(opts, 1),
         field2_style_summary=field_style_summary(opts, 2),
         field3_style_summary=field_style_summary(opts, 3),
+        footer_label=opts["footer_label"],
+        footer_default_value=opts["footer_default_value"],
+        footer_style_summary=footer_style_summary(opts),
         qr_value_template=opts["qr_value_template"],
         qr_quiet_zone_modules=opts["qr_quiet_zone_modules"],
         qr_error_correction=opts["qr_error_correction"],
@@ -925,6 +995,7 @@ def print_label():
     text1 = request.form.get("text1", defaults["text1"]).strip()
     text2 = request.form.get("text2", defaults["text2"]).strip()
     text3 = request.form.get("text3", defaults["text3"]).strip()
+    footer = request.form.get("footer", defaults["footer"]).strip()
     copies_raw = request.form.get("copies", DEFAULT_FORM["copies"]).strip()
 
     result = {"success": False, "message": "Unknown error"}
@@ -936,7 +1007,7 @@ def print_label():
         if not text3:
             raise ValueError(f"{opts['field3_label']} is required.")
         copies = max(1, min(50, int(copies_raw)))
-        zpl = build_zpl(text1, text2, text3, copies, opts)
+        zpl = build_zpl(text1, text2, text3, footer, copies, opts)
         qr_payload = build_qr_payload(text1, text2, text3, opts)
         LOGGER.info("Print request received: copies=%s qr_payload=%r", copies, qr_payload)
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
@@ -948,7 +1019,7 @@ def print_label():
         LOGGER.exception("Print failed")
         result = {"success": False, "message": f"Print failed: {exc}"}
 
-    form = {"text1": text1, "text2": text2, "text3": text3, "copies": copies_raw or DEFAULT_FORM["copies"]}
+    form = {"text1": text1, "text2": text2, "text3": text3, "footer": footer, "copies": copies_raw or DEFAULT_FORM["copies"]}
     return render_page(form, opts, result=result)
 
 
@@ -959,8 +1030,9 @@ def preview():
     text1 = request.args.get("text1", defaults["text1"])
     text2 = request.args.get("text2", defaults["text2"])
     text3 = request.args.get("text3", defaults["text3"])
+    footer = request.args.get("footer", defaults["footer"])
     copies = max(1, min(50, int(request.args.get("copies", DEFAULT_FORM["copies"]))))
-    zpl = build_zpl(text1, text2, text3, copies, opts)
+    zpl = build_zpl(text1, text2, text3, footer, copies, opts)
     LOGGER.info("Generated ZPL preview for copies=%s", copies)
     return Response(zpl, mimetype="text/plain; charset=utf-8")
 
@@ -972,8 +1044,9 @@ def preview_png():
     text1 = request.args.get("text1", defaults["text1"])
     text2 = request.args.get("text2", defaults["text2"])
     text3 = request.args.get("text3", defaults["text3"])
-    LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r", text1, text2, text3)
-    img = render_label_image(text1, text2, text3, opts, preview=True)
+    footer = request.args.get("footer", defaults["footer"])
+    LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r footer=%r", text1, text2, text3, footer)
+    img = render_label_image(text1, text2, text3, footer, opts, preview=True)
     bio = BytesIO()
     img.save(bio, format="PNG", dpi=(203, 203), optimize=True)
     bio.seek(0)
@@ -988,6 +1061,7 @@ def api_print():
     text1 = str(payload.get("text1", defaults["text1"])).strip()
     text2 = str(payload.get("text2", defaults["text2"])).strip()
     text3 = str(payload.get("text3", defaults["text3"])).strip()
+    footer = str(payload.get("footer", defaults["footer"])).strip()
     copies = max(1, min(50, int(payload.get("copies", 1))))
     if not text1 or not text2 or not text3:
         return jsonify({
@@ -995,8 +1069,8 @@ def api_print():
             "error": f"{opts['field1_label']}, {opts['field2_label']}, and {opts['field3_label']} are required.",
         }), 400
     try:
-        zpl = build_zpl(text1, text2, text3, copies, opts)
-        LOGGER.info("API print request received: copies=%s", copies)
+        zpl = build_zpl(text1, text2, text3, footer, copies, opts)
+        LOGGER.info("API print request received: copies=%s footer=%r", copies, footer)
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
         return jsonify({
             "ok": True,

@@ -234,3 +234,28 @@ Supported values:
 - `field*_bold`, `field*_italic`, `field*_underline`: `true` or `false`
 
 These styles are rendered consistently in both the PNG preview and the printed label.
+
+
+## Footer
+
+This version adds an optional footer text block with its own configurable label, default value, alignment, font family, font size, bold, italic, and underline settings. The footer is always printed in human-readable form only and is not included in the QR payload unless you manually copy the same content into one of the QR source fields.
+
+## Default configuration in this version
+
+The built-in defaults now match Ernst Fink AG's current working setup, including printer host, label geometry, field labels, default values, centered alignment, QR quiet zone 3, and QR template `text1 - text2`.
+
+
+### Footer configuration keys
+
+```yaml
+footer_label: "Footer"
+footer_default_value: ""
+footer_alignment: "center"
+footer_font_family: "sans"
+footer_font_size_mm: 7
+footer_bold: false
+footer_italic: false
+footer_underline: false
+```
+
+The footer is optional. It is shown as a separate editable field in the UI, uses its own default value, and is printed in human-readable form only.
