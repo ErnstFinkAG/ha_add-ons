@@ -126,6 +126,8 @@ footer_bottom_margin_mm: 0
 footer_bold: false
 footer_italic: false
 footer_underline: false
+
+The footer is printed at the bottom of the label, and the current date is appended automatically at the end when the footer is enabled.
 qr_value_template: "{text1 - text2}"
 qr_quiet_zone_modules: 3
 qr_error_correction: M
@@ -307,4 +309,4 @@ The add-on renders text as graphics for consistent preview and print styling, bu
 
 ## Version in this bundle
 
-This synced documentation bundle corresponds to add-on version `0.1.17`.
+This synced documentation bundle corresponds to add-on version `0.1.18`.

@@ -4,9 +4,11 @@ import math
 import os
 import re
 import socket
+from datetime import datetime
 from functools import lru_cache
 from io import BytesIO
 from typing import Dict, List, Tuple
+from zoneinfo import ZoneInfo
 
 from flask import Flask, Response, jsonify, render_template_string, request, send_file
 import qrcode
@@ -425,7 +427,7 @@ HTML = """
         <li><strong>Sign-off label:</strong> <code>{{ sign_off_label }}</code> · <strong>default:</strong> <code>{{ sign_off_default_value }}</code> · <strong>style:</strong> <code>{{ sign_off_style_summary }}</code></li>
         <li><strong>Configured sign-off names:</strong> <code>{{ sign_off_options_display }}</code></li>
         <li><strong>Weight label:</strong> <code>{{ weight_label }}</code> · <strong>default:</strong> <code>{{ weight_default_value }}</code> · <strong>style:</strong> <code>{{ weight_style_summary }}</code></li>
-        <li><strong>Footer label:</strong> <code>{{ footer_label }}</code> · <strong>default:</strong> <code>{{ footer_default_value }}</code> · <strong>style:</strong> <code>{{ footer_style_summary }}</code></li>
+        <li><strong>Footer label:</strong> <code>{{ footer_label }}</code> · <strong>default:</strong> <code>{{ footer_default_value }}</code> · <strong>printed as:</strong> <code>{{ footer_preview_text }}</code> · <strong>style:</strong> <code>{{ footer_style_summary }}</code></li>
         <li><strong>QR template:</strong> <code>{{ qr_value_template }}</code></li>
         <li><strong>QR quiet zone:</strong> <code>{{ qr_quiet_zone_modules }} module(s)</code></li>
         <li><strong>QR error correction:</strong> <code>{{ qr_error_correction }}</code></li>
@@ -447,7 +449,7 @@ HTML = """
       {% if width_warning %}
       <p class="warn">{{ width_warning }}</p>
       {% endif %}
-      <p class="muted">Field 1 is always printed in human-readable form. Fields 2, 3, weight, and the footer can be turned on or off in the UI for each label. Sign-off prints whenever it is filled in. The QR code follows the configured template above.</p>
+      <p class="muted">Field 1 is always printed in human-readable form. Fields 2, 3, weight, and the footer can be turned on or off in the UI for each label. Sign-off prints whenever it is filled in. When the footer is enabled, today's date is appended automatically at the end. The QR code follows the configured template above.</p>
     </div>
   </div>
   <script>
@@ -923,6 +925,22 @@ def parse_sign_off_options(opts: Dict) -> List[str]:
             names.append(part)
     return names
 
+
+def current_label_date_str() -> str:
+    tz_name = os.environ.get("TZ") or "Europe/Zurich"
+    try:
+        now = datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        now = datetime.now()
+    return now.strftime("%d.%m.%Y")
+
+
+def compose_footer_text(footer: str) -> str:
+    footer_text = (footer or "").strip()
+    if not footer_text:
+        return ""
+    return f"{footer_text} - {current_label_date_str()}"
+
 def text_line_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
     bbox = draw.textbbox((0, 0), "Ag", font=font)
     return max(1, bbox[3] - bbox[1])
@@ -1139,7 +1157,7 @@ def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight
         )
         current_y += weight_cfg["gap_after_dots"]
 
-    footer_text = (footer or "").strip()
+    footer_text = compose_footer_text(footer)
     if footer_text and toggles.get("print_footer", True):
         footer_cfg = get_footer_config(opts)
         font, lines, resolved_font_size = fit_field_lines(draw, footer_text, footer_cfg, text_width)
@@ -1228,6 +1246,7 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
         weight_style_summary=option_style_summary(opts, "weight"),
         footer_label=opts["footer_label"],
         footer_default_value=opts["footer_default_value"],
+        footer_preview_text=compose_footer_text(form.get("footer", opts["footer_default_value"])),
         footer_style_summary=footer_style_summary(opts),
         qr_value_template=opts["qr_value_template"],
         qr_quiet_zone_modules=opts["qr_quiet_zone_modules"],
