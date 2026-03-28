@@ -1,5 +1,5 @@
 name: "Zebra Label Printer"
-version: "0.1.9"
+version: "0.1.10"
 slug: "zebra_label_printer"
 description: >-
   Print large QR-code project labels to a Zebra ZT420/ZT421 over TCP (port 9100)
@@ -48,7 +48,7 @@ options:
   field2_underline: false
   field3_underline: false
   footer_label: "Footer"
-  footer_default_value: ""
+  footer_default_value: "Ernst Fink AG, Schorenweg 144, 4585 Biezwil"
   footer_alignment: "center"
   footer_font_family: "sans"
   footer_font_size_mm: 7

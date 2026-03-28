@@ -145,7 +145,7 @@ DEFAULT_OPTIONS = {
     "field2_underline": False,
     "field3_underline": False,
     "footer_label": "Footer",
-    "footer_default_value": "",
+    "footer_default_value": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
     "footer_alignment": "center",
     "footer_font_family": "sans",
     "footer_font_size_mm": 7.0,
@@ -652,7 +652,9 @@ def image_to_gfa(img: Image.Image) -> Tuple[int, int, str]:
 
 
 def build_qr_payload(text1: str, text2: str, text3: str, opts: Dict) -> str:
-    template = str(opts.get("qr_value_template") or DEFAULT_OPTIONS["qr_value_template"])
+    template = str(opts.get("qr_value_template") or DEFAULT_OPTIONS["qr_value_template"]).strip()
+    if template.startswith("{") and template.endswith("}") and len(template) >= 2:
+        template = template[1:-1].strip()
     values = {"text1": text1, "text2": text2, "text3": text3}
     invalid_tokens = sorted({token.lower() for token in re.findall(r"\btext\d+\b", template, flags=re.IGNORECASE)} - set(ALLOWED_QR_TOKENS))
     if invalid_tokens:
@@ -813,7 +815,7 @@ def draw_aligned_text_lines(
     underline_thickness = max(1, line_h // 18)
     underline_offset = max(2, line_h // 12)
 
-    for line in lines:
+    for idx, line in enumerate(lines):
         bbox = draw.textbbox((0, 0), line, font=font)
         text_w = bbox[2] - bbox[0]
         if alignment == "left":
@@ -826,8 +828,17 @@ def draw_aligned_text_lines(
         if underline:
             underline_y = current_y + line_h + underline_offset
             draw.line((x, underline_y, x + text_w, underline_y), fill=fill, width=underline_thickness)
-        current_y += line_h + line_spacing
+        current_y += line_h
+        if idx < len(lines) - 1:
+            current_y += line_spacing
     return current_y
+
+
+def text_block_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont, line_count: int, line_spacing: int) -> int:
+    if line_count <= 0:
+        return 0
+    line_h = text_line_height(draw, font)
+    return (line_count * line_h) + (max(0, line_count - 1) * line_spacing)
 
 
 def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Dict, preview: bool) -> Image.Image:
@@ -890,10 +901,20 @@ def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Di
         footer_cfg = get_footer_config(opts)
         font, lines, resolved_font_size = fit_field_lines(draw, footer_text, footer_cfg, text_width)
         line_spacing = max(4, resolved_font_size // 7)
-        current_y = draw_aligned_text_lines(
+        footer_height = text_block_height(draw, font, len(lines), line_spacing)
+        footer_y = max(0, canvas_height - footer_height)
+        if footer_y < current_y:
+            LOGGER.warning(
+                "Footer overlaps content: footer_y=%s current_y=%s footer_height=%s label_height=%s",
+                footer_y,
+                current_y,
+                footer_height,
+                canvas_height,
+            )
+        draw_aligned_text_lines(
             draw,
             lines,
-            current_y,
+            footer_y,
             margin_x,
             text_width,
             font,
@@ -902,7 +923,6 @@ def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Di
             fill=(0, 0, 0),
             line_spacing=line_spacing,
         )
-        current_y += footer_cfg["gap_after_dots"]
 
     return img
 

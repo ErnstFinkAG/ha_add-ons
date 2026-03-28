@@ -111,6 +111,8 @@ Examples:
 
 Any field that is not referenced in `qr_value_template` is still printed on the label in human-readable form.
 
+For compatibility, the add-on also accepts a single outer pair of braces, so `{text1 - text2}` is treated like `text1 - text2`.
+
 ### QR settings
 
 You can also control the generated QR code in add-on config:
@@ -126,6 +128,8 @@ Examples:
 - `qr_error_correction: "H"` → less capacity, more redundancy
 
 The PNG preview draws a red border around the full QR footprint including the configured quiet zone. That red outline is preview-only and is **not** printed.
+
+The footer is anchored to the bottom edge of the label instead of flowing directly after field 3.
 
 ## Usage
 
@@ -249,7 +253,7 @@ The built-in defaults now match Ernst Fink AG's current working setup, including
 
 ```yaml
 footer_label: "Footer"
-footer_default_value: ""
+footer_default_value: "Ernst Fink AG, Schorenweg 144, 4585 Biezwil"
 footer_alignment: "center"
 footer_font_family: "sans"
 footer_font_size_mm: 7
