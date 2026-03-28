@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import os
 import socket
@@ -10,6 +11,12 @@ from flask import Flask, Response, jsonify, render_template_string, request, sen
 import qrcode
 from PIL import Image, ImageDraw, ImageFont
 
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+LOGGER = logging.getLogger("zebra_label_printer")
 
 APP = Flask(__name__)
 DOTS_PER_MM = 203 / 25.4  # 8 dots/mm for 203 dpi
@@ -361,8 +368,8 @@ def load_options() -> Dict:
                 data = json.load(f)
             if isinstance(data, dict):
                 options.update(data)
-        except Exception:
-            pass
+        except Exception as exc:
+            LOGGER.warning("Failed to load %s: %s", OPTIONS_PATH, exc)
 
     options["field1_label"] = str(options.get("field1_label") or DEFAULT_OPTIONS["field1_label"]).strip() or DEFAULT_OPTIONS["field1_label"]
     options["field2_label"] = str(options.get("field2_label") or DEFAULT_OPTIONS["field2_label"]).strip() or DEFAULT_OPTIONS["field2_label"]
@@ -408,6 +415,19 @@ def effective_layout(opts: Dict) -> Dict:
         "effective_width_dots": effective_width_dots,
         "width_warning": width_warning,
     }
+
+
+def qr_quiet_zone_modules(opts: Dict) -> int:
+    try:
+        quiet_zone = int(opts.get("qr_quiet_zone_modules", DEFAULT_OPTIONS["qr_quiet_zone_modules"]))
+    except (TypeError, ValueError):
+        quiet_zone = DEFAULT_OPTIONS["qr_quiet_zone_modules"]
+    return max(0, min(20, quiet_zone))
+
+
+def qr_error_correction_constant(opts: Dict) -> int:
+    level = str(opts.get("qr_error_correction") or DEFAULT_OPTIONS["qr_error_correction"]).strip().upper()
+    return QR_ERROR_CORRECTION_MAP.get(level, QR_ERROR_CORRECTION_MAP[DEFAULT_OPTIONS["qr_error_correction"]])
 
 
 def build_qr_image(data: str, size_dots: int, opts: Dict) -> Image.Image:
@@ -669,8 +689,10 @@ def render_preview_image(text1: str, text2: str, text3: str, opts: Dict) -> Imag
 
 def send_to_printer(host: str, port: int, payload: str) -> None:
     data = payload.encode("utf-8")
+    LOGGER.info("Sending %s bytes to printer %s:%s", len(data), host, port)
     with socket.create_connection((host, int(port)), timeout=10) as sock:
         sock.sendall(data)
+    LOGGER.info("Finished sending label payload to printer %s:%s", host, port)
 
 
 def form_data_from_request() -> Dict[str, str]:
@@ -725,6 +747,7 @@ def restrict_ingress():
 def index():
     opts = load_options()
     form = form_data_from_request()
+    LOGGER.info("Opened UI for printer %s:%s", opts["printer_host"], opts["printer_port"])
     return render_page(form, opts, result=None)
 
 
@@ -746,13 +769,15 @@ def print_label():
             raise ValueError(f"{opts['field3_label']} is required.")
         copies = max(1, min(50, int(copies_raw)))
         zpl = build_zpl(text1, text2, text3, copies, opts)
-        send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
         qr_payload = build_qr_payload(text1, text2, text3, opts)
+        LOGGER.info("Print request received: copies=%s qr_payload=%r", copies, qr_payload)
+        send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
         result = {
             "success": True,
             "message": f"Sent {copies} label(s) to {opts['printer_host']}:{opts['printer_port']}. QR payload: {qr_payload}",
         }
     except Exception as exc:
+        LOGGER.exception("Print failed")
         result = {"success": False, "message": f"Print failed: {exc}"}
 
     form = {"text1": text1, "text2": text2, "text3": text3, "copies": copies_raw or DEFAULT_FORM["copies"]}
@@ -767,6 +792,7 @@ def preview():
     text3 = request.args.get("text3", DEFAULT_FORM["text3"])
     copies = max(1, min(50, int(request.args.get("copies", DEFAULT_FORM["copies"]))))
     zpl = build_zpl(text1, text2, text3, copies, opts)
+    LOGGER.info("Generated ZPL preview for copies=%s", copies)
     return Response(zpl, mimetype="text/plain; charset=utf-8")
 
 
@@ -776,6 +802,7 @@ def preview_png():
     text1 = request.args.get("text1", DEFAULT_FORM["text1"])
     text2 = request.args.get("text2", DEFAULT_FORM["text2"])
     text3 = request.args.get("text3", DEFAULT_FORM["text3"])
+    LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r", text1, text2, text3)
     img = render_preview_image(text1, text2, text3, opts)
     bio = BytesIO()
     img.save(bio, format="PNG", dpi=(203, 203), optimize=True)
@@ -798,6 +825,7 @@ def api_print():
         }), 400
     try:
         zpl = build_zpl(text1, text2, text3, copies, opts)
+        LOGGER.info("API print request received: copies=%s", copies)
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
         return jsonify({
             "ok": True,
@@ -806,6 +834,7 @@ def api_print():
             "qr_payload": build_qr_payload(text1, text2, text3, opts),
         })
     except Exception as exc:
+        LOGGER.exception("API print failed")
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
