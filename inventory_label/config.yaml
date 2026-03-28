@@ -1,8 +1,8 @@
 name: "Inventory Label"
-version: "0.1.20"
+version: "0.1.21"
 slug: "inventory_label"
 description: >-
-  Print large QR-code project or inventory labels to a Zebra ZT420/ZT421 with live PNG preview, sign-off suggestions, optional weight, per-field styling, optional footer with automatic current date, and TCP 9100 printing
+  Print large QR-code project or inventory labels to a Zebra ZT420/ZT421 with live PNG preview, sign-off suggestions, optional inline-or-separate weight, per-field styling, optional footer with automatic current date, and TCP 9100 printing
 url: "https://github.com/ErnstFinkAG/ha_add-ons/tree/main/inventory_label"
 startup: services
 boot: auto

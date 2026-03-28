@@ -309,4 +309,4 @@ The add-on renders text as graphics for consistent preview and print styling, bu
 
 ## Version in this bundle
 
-This synced documentation bundle corresponds to add-on version `0.1.20`.
+This synced documentation bundle corresponds to add-on version `0.1.21`.

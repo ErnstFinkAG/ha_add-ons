@@ -449,7 +449,7 @@ HTML = """
       {% if width_warning %}
       <p class="warn">{{ width_warning }}</p>
       {% endif %}
-      <p class="muted">Field 1 is always printed in human-readable form. Fields 2, 3, weight, and the footer can be turned on or off in the UI for each label. Sign-off prints whenever it is filled in. When the footer is enabled, today's date is appended automatically at the end. The QR code follows the configured template above.</p>
+      <p class="muted">Field 1 is always printed in human-readable form. Fields 2, 3, weight, and the footer can be turned on or off in the UI for each label. Sign-off prints whenever it is filled in. When field 3 and weight are both enabled, the weight is appended to field 3 with <code> - </code> before <code>kg</code>. When the footer is enabled, today's date is appended automatically at the end. The QR code follows the configured template above.</p>
     </div>
   </div>
   <script>
@@ -1110,13 +1110,23 @@ def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight
 
     toggles = print_toggles or {"print_text2": True, "print_text3": True, "print_weight": False, "print_footer": True}
 
+    weight_text = (weight or "").strip()
+    combined_field3_and_weight = False
+
     text_values = {1: text1, 2: text2, 3: text3}
     field_enabled = {1: True, 2: toggles.get("print_text2", True), 3: toggles.get("print_text3", True)}
     for idx in range(1, FIELD_COUNT + 1):
         if not field_enabled.get(idx, True):
             continue
+
+        field_value = text_values[idx]
+        if idx == 3 and toggles.get("print_weight", False) and weight_text:
+            field3_value = (field_value or "").strip()
+            field_value = f"{field3_value} - {weight_text} kg" if field3_value else f"{weight_text} kg"
+            combined_field3_and_weight = True
+
         cfg = get_field_config(opts, idx)
-        font, lines, resolved_font_size = fit_field_lines(draw, text_values[idx], cfg, text_width)
+        font, lines, resolved_font_size = fit_field_lines(draw, field_value, cfg, text_width)
         line_spacing = max(4, resolved_font_size // 7)
         current_y = draw_aligned_text_lines(
             draw,
@@ -1151,8 +1161,7 @@ def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight
         )
         current_y += sign_off_cfg["gap_after_dots"]
 
-    weight_text = (weight or "").strip()
-    if weight_text and toggles.get("print_weight", False):
+    if weight_text and toggles.get("print_weight", False) and not combined_field3_and_weight:
         weight_cfg = get_optional_block_config(opts, "weight")
         font, lines, resolved_font_size = fit_field_lines(draw, f"{weight_text} kg", weight_cfg, text_width)
         line_spacing = max(4, resolved_font_size // 7)
