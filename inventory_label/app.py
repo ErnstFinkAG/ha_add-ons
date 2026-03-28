@@ -539,9 +539,15 @@ HTML = """
         applyPreviewUpdate();
       });
 
-      [text2, text3, signOff, footer, printText2, printText3, printWeight, printFooter, copies].forEach((input) => {
+      [text2, text3, signOff, footer, copies].forEach((input) => {
         input.addEventListener("input", schedulePreviewUpdate);
         input.addEventListener("change", applyPreviewUpdate);
+      });
+
+      [printText2, printText3, printWeight, printFooter].forEach((checkbox) => {
+        checkbox.addEventListener("input", schedulePreviewUpdate);
+        checkbox.addEventListener("change", applyPreviewUpdate);
+        checkbox.addEventListener("click", applyPreviewUpdate);
       });
 
       sanitizeText1();
