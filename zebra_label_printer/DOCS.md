@@ -194,3 +194,43 @@ The add-on sends UTF-8 ZPL (`^CI28`), but printed output still depends on the fo
 The PNG preview updates automatically when you change the field values or **Copies** in the web UI.
 
 Version 0.1.6 adds configurable QR quiet zone and QR error-correction settings in the add-on config, and it shows a red preview-only border around the QR footprint including the quiet zone.
+
+
+## Field defaults and styling
+
+You can configure each field independently in the add-on Config tab:
+
+```yaml
+field1_label: "Project"
+field2_label: "Element"
+field3_label: "Zone"
+field1_default_value: "250001 - Test Project"
+field2_default_value: "Element 1e"
+field3_default_value: "Zone A"
+field1_alignment: "center"
+field2_alignment: "left"
+field3_alignment: "right"
+field1_font_family: "sans"
+field2_font_family: "serif"
+field3_font_family: "mono"
+field1_font_size_mm: 12
+field2_font_size_mm: 10
+field3_font_size_mm: 8.5
+field1_bold: true
+field2_bold: false
+field3_bold: false
+field1_italic: false
+field2_italic: true
+field3_italic: false
+field1_underline: false
+field2_underline: false
+field3_underline: true
+```
+
+Supported values:
+- `field*_alignment`: `left`, `center`, `right`
+- `field*_font_family`: `sans`, `serif`, `mono`
+- `field*_font_size_mm`: text height target in millimetres
+- `field*_bold`, `field*_italic`, `field*_underline`: `true` or `false`
+
+These styles are rendered consistently in both the PNG preview and the printed label.

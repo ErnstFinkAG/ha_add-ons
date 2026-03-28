@@ -2,9 +2,10 @@ import json
 import logging
 import math
 import os
-import socket
-from io import BytesIO
 import re
+import socket
+from functools import lru_cache
+from io import BytesIO
 from typing import Dict, List, Tuple
 
 from flask import Flask, Response, jsonify, render_template_string, request, send_file
@@ -12,24 +13,104 @@ import qrcode
 from PIL import Image, ImageDraw, ImageFont
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-)
-LOGGER = logging.getLogger("zebra_label_printer")
+LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+root_logger = logging.getLogger()
+if not root_logger.handlers:
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+else:
+    for handler in root_logger.handlers:
+        handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    root_logger.setLevel(logging.INFO)
 
+logging.getLogger("werkzeug").handlers.clear()
+logging.getLogger("werkzeug").propagate = True
+
+LOGGER = logging.getLogger("zebra_label_printer")
 APP = Flask(__name__)
+APP.logger.handlers.clear()
+APP.logger.propagate = True
+
 DOTS_PER_MM = 203 / 25.4  # 8 dots/mm for 203 dpi
 PRINTER_MAX_WIDTH_DOTS = 1344  # Zebra ZT420/ZT421 203 dpi maximum print width
 INGRESS_ALLOWED_IP = "172.30.32.2"
 LOCAL_ALLOWED_IPS = {"127.0.0.1", "::1", None}
 OPTIONS_PATH = "/data/options.json"
-FONT_CANDIDATES = [
-    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-]
+DEFAULT_TEXT_BLOCK_MARGIN_MM = 8.0
+FIELD_COUNT = 3
+ALLOWED_QR_TOKENS = ("text1", "text2", "text3")
+ALIGNMENTS = {"left", "center", "right"}
+FONT_FAMILIES = {"sans", "serif", "mono"}
+FIELD_GAPS_MM = {1: 8.0, 2: 6.0, 3: 0.0}
+FIELD_MAX_LINES = {1: 4, 2: 3, 3: 3}
 
+FONT_PATHS = {
+    "sans": {
+        "regular": [
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        ],
+        "bold": [
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+        ],
+        "italic": [
+            "/usr/share/fonts/TTF/DejaVuSans-Oblique.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans-Oblique.ttf",
+        ],
+        "bolditalic": [
+            "/usr/share/fonts/TTF/DejaVuSans-BoldOblique.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans-BoldOblique.ttf",
+        ],
+    },
+    "serif": {
+        "regular": [
+            "/usr/share/fonts/TTF/DejaVuSerif.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSerif.ttf",
+        ],
+        "bold": [
+            "/usr/share/fonts/TTF/DejaVuSerif-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSerif-Bold.ttf",
+        ],
+        "italic": [
+            "/usr/share/fonts/TTF/DejaVuSerif-Italic.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSerif-Italic.ttf",
+        ],
+        "bolditalic": [
+            "/usr/share/fonts/TTF/DejaVuSerif-BoldItalic.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-BoldItalic.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSerif-BoldItalic.ttf",
+        ],
+    },
+    "mono": {
+        "regular": [
+            "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+        ],
+        "bold": [
+            "/usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSansMono-Bold.ttf",
+        ],
+        "italic": [
+            "/usr/share/fonts/TTF/DejaVuSansMono-Oblique.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Oblique.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSansMono-Oblique.ttf",
+        ],
+        "bolditalic": [
+            "/usr/share/fonts/TTF/DejaVuSansMono-BoldOblique.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-BoldOblique.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSansMono-BoldOblique.ttf",
+        ],
+    },
+}
 
 DEFAULT_OPTIONS = {
     "printer_host": "192.168.1.50",
@@ -41,6 +122,27 @@ DEFAULT_OPTIONS = {
     "field1_label": "Text string 1",
     "field2_label": "Text string 2",
     "field3_label": "Text string 3",
+    "field1_default_value": "250001 - Test Project",
+    "field2_default_value": "Element 1e",
+    "field3_default_value": "Zone A",
+    "field1_alignment": "center",
+    "field2_alignment": "center",
+    "field3_alignment": "center",
+    "field1_font_family": "sans",
+    "field2_font_family": "sans",
+    "field3_font_family": "sans",
+    "field1_font_size_mm": 12.0,
+    "field2_font_size_mm": 10.0,
+    "field3_font_size_mm": 8.5,
+    "field1_bold": True,
+    "field2_bold": False,
+    "field3_bold": False,
+    "field1_italic": False,
+    "field2_italic": False,
+    "field3_italic": False,
+    "field1_underline": False,
+    "field2_underline": False,
+    "field3_underline": False,
     "qr_value_template": "text1",
     "qr_quiet_zone_modules": 4,
     "qr_error_correction": "M",
@@ -54,19 +156,8 @@ QR_ERROR_CORRECTION_MAP = {
 }
 
 DEFAULT_FORM = {
-    "text1": "250001 - Test Project",
-    "text2": "Element 1e",
-    "text3": "Zone A",
     "copies": "1",
 }
-
-ALLOWED_QR_TOKENS = ("text1", "text2", "text3")
-
-
-def ingress_base_path() -> str:
-    base = request.headers.get("X-Ingress-Path") or request.script_root or ""
-    return base.rstrip("/")
-
 
 HTML = """
 <!doctype html>
@@ -87,9 +178,7 @@ HTML = """
       --ok: #10b981;
       --border: #374151;
       --label-bg: #ffffff;
-      --label-ink: #111111;
       --label-edge: #d1d5db;
-      --label-no-print: #f3f4f6;
     }
     body {
       margin: 0;
@@ -110,9 +199,7 @@ HTML = """
       box-shadow: 0 10px 30px rgba(0,0,0,0.25);
       margin-bottom: 20px;
     }
-    h1, h2, h3 {
-      margin-top: 0;
-    }
+    h1, h2, h3 { margin-top: 0; }
     label {
       display: block;
       font-weight: 600;
@@ -211,18 +298,14 @@ HTML = """
       padding-left: 18px;
       color: var(--muted);
     }
-    .config-list li + li {
-      margin-top: 8px;
-    }
+    .config-list li + li { margin-top: 8px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <h1>Zebra Label Printer</h1>
-      <p class="muted">
-        Prints one large QR code label to a networked Zebra printer using raw ZPL over TCP.
-      </p>
+      <p class="muted">Prints one large QR code label to a networked Zebra printer using raw ZPL over TCP.</p>
       {% if result %}
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
       {% endif %}
@@ -265,7 +348,7 @@ HTML = """
         </div>
       </div>
       <div class="preview-meta">
-        PNG is rendered from the same layout coordinates as the generated ZPL and exported at 203 dpi.
+        PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi.
         Screen size can still vary with browser zoom and display scaling.
       </div>
     </div>
@@ -273,9 +356,9 @@ HTML = """
     <div class="card">
       <h2>Configured label mapping</h2>
       <ul class="config-list">
-        <li><strong>Field 1 label:</strong> <code>{{ field1_label }}</code></li>
-        <li><strong>Field 2 label:</strong> <code>{{ field2_label }}</code></li>
-        <li><strong>Field 3 label:</strong> <code>{{ field3_label }}</code></li>
+        <li><strong>Field 1 label:</strong> <code>{{ field1_label }}</code> · <strong>default:</strong> <code>{{ field1_default_value }}</code> · <strong>style:</strong> <code>{{ field1_style_summary }}</code></li>
+        <li><strong>Field 2 label:</strong> <code>{{ field2_label }}</code> · <strong>default:</strong> <code>{{ field2_default_value }}</code> · <strong>style:</strong> <code>{{ field2_style_summary }}</code></li>
+        <li><strong>Field 3 label:</strong> <code>{{ field3_label }}</code> · <strong>default:</strong> <code>{{ field3_default_value }}</code> · <strong>style:</strong> <code>{{ field3_style_summary }}</code></li>
         <li><strong>QR template:</strong> <code>{{ qr_value_template }}</code></li>
         <li><strong>QR quiet zone:</strong> <code>{{ qr_quiet_zone_modules }} module(s)</code></li>
         <li><strong>QR error correction:</strong> <code>{{ qr_error_correction }}</code></li>
@@ -294,9 +377,7 @@ HTML = """
       {% if width_warning %}
       <p class="warn">{{ width_warning }}</p>
       {% endif %}
-      <p class="muted">
-        The QR code uses the configured template above. All three fields are printed below the QR code in human-readable form.
-      </p>
+      <p class="muted">All three fields are printed in human-readable form. The QR code follows the configured template above.</p>
     </div>
   </div>
   <script>
@@ -309,10 +390,7 @@ HTML = """
       const previewImage = document.getElementById("preview-image");
       const previewPngLink = document.getElementById("preview-png-link");
       const previewZplLink = document.getElementById("preview-zpl-link");
-
-      if (!text1 || !text2 || !text3 || !copies || !previewImage || !previewPngLink || !previewZplLink) {
-        return;
-      }
+      if (!text1 || !text2 || !text3 || !copies || !previewImage || !previewPngLink || !previewZplLink) return;
 
       let refreshTimer = null;
       let previewNonce = Date.now();
@@ -335,11 +413,9 @@ HTML = """
       function applyPreviewUpdate() {
         const params = buildQuery();
         previewNonce += 1;
-
         const pngParams = new URLSearchParams(params);
         pngParams.set("_", String(previewNonce));
-        const pngUrl = `${ingressBase}/preview.png?${pngParams.toString()}`;
-        previewImage.src = pngUrl;
+        previewImage.src = `${ingressBase}/preview.png?${pngParams.toString()}`;
         previewPngLink.href = `${ingressBase}/preview.png?${params.toString()}`;
         previewZplLink.href = `${ingressBase}/preview?${params.toString()}`;
       }
@@ -360,31 +436,122 @@ HTML = """
 """
 
 
+def ingress_base_path() -> str:
+    base = request.headers.get("X-Ingress-Path") or request.script_root or ""
+    return base.rstrip("/")
+
+
+@lru_cache(maxsize=128)
+def load_font(family: str, bold: bool, italic: bool, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    family = family if family in FONT_FAMILIES else "sans"
+    size = max(10, int(size))
+    style = "bolditalic" if bold and italic else "bold" if bold else "italic" if italic else "regular"
+    fallback_order = [style, "bold" if bold else "regular", "italic" if italic else "regular", "regular"]
+    tried = set()
+    for style_name in fallback_order:
+        if style_name in tried:
+            continue
+        tried.add(style_name)
+        for path in FONT_PATHS[family][style_name]:
+            if os.path.exists(path):
+                return ImageFont.truetype(path, size=size)
+    return ImageFont.load_default()
+
+
+def normalize_string(value: object, default: str) -> str:
+    text = str(value if value is not None else default)
+    return text.strip() or default
+
+
+def normalize_float(value: object, default: float, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def normalize_int(value: object, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def normalize_bool(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def normalize_alignment(value: object, default: str) -> str:
+    align = str(value if value is not None else default).strip().lower()
+    return align if align in ALIGNMENTS else default
+
+
+def normalize_font_family(value: object, default: str) -> str:
+    family = str(value if value is not None else default).strip().lower()
+    return family if family in FONT_FAMILIES else default
+
+
 def load_options() -> Dict:
     options = dict(DEFAULT_OPTIONS)
     if os.path.exists(OPTIONS_PATH):
         try:
-            with open(OPTIONS_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            with open(OPTIONS_PATH, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
             if isinstance(data, dict):
                 options.update(data)
         except Exception as exc:
             LOGGER.warning("Failed to load %s: %s", OPTIONS_PATH, exc)
 
-    options["field1_label"] = str(options.get("field1_label") or DEFAULT_OPTIONS["field1_label"]).strip() or DEFAULT_OPTIONS["field1_label"]
-    options["field2_label"] = str(options.get("field2_label") or DEFAULT_OPTIONS["field2_label"]).strip() or DEFAULT_OPTIONS["field2_label"]
-    options["field3_label"] = str(options.get("field3_label") or DEFAULT_OPTIONS["field3_label"]).strip() or DEFAULT_OPTIONS["field3_label"]
+    options["printer_host"] = normalize_string(options.get("printer_host"), DEFAULT_OPTIONS["printer_host"])
+    options["printer_port"] = normalize_int(options.get("printer_port"), DEFAULT_OPTIONS["printer_port"], 1, 65535)
+    options["label_width_mm"] = normalize_float(options.get("label_width_mm"), DEFAULT_OPTIONS["label_width_mm"], 50.0, 500.0)
+    options["label_height_mm"] = normalize_float(options.get("label_height_mm"), DEFAULT_OPTIONS["label_height_mm"], 50.0, 1000.0)
+    options["qr_size_mm"] = normalize_float(options.get("qr_size_mm"), DEFAULT_OPTIONS["qr_size_mm"], 10.0, 300.0)
+    options["top_margin_mm"] = normalize_float(options.get("top_margin_mm"), DEFAULT_OPTIONS["top_margin_mm"], 0.0, 100.0)
     options["qr_value_template"] = str(options.get("qr_value_template") or DEFAULT_OPTIONS["qr_value_template"])
-
-    try:
-        quiet_zone = int(options.get("qr_quiet_zone_modules", DEFAULT_OPTIONS["qr_quiet_zone_modules"]))
-    except (TypeError, ValueError):
-        quiet_zone = DEFAULT_OPTIONS["qr_quiet_zone_modules"]
-    options["qr_quiet_zone_modules"] = max(0, min(20, quiet_zone))
-
+    options["qr_quiet_zone_modules"] = normalize_int(options.get("qr_quiet_zone_modules"), DEFAULT_OPTIONS["qr_quiet_zone_modules"], 0, 20)
     level = str(options.get("qr_error_correction") or DEFAULT_OPTIONS["qr_error_correction"]).strip().upper()
     options["qr_error_correction"] = level if level in QR_ERROR_CORRECTION_MAP else DEFAULT_OPTIONS["qr_error_correction"]
+
+    for idx in range(1, FIELD_COUNT + 1):
+        options[f"field{idx}_label"] = normalize_string(options.get(f"field{idx}_label"), DEFAULT_OPTIONS[f"field{idx}_label"])
+        options[f"field{idx}_default_value"] = str(options.get(f"field{idx}_default_value") or DEFAULT_OPTIONS[f"field{idx}_default_value"])
+        options[f"field{idx}_alignment"] = normalize_alignment(options.get(f"field{idx}_alignment"), DEFAULT_OPTIONS[f"field{idx}_alignment"])
+        options[f"field{idx}_font_family"] = normalize_font_family(options.get(f"field{idx}_font_family"), DEFAULT_OPTIONS[f"field{idx}_font_family"])
+        options[f"field{idx}_font_size_mm"] = normalize_float(options.get(f"field{idx}_font_size_mm"), DEFAULT_OPTIONS[f"field{idx}_font_size_mm"], 2.0, 30.0)
+        options[f"field{idx}_bold"] = normalize_bool(options.get(f"field{idx}_bold"), DEFAULT_OPTIONS[f"field{idx}_bold"])
+        options[f"field{idx}_italic"] = normalize_bool(options.get(f"field{idx}_italic"), DEFAULT_OPTIONS[f"field{idx}_italic"])
+        options[f"field{idx}_underline"] = normalize_bool(options.get(f"field{idx}_underline"), DEFAULT_OPTIONS[f"field{idx}_underline"])
     return options
+
+
+def default_form_from_options(opts: Dict) -> Dict[str, str]:
+    return {
+        "text1": str(opts.get("field1_default_value") or ""),
+        "text2": str(opts.get("field2_default_value") or ""),
+        "text3": str(opts.get("field3_default_value") or ""),
+        "copies": DEFAULT_FORM["copies"],
+    }
+
+
+def form_data_from_request(opts: Dict) -> Dict[str, str]:
+    defaults = default_form_from_options(opts)
+    return {
+        "text1": request.values.get("text1", defaults["text1"]),
+        "text2": request.values.get("text2", defaults["text2"]),
+        "text3": request.values.get("text3", defaults["text3"]),
+        "copies": request.values.get("copies", defaults["copies"]),
+    }
 
 
 def mm_to_dots(mm_value: float) -> int:
@@ -405,7 +572,7 @@ def effective_layout(opts: Dict) -> Dict:
     if requested_width_dots > PRINTER_MAX_WIDTH_DOTS:
         width_warning = (
             f"Requested width {opts['label_width_mm']} mm exceeds the printer's 168 mm printable width. "
-            f"The add-on will clamp ZPL ^PW to {dots_to_mm(effective_width_dots)} mm."
+            f"The add-on will clamp the printed width to {dots_to_mm(effective_width_dots)} mm."
         )
     return {
         "requested_width_dots": requested_width_dots,
@@ -418,11 +585,7 @@ def effective_layout(opts: Dict) -> Dict:
 
 
 def qr_quiet_zone_modules(opts: Dict) -> int:
-    try:
-        quiet_zone = int(opts.get("qr_quiet_zone_modules", DEFAULT_OPTIONS["qr_quiet_zone_modules"]))
-    except (TypeError, ValueError):
-        quiet_zone = DEFAULT_OPTIONS["qr_quiet_zone_modules"]
-    return max(0, min(20, quiet_zone))
+    return normalize_int(opts.get("qr_quiet_zone_modules"), DEFAULT_OPTIONS["qr_quiet_zone_modules"], 0, 20)
 
 
 def qr_error_correction_constant(opts: Dict) -> int:
@@ -456,113 +619,58 @@ def image_to_gfa(img: Image.Image) -> Tuple[int, int, str]:
             byte = 0
             for bit in range(8):
                 x = xb * 8 + bit
-                if x < width:
-                    pixel = pixels[x, y]
-                    is_black = pixel == 0
-                    if is_black:
-                        byte |= 1 << (7 - bit)
+                if x < width and pixels[x, y] == 0:
+                    byte |= 1 << (7 - bit)
             row.append(byte)
         lines.append(row.hex().upper())
     return total_bytes, bytes_per_row, "".join(lines)
 
 
-def zpl_escape_utf8(text: str) -> str:
-    safe = set(range(32, 127)) - {ord("^"), ord("~"), ord("\\")}
-    out = []
-    for b in text.encode("utf-8"):
-        if b in safe:
-            out.append(chr(b))
-        else:
-            out.append(f"\\{b:02X}")
-    return "".join(out)
-
-
 def build_qr_payload(text1: str, text2: str, text3: str, opts: Dict) -> str:
     template = str(opts.get("qr_value_template") or DEFAULT_OPTIONS["qr_value_template"])
-    values = {
-        "text1": text1,
-        "text2": text2,
-        "text3": text3,
-    }
-
+    values = {"text1": text1, "text2": text2, "text3": text3}
     invalid_tokens = sorted({token.lower() for token in re.findall(r"\btext\d+\b", template, flags=re.IGNORECASE)} - set(ALLOWED_QR_TOKENS))
     if invalid_tokens:
         allowed = ", ".join(ALLOWED_QR_TOKENS)
-        raise ValueError(
-            f"qr_value_template uses unsupported token(s): {', '.join(invalid_tokens)}. Allowed tokens: {allowed}."
-        )
+        raise ValueError(f"qr_value_template uses unsupported token(s): {', '.join(invalid_tokens)}. Allowed tokens: {allowed}.")
 
     def replace_token(match: re.Match[str]) -> str:
         return values[match.group(0).lower()]
 
-    payload = re.sub(r"\b(?:text1|text2|text3)\b", replace_token, template, flags=re.IGNORECASE)
-    payload = payload.strip()
+    payload = re.sub(r"\b(?:text1|text2|text3)\b", replace_token, template, flags=re.IGNORECASE).strip()
     if not payload:
         raise ValueError("QR payload is empty. Adjust qr_value_template or enter field values.")
     return payload
 
 
-def font_for_text(text: str, primary: bool) -> Tuple[int, int, int]:
-    length = len(text.strip())
-    if primary:
-        if length <= 24:
-            return 110, 88, 2
-        if length <= 36:
-            return 90, 72, 3
-        return 72, 58, 4
-    if length <= 20:
-        return 95, 76, 2
-    if length <= 30:
-        return 80, 64, 2
-    return 68, 54, 3
+def field_style_summary(opts: Dict, idx: int) -> str:
+    parts = [
+        f"{opts[f'field{idx}_alignment']}",
+        f"{opts[f'field{idx}_font_family']}",
+        f"{opts[f'field{idx}_font_size_mm']} mm",
+    ]
+    if opts.get(f"field{idx}_bold"):
+        parts.append("bold")
+    if opts.get(f"field{idx}_italic"):
+        parts.append("italic")
+    if opts.get(f"field{idx}_underline"):
+        parts.append("underline")
+    return ", ".join(parts)
 
 
-def build_zpl(text1: str, text2: str, text3: str, copies: int, opts: Dict) -> str:
-    layout = effective_layout(opts)
-    qr_payload = build_qr_payload(text1, text2, text3, opts)
-
-    pw = layout["effective_width_dots"]
-    ll = layout["requested_height_dots"]
-    qr_size = min(layout["qr_size_dots"], pw)
-    qr_left = max((pw - qr_size) // 2, 0)
-    qr_top = layout["top_margin_dots"]
-
-    margin_x = max((pw - qr_size) // 2, mm_to_dots(8))
-    text_width = pw - (margin_x * 2)
-    primary_h, primary_w, primary_lines = font_for_text(text1, primary=True)
-    secondary_h, secondary_w, secondary_lines = font_for_text(text2, primary=False)
-    tertiary_h, tertiary_w, tertiary_lines = font_for_text(text3, primary=False)
-
-    primary_y = qr_top + qr_size + mm_to_dots(8)
-    secondary_y = primary_y + (primary_h * primary_lines) + mm_to_dots(8)
-    tertiary_y = secondary_y + (secondary_h * secondary_lines) + mm_to_dots(6)
-
-    qr_img = build_qr_image(qr_payload, qr_size, opts)
-    total_bytes, bytes_per_row, graphic_hex = image_to_gfa(qr_img)
-
-    esc1 = zpl_escape_utf8(text1)
-    esc2 = zpl_escape_utf8(text2)
-    esc3 = zpl_escape_utf8(text3)
-
-    zpl = f"""^XA
-^CI28
-^PW{pw}
-^LL{ll}
-^LH0,0
-^FO{qr_left},{qr_top}^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_hex}^FS
-^FO{margin_x},{primary_y}^A0N,{primary_h},{primary_w}^FB{text_width},{primary_lines},14,C,0^FH\\^FD{esc1}^FS
-^FO{margin_x},{secondary_y}^A0N,{secondary_h},{secondary_w}^FB{text_width},{secondary_lines},10,C,0^FH\\^FD{esc2}^FS
-^FO{margin_x},{tertiary_y}^A0N,{tertiary_h},{tertiary_w}^FB{text_width},{tertiary_lines},10,C,0^FH\\^FD{esc3}^FS
-^PQ{copies},0,1,N
-^XZ"""
-    return zpl
-
-
-def get_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    for path in FONT_CANDIDATES:
-        if os.path.exists(path):
-            return ImageFont.truetype(path, size=size)
-    return ImageFont.load_default()
+def get_field_config(opts: Dict, idx: int) -> Dict:
+    return {
+        "label": opts[f"field{idx}_label"],
+        "default_value": opts[f"field{idx}_default_value"],
+        "alignment": opts[f"field{idx}_alignment"],
+        "font_family": opts[f"field{idx}_font_family"],
+        "font_size_mm": opts[f"field{idx}_font_size_mm"],
+        "bold": opts[f"field{idx}_bold"],
+        "italic": opts[f"field{idx}_italic"],
+        "underline": opts[f"field{idx}_underline"],
+        "max_lines": FIELD_MAX_LINES[idx],
+        "gap_after_dots": mm_to_dots(FIELD_GAPS_MM[idx]),
+    }
 
 
 def text_line_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
@@ -575,7 +683,7 @@ def wrap_text_lines(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageF
     if not text:
         return [""]
 
-    raw_parts = []
+    raw_parts: List[str] = []
     for paragraph in text.splitlines() or [text]:
         paragraph = paragraph.strip()
         if not paragraph:
@@ -616,75 +724,136 @@ def wrap_text_lines(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageF
     return trimmed
 
 
-def render_centered_lines(
+def fit_field_lines(draw: ImageDraw.ImageDraw, text: str, cfg: Dict, max_width: int) -> Tuple[ImageFont.ImageFont, List[str], int]:
+    start_size = max(10, mm_to_dots(cfg["font_size_mm"]))
+    min_size = max(10, int(start_size * 0.6))
+    best_font = load_font(cfg["font_family"], cfg["bold"], cfg["italic"], start_size)
+    best_lines = wrap_text_lines(draw, text, best_font, max_width, cfg["max_lines"])
+    best_size = start_size
+
+    for size in range(start_size, min_size - 1, -1):
+        font = load_font(cfg["font_family"], cfg["bold"], cfg["italic"], size)
+        lines = wrap_text_lines(draw, text, font, max_width, cfg["max_lines"])
+        if len(lines) < len(best_lines):
+            best_font, best_lines, best_size = font, lines, size
+            continue
+        if len(lines) == len(best_lines):
+            best_font, best_lines, best_size = font, lines, size
+            widths = []
+            for line in lines:
+                bbox = draw.textbbox((0, 0), line, font=font)
+                widths.append(bbox[2] - bbox[0])
+            if widths and max(widths) <= max_width:
+                break
+    return best_font, best_lines, best_size
+
+
+def draw_aligned_text_lines(
     draw: ImageDraw.ImageDraw,
     lines: List[str],
     y: int,
-    width: int,
+    box_left: int,
+    box_width: int,
     font: ImageFont.ImageFont,
-    fill: int,
+    alignment: str,
+    underline: bool,
+    fill: Tuple[int, int, int],
     line_spacing: int,
-) -> None:
-    x_center = width // 2
-    line_h = text_line_height(draw, font)
+) -> int:
     current_y = y
+    line_h = text_line_height(draw, font)
+    underline_thickness = max(1, line_h // 18)
+    underline_offset = max(2, line_h // 12)
+
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
         text_w = bbox[2] - bbox[0]
-        draw.text((x_center - text_w / 2, current_y), line, font=font, fill=fill)
+        if alignment == "left":
+            x = box_left
+        elif alignment == "right":
+            x = box_left + box_width - text_w
+        else:
+            x = box_left + (box_width - text_w) / 2
+        draw.text((x, current_y), line, font=font, fill=fill)
+        if underline:
+            underline_y = current_y + line_h + underline_offset
+            draw.line((x, underline_y, x + text_w, underline_y), fill=fill, width=underline_thickness)
         current_y += line_h + line_spacing
+    return current_y
 
 
-def render_preview_image(text1: str, text2: str, text3: str, opts: Dict) -> Image.Image:
+def render_label_image(text1: str, text2: str, text3: str, opts: Dict, preview: bool) -> Image.Image:
     layout = effective_layout(opts)
     qr_payload = build_qr_payload(text1, text2, text3, opts)
 
     requested_w = layout["requested_width_dots"]
     requested_h = layout["requested_height_dots"]
     pw = layout["effective_width_dots"]
+    canvas_width = requested_w if preview else pw
+    canvas_height = requested_h
+
+    img = Image.new("RGB", (canvas_width, canvas_height), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+
+    if preview and requested_w > pw:
+        draw.rectangle((pw, 0, requested_w - 1, requested_h - 1), fill=(244, 244, 244))
+        draw.line((pw, 0, pw, requested_h), fill=(180, 180, 180), width=1)
+        draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=(205, 205, 205), width=2)
+
     qr_size = min(layout["qr_size_dots"], pw)
     qr_left = max((pw - qr_size) // 2, 0)
     qr_top = layout["top_margin_dots"]
-
-    img = Image.new("RGB", (requested_w, requested_h), color=(255, 255, 255))
-    draw = ImageDraw.Draw(img)
-
-    if requested_w > pw:
-        draw.rectangle((pw, 0, requested_w - 1, requested_h - 1), fill=(244, 244, 244))
-        draw.line((pw, 0, pw, requested_h), fill=(180, 180, 180), width=1)
-
-    draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=(205, 205, 205), width=2)
-
     qr_img = build_qr_image(qr_payload, qr_size, opts).convert("RGB")
     img.paste(qr_img, (qr_left, qr_top))
-    preview_border_width = max(2, int(round(DOTS_PER_MM * 0.5)))
-    draw.rectangle(
-        (qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1),
-        outline=(220, 38, 38),
-        width=preview_border_width,
-    )
 
-    margin_x = max((pw - qr_size) // 2, mm_to_dots(8))
-    text_width = pw - (margin_x * 2)
-    primary_h, _primary_w, primary_lines = font_for_text(text1, primary=True)
-    secondary_h, _secondary_w, secondary_lines = font_for_text(text2, primary=False)
-    tertiary_h, _tertiary_w, tertiary_lines = font_for_text(text3, primary=False)
-    primary_y = qr_top + qr_size + mm_to_dots(8)
-    secondary_y = primary_y + (primary_h * primary_lines) + mm_to_dots(8)
-    tertiary_y = secondary_y + (secondary_h * secondary_lines) + mm_to_dots(6)
+    if preview:
+        preview_border_width = max(2, int(round(DOTS_PER_MM * 0.5)))
+        draw.rectangle(
+            (qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1),
+            outline=(220, 38, 38),
+            width=preview_border_width,
+        )
 
-    primary_font = get_font(primary_h)
-    secondary_font = get_font(secondary_h)
-    tertiary_font = get_font(tertiary_h)
-    primary_wrapped = wrap_text_lines(draw, text1, primary_font, text_width, primary_lines)
-    secondary_wrapped = wrap_text_lines(draw, text2, secondary_font, text_width, secondary_lines)
-    tertiary_wrapped = wrap_text_lines(draw, text3, tertiary_font, text_width, tertiary_lines)
+    margin_x = max((pw - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM))
+    text_width = max(1, pw - (margin_x * 2))
+    current_y = qr_top + qr_size + mm_to_dots(8)
 
-    render_centered_lines(draw, primary_wrapped, primary_y, pw, primary_font, fill=(0, 0, 0), line_spacing=14)
-    render_centered_lines(draw, secondary_wrapped, secondary_y, pw, secondary_font, fill=(0, 0, 0), line_spacing=10)
-    render_centered_lines(draw, tertiary_wrapped, tertiary_y, pw, tertiary_font, fill=(0, 0, 0), line_spacing=10)
+    text_values = {1: text1, 2: text2, 3: text3}
+    for idx in range(1, FIELD_COUNT + 1):
+        cfg = get_field_config(opts, idx)
+        font, lines, resolved_font_size = fit_field_lines(draw, text_values[idx], cfg, text_width)
+        line_spacing = max(4, resolved_font_size // 7)
+        current_y = draw_aligned_text_lines(
+            draw,
+            lines,
+            current_y,
+            margin_x,
+            text_width,
+            font,
+            cfg["alignment"],
+            cfg["underline"],
+            fill=(0, 0, 0),
+            line_spacing=line_spacing,
+        )
+        current_y += cfg["gap_after_dots"]
 
     return img
+
+
+def build_zpl(text1: str, text2: str, text3: str, copies: int, opts: Dict) -> str:
+    layout = effective_layout(opts)
+    pw = layout["effective_width_dots"]
+    ll = layout["requested_height_dots"]
+    label_img = render_label_image(text1, text2, text3, opts, preview=False).convert("1")
+    total_bytes, bytes_per_row, graphic_hex = image_to_gfa(label_img)
+    return f"""^XA
+^CI28
+^PW{pw}
+^LL{ll}
+^LH0,0
+^FO0,0^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_hex}^FS
+^PQ{copies},0,1,N
+^XZ"""
 
 
 def send_to_printer(host: str, port: int, payload: str) -> None:
@@ -693,15 +862,6 @@ def send_to_printer(host: str, port: int, payload: str) -> None:
     with socket.create_connection((host, int(port)), timeout=10) as sock:
         sock.sendall(data)
     LOGGER.info("Finished sending label payload to printer %s:%s", host, port)
-
-
-def form_data_from_request() -> Dict[str, str]:
-    return {
-        "text1": request.values.get("text1", DEFAULT_FORM["text1"]),
-        "text2": request.values.get("text2", DEFAULT_FORM["text2"]),
-        "text3": request.values.get("text3", DEFAULT_FORM["text3"]),
-        "copies": request.values.get("copies", DEFAULT_FORM["copies"]),
-    }
 
 
 def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) -> str:
@@ -720,6 +880,12 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
         field1_label=opts["field1_label"],
         field2_label=opts["field2_label"],
         field3_label=opts["field3_label"],
+        field1_default_value=opts["field1_default_value"],
+        field2_default_value=opts["field2_default_value"],
+        field3_default_value=opts["field3_default_value"],
+        field1_style_summary=field_style_summary(opts, 1),
+        field2_style_summary=field_style_summary(opts, 2),
+        field3_style_summary=field_style_summary(opts, 3),
         qr_value_template=opts["qr_value_template"],
         qr_quiet_zone_modules=opts["qr_quiet_zone_modules"],
         qr_error_correction=opts["qr_error_correction"],
@@ -741,12 +907,13 @@ def restrict_ingress():
         return None
     if remote not in LOCAL_ALLOWED_IPS and remote != INGRESS_ALLOWED_IP:
         return Response("Forbidden", status=403)
+    return None
 
 
 @APP.route("/", methods=["GET"])
 def index():
     opts = load_options()
-    form = form_data_from_request()
+    form = form_data_from_request(opts)
     LOGGER.info("Opened UI for printer %s:%s", opts["printer_host"], opts["printer_port"])
     return render_page(form, opts, result=None)
 
@@ -754,9 +921,10 @@ def index():
 @APP.route("/print", methods=["POST"])
 def print_label():
     opts = load_options()
-    text1 = request.form.get("text1", "").strip()
-    text2 = request.form.get("text2", "").strip()
-    text3 = request.form.get("text3", "").strip()
+    defaults = default_form_from_options(opts)
+    text1 = request.form.get("text1", defaults["text1"]).strip()
+    text2 = request.form.get("text2", defaults["text2"]).strip()
+    text3 = request.form.get("text3", defaults["text3"]).strip()
     copies_raw = request.form.get("copies", DEFAULT_FORM["copies"]).strip()
 
     result = {"success": False, "message": "Unknown error"}
@@ -787,9 +955,10 @@ def print_label():
 @APP.route("/preview", methods=["GET"])
 def preview():
     opts = load_options()
-    text1 = request.args.get("text1", DEFAULT_FORM["text1"])
-    text2 = request.args.get("text2", DEFAULT_FORM["text2"])
-    text3 = request.args.get("text3", DEFAULT_FORM["text3"])
+    defaults = default_form_from_options(opts)
+    text1 = request.args.get("text1", defaults["text1"])
+    text2 = request.args.get("text2", defaults["text2"])
+    text3 = request.args.get("text3", defaults["text3"])
     copies = max(1, min(50, int(request.args.get("copies", DEFAULT_FORM["copies"]))))
     zpl = build_zpl(text1, text2, text3, copies, opts)
     LOGGER.info("Generated ZPL preview for copies=%s", copies)
@@ -799,11 +968,12 @@ def preview():
 @APP.route("/preview.png", methods=["GET"])
 def preview_png():
     opts = load_options()
-    text1 = request.args.get("text1", DEFAULT_FORM["text1"])
-    text2 = request.args.get("text2", DEFAULT_FORM["text2"])
-    text3 = request.args.get("text3", DEFAULT_FORM["text3"])
+    defaults = default_form_from_options(opts)
+    text1 = request.args.get("text1", defaults["text1"])
+    text2 = request.args.get("text2", defaults["text2"])
+    text3 = request.args.get("text3", defaults["text3"])
     LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r", text1, text2, text3)
-    img = render_preview_image(text1, text2, text3, opts)
+    img = render_label_image(text1, text2, text3, opts, preview=True)
     bio = BytesIO()
     img.save(bio, format="PNG", dpi=(203, 203), optimize=True)
     bio.seek(0)
@@ -813,10 +983,11 @@ def preview_png():
 @APP.route("/api/print", methods=["POST"])
 def api_print():
     opts = load_options()
+    defaults = default_form_from_options(opts)
     payload = request.get_json(force=True, silent=False) or {}
-    text1 = str(payload.get("text1", "")).strip()
-    text2 = str(payload.get("text2", "")).strip()
-    text3 = str(payload.get("text3", "")).strip()
+    text1 = str(payload.get("text1", defaults["text1"])).strip()
+    text2 = str(payload.get("text2", defaults["text2"])).strip()
+    text3 = str(payload.get("text3", defaults["text3"])).strip()
     copies = max(1, min(50, int(payload.get("copies", 1))))
     if not text1 or not text2 or not text3:
         return jsonify({
