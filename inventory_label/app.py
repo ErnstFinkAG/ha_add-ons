@@ -1078,13 +1078,20 @@ def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight
     img = Image.new("RGB", (canvas_width, canvas_height), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
 
+    content_left = 0
     if preview and requested_w > pw:
-        draw.rectangle((pw, 0, requested_w - 1, requested_h - 1), fill=(244, 244, 244))
-        draw.line((pw, 0, pw, requested_h), fill=(180, 180, 180), width=1)
+        content_left = max((requested_w - pw) // 2, 0)
+        content_right = content_left + pw
+        if content_left > 0:
+            draw.rectangle((0, 0, content_left - 1, requested_h - 1), fill=(244, 244, 244))
+        if content_right < requested_w:
+            draw.rectangle((content_right, 0, requested_w - 1, requested_h - 1), fill=(244, 244, 244))
+        draw.line((content_left, 0, content_left, requested_h), fill=(180, 180, 180), width=1)
+        draw.line((content_right - 1, 0, content_right - 1, requested_h), fill=(180, 180, 180), width=1)
         draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=(205, 205, 205), width=2)
 
     qr_size = min(layout["qr_size_dots"], pw)
-    qr_left = max((pw - qr_size) // 2, 0)
+    qr_left = content_left + max((pw - qr_size) // 2, 0)
     qr_top = layout["top_margin_dots"]
     qr_img = build_qr_image(qr_payload, qr_size, opts).convert("RGB")
     img.paste(qr_img, (qr_left, qr_top))
@@ -1097,7 +1104,7 @@ def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight
             width=preview_border_width,
         )
 
-    margin_x = max((pw - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM))
+    margin_x = content_left + max((pw - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM))
     text_width = max(1, pw - (margin_x * 2))
     current_y = qr_top + qr_size + mm_to_dots(8)
 
