@@ -1,9 +1,9 @@
-name: "Zebra Label Printer"
-version: "0.1.11"
-slug: "zebra_label_printer"
+name: "Inventory Label"
+version: "0.1.14"
+slug: "inventory_label"
 description: >-
-  Print large QR-code project labels to a Zebra ZT420/ZT421 over TCP (port 9100)
-url: "https://github.com/ErnstFinkAG/ha_add-ons/tree/main/zebra_label_printer"
+  Print large QR-code project labels to a Zebra ZT420/ZT421 with live PNG preview, per-field styling, optional footer, and TCP 9100 printing
+url: "https://github.com/ErnstFinkAG/ha_add-ons/tree/main/inventory_label"
 startup: services
 boot: auto
 init: false
@@ -52,6 +52,7 @@ options:
   footer_alignment: "center"
   footer_font_family: "sans"
   footer_font_size_mm: 5
+  footer_bottom_margin_mm: 0
   footer_bold: false
   footer_italic: false
   footer_underline: false
@@ -85,6 +86,7 @@ schema:
   field2_font_size_mm: float
   field3_font_size_mm: float
   footer_font_size_mm: float
+  footer_bottom_margin_mm: float
   field1_bold: bool
   field2_bold: bool
   field3_bold: bool

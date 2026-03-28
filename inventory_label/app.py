@@ -25,7 +25,7 @@ else:
 logging.getLogger("werkzeug").handlers.clear()
 logging.getLogger("werkzeug").propagate = True
 
-LOGGER = logging.getLogger("zebra_label_printer")
+LOGGER = logging.getLogger("inventory_label")
 APP = Flask(__name__)
 APP.logger.handlers.clear()
 APP.logger.propagate = True
@@ -149,6 +149,7 @@ DEFAULT_OPTIONS = {
     "footer_alignment": "center",
     "footer_font_family": "sans",
     "footer_font_size_mm": 5.0,
+    "footer_bottom_margin_mm": 0.0,
     "footer_bold": False,
     "footer_italic": False,
     "footer_underline": False,
@@ -177,7 +178,7 @@ HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Zebra Label Printer</title>
+  <title>Inventory Label</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -329,7 +330,7 @@ HTML = """
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>Zebra Label Printer</h1>
+      <h1>Inventory Label</h1>
       <p class="muted">Prints one large QR code label to a networked Zebra printer using raw ZPL over TCP.</p>
       {% if result %}
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
@@ -380,6 +381,7 @@ HTML = """
       </div>
       <div class="preview-meta">
         PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi.
+        The red outline shows the full QR footprint including the configured quiet zone.
         Screen size can still vary with browser zoom and display scaling.
       </div>
     </div>
@@ -394,6 +396,7 @@ HTML = """
         <li><strong>QR template:</strong> <code>{{ qr_value_template }}</code></li>
         <li><strong>QR quiet zone:</strong> <code>{{ qr_quiet_zone_modules }} module(s)</code></li>
         <li><strong>QR error correction:</strong> <code>{{ qr_error_correction }}</code></li>
+        <li><strong>Footer bottom margin:</strong> <code>{{ footer_bottom_margin_mm }} mm</code></li>
         <li><strong>Current QR payload:</strong> <code>{{ qr_preview }}</code></li>
         <li><strong>Current print selection:</strong> <code>field1=on, field2={{ "on" if form.print_text2 == "1" else "off" }}, field3={{ "on" if form.print_text3 == "1" else "off" }}, footer={{ "on" if form.print_footer == "1" else "off" }}</code></li>
       </ul>
@@ -405,6 +408,7 @@ HTML = """
         Requested label: {{ requested_width_mm }} × {{ requested_height_mm }} mm<br>
         Requested QR: {{ requested_qr_mm }} × {{ requested_qr_mm }} mm<br>
         QR quiet zone: {{ qr_quiet_zone_modules }} module(s), error correction: {{ qr_error_correction }}<br>
+        Footer bottom margin: {{ footer_bottom_margin_mm }} mm<br>
         Effective print width on ZT420/ZT421 @ 203 dpi: {{ effective_width_mm }} mm ({{ effective_width_dots }} dots)
       </p>
       {% if width_warning %}
@@ -578,6 +582,7 @@ def load_options() -> Dict:
     options["footer_alignment"] = normalize_alignment(options.get("footer_alignment"), DEFAULT_OPTIONS["footer_alignment"])
     options["footer_font_family"] = normalize_font_family(options.get("footer_font_family"), DEFAULT_OPTIONS["footer_font_family"])
     options["footer_font_size_mm"] = normalize_float(options.get("footer_font_size_mm"), DEFAULT_OPTIONS["footer_font_size_mm"], 2.0, 30.0)
+    options["footer_bottom_margin_mm"] = normalize_float(options.get("footer_bottom_margin_mm"), DEFAULT_OPTIONS["footer_bottom_margin_mm"], 0.0, 100.0)
     options["footer_bold"] = normalize_bool(options.get("footer_bold"), DEFAULT_OPTIONS["footer_bold"])
     options["footer_italic"] = normalize_bool(options.get("footer_italic"), DEFAULT_OPTIONS["footer_italic"])
     options["footer_underline"] = normalize_bool(options.get("footer_underline"), DEFAULT_OPTIONS["footer_underline"])
@@ -736,7 +741,7 @@ def field_style_summary(opts: Dict, idx: int) -> str:
 
 
 def footer_style_summary(opts: Dict) -> str:
-    return style_summary_from_prefix(opts, "footer")
+    return f"{style_summary_from_prefix(opts, 'footer')}, bottom margin {opts['footer_bottom_margin_mm']} mm"
 
 
 def get_field_config(opts: Dict, idx: int) -> Dict:
@@ -761,6 +766,7 @@ def get_footer_config(opts: Dict) -> Dict:
         "alignment": opts["footer_alignment"],
         "font_family": opts["footer_font_family"],
         "font_size_mm": opts["footer_font_size_mm"],
+        "bottom_margin_mm": opts["footer_bottom_margin_mm"],
         "bold": opts["footer_bold"],
         "italic": opts["footer_italic"],
         "underline": opts["footer_underline"],
@@ -953,7 +959,8 @@ def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Di
         font, lines, resolved_font_size = fit_field_lines(draw, footer_text, footer_cfg, text_width)
         line_spacing = max(4, resolved_font_size // 7)
         footer_height = text_block_height(draw, font, len(lines), line_spacing)
-        footer_y = max(0, canvas_height - footer_height)
+        footer_bottom_margin_dots = mm_to_dots(footer_cfg.get("bottom_margin_mm", 0.0)) if footer_cfg.get("bottom_margin_mm", 0.0) > 0 else 0
+        footer_y = max(0, canvas_height - footer_height - footer_bottom_margin_dots)
         if footer_y < current_y:
             LOGGER.warning(
                 "Footer overlaps content: footer_y=%s current_y=%s footer_height=%s label_height=%s",
