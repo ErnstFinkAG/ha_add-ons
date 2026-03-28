@@ -256,10 +256,13 @@ footer_label: "Footer"
 footer_default_value: "Ernst Fink AG, Schorenweg 144, 4585 Biezwil"
 footer_alignment: "center"
 footer_font_family: "sans"
-footer_font_size_mm: 7
+footer_font_size_mm: 5
 footer_bold: false
 footer_italic: false
 footer_underline: false
 ```
 
 The footer is optional. It is shown as a separate editable field in the UI, uses its own default value, and is printed in human-readable form only.
+
+
+Fields 2, 3, and the footer can be toggled on or off in the web UI for each individual label.

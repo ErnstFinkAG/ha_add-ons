@@ -134,7 +134,7 @@ DEFAULT_OPTIONS = {
     "field3_font_family": "sans",
     "field1_font_size_mm": 18.0,
     "field2_font_size_mm": 13.0,
-    "field3_font_size_mm": 9.0,
+    "field3_font_size_mm": 18.0,
     "field1_bold": True,
     "field2_bold": False,
     "field3_bold": False,
@@ -148,11 +148,11 @@ DEFAULT_OPTIONS = {
     "footer_default_value": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
     "footer_alignment": "center",
     "footer_font_family": "sans",
-    "footer_font_size_mm": 7.0,
+    "footer_font_size_mm": 5.0,
     "footer_bold": False,
     "footer_italic": False,
     "footer_underline": False,
-    "qr_value_template": "text1 - text2",
+    "qr_value_template": "{text1 - text2}",
     "qr_quiet_zone_modules": 3,
     "qr_error_correction": "M",
 }
@@ -166,6 +166,9 @@ QR_ERROR_CORRECTION_MAP = {
 
 DEFAULT_FORM = {
     "copies": "1",
+    "print_text2": "1",
+    "print_text3": "1",
+    "print_footer": "1",
 }
 
 HTML = """
@@ -308,6 +311,19 @@ HTML = """
       color: var(--muted);
     }
     .config-list li + li { margin-top: 8px; }
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: -6px 0 16px;
+      font-weight: 500;
+    }
+    .checkbox-row input {
+      width: auto;
+      margin: 0;
+      transform: scale(1.1);
+      accent-color: var(--accent);
+    }
   </style>
 </head>
 <body>
@@ -323,13 +339,16 @@ HTML = """
         <textarea id="text1" name="text1" required>{{ form.text1 }}</textarea>
 
         <label for="text2">{{ field2_label }}</label>
-        <input id="text2" name="text2" value="{{ form.text2 }}" required>
+        <input id="text2" name="text2" value="{{ form.text2 }}">
+        <label class="checkbox-row"><input id="print_text2" name="print_text2" type="checkbox" value="1" {% if form.print_text2 == '1' %}checked{% endif %}> Print {{ field2_label }}</label>
 
         <label for="text3">{{ field3_label }}</label>
-        <input id="text3" name="text3" value="{{ form.text3 }}" required>
+        <input id="text3" name="text3" value="{{ form.text3 }}">
+        <label class="checkbox-row"><input id="print_text3" name="print_text3" type="checkbox" value="1" {% if form.print_text3 == '1' %}checked{% endif %}> Print {{ field3_label }}</label>
 
         <label for="footer">{{ footer_label }}</label>
         <input id="footer" name="footer" value="{{ form.footer }}">
+        <label class="checkbox-row"><input id="print_footer" name="print_footer" type="checkbox" value="1" {% if form.print_footer == '1' %}checked{% endif %}> Print {{ footer_label }}</label>
 
         <div class="row">
           <div>
@@ -344,8 +363,8 @@ HTML = """
 
         <div class="btns">
           <button type="submit">Print label</button>
-          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}">Preview ZPL</a>
-          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}" target="_blank" rel="noopener">Open PNG preview</a>
+          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_footer={{ form.print_footer }}">Preview ZPL</a>
+          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_footer={{ form.print_footer }}" target="_blank" rel="noopener">Open PNG preview</a>
         </div>
       </form>
     </div>
@@ -355,7 +374,7 @@ HTML = """
       <div class="preview-wrap">
         <div class="preview-stage">
           <div class="preview-frame">
-            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}" alt="Label preview">
+            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_footer={{ form.print_footer }}" alt="Label preview">
           </div>
         </div>
       </div>
@@ -376,6 +395,7 @@ HTML = """
         <li><strong>QR quiet zone:</strong> <code>{{ qr_quiet_zone_modules }} module(s)</code></li>
         <li><strong>QR error correction:</strong> <code>{{ qr_error_correction }}</code></li>
         <li><strong>Current QR payload:</strong> <code>{{ qr_preview }}</code></li>
+        <li><strong>Current print selection:</strong> <code>field1=on, field2={{ "on" if form.print_text2 == "1" else "off" }}, field3={{ "on" if form.print_text3 == "1" else "off" }}, footer={{ "on" if form.print_footer == "1" else "off" }}</code></li>
       </ul>
     </div>
 
@@ -390,7 +410,7 @@ HTML = """
       {% if width_warning %}
       <p class="warn">{{ width_warning }}</p>
       {% endif %}
-      <p class="muted">All configured text fields are printed in human-readable form, including the footer. The QR code follows the configured template above.</p>
+      <p class="muted">Field 1 is always printed in human-readable form. Fields 2, 3, and the footer can be turned on or off in the UI for each label. The QR code follows the configured template above.</p>
     </div>
   </div>
   <script>
@@ -400,11 +420,14 @@ HTML = """
       const text2 = document.getElementById("text2");
       const text3 = document.getElementById("text3");
       const footer = document.getElementById("footer");
+      const printText2 = document.getElementById("print_text2");
+      const printText3 = document.getElementById("print_text3");
+      const printFooter = document.getElementById("print_footer");
       const copies = document.getElementById("copies");
       const previewImage = document.getElementById("preview-image");
       const previewPngLink = document.getElementById("preview-png-link");
       const previewZplLink = document.getElementById("preview-zpl-link");
-      if (!text1 || !text2 || !text3 || !footer || !copies || !previewImage || !previewPngLink || !previewZplLink) return;
+      if (!text1 || !text2 || !text3 || !footer || !printText2 || !printText3 || !printFooter || !copies || !previewImage || !previewPngLink || !previewZplLink) return;
 
       let refreshTimer = null;
       let previewNonce = Date.now();
@@ -422,6 +445,9 @@ HTML = """
         params.set("text3", text3.value || "");
         params.set("footer", footer.value || "");
         params.set("copies", normalizedCopies());
+        params.set("print_text2", printText2.checked ? "1" : "0");
+        params.set("print_text3", printText3.checked ? "1" : "0");
+        params.set("print_footer", printFooter.checked ? "1" : "0");
         return params;
       }
 
@@ -440,7 +466,7 @@ HTML = """
         refreshTimer = window.setTimeout(applyPreviewUpdate, 180);
       }
 
-      [text1, text2, text3, footer, copies].forEach((input) => {
+      [text1, text2, text3, footer, printText2, printText3, printFooter, copies].forEach((input) => {
         input.addEventListener("input", schedulePreviewUpdate);
         input.addEventListener("change", applyPreviewUpdate);
       });
@@ -565,6 +591,9 @@ def default_form_from_options(opts: Dict) -> Dict[str, str]:
         "text3": str(opts.get("field3_default_value") or ""),
         "footer": str(opts.get("footer_default_value") or ""),
         "copies": DEFAULT_FORM["copies"],
+        "print_text2": DEFAULT_FORM["print_text2"],
+        "print_text3": DEFAULT_FORM["print_text3"],
+        "print_footer": DEFAULT_FORM["print_footer"],
     }
 
 
@@ -576,6 +605,23 @@ def form_data_from_request(opts: Dict) -> Dict[str, str]:
         "text3": request.values.get("text3", defaults["text3"]),
         "footer": request.values.get("footer", defaults["footer"]),
         "copies": request.values.get("copies", defaults["copies"]),
+        "print_text2": normalize_form_checkbox(request.values.get("print_text2"), defaults["print_text2"]),
+        "print_text3": normalize_form_checkbox(request.values.get("print_text3"), defaults["print_text3"]),
+        "print_footer": normalize_form_checkbox(request.values.get("print_footer"), defaults["print_footer"]),
+    }
+
+
+def normalize_form_checkbox(value: object, default: str = "0") -> str:
+    if value is None:
+        return default
+    return "1" if normalize_bool(value, False) else "0"
+
+
+def parse_print_toggles(data: Dict[str, str]) -> Dict[str, bool]:
+    return {
+        "print_text2": normalize_bool(data.get("print_text2"), True),
+        "print_text3": normalize_bool(data.get("print_text3"), True),
+        "print_footer": normalize_bool(data.get("print_footer"), True),
     }
 
 
@@ -841,7 +887,7 @@ def text_block_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont, line
     return (line_count * line_h) + (max(0, line_count - 1) * line_spacing)
 
 
-def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Dict, preview: bool) -> Image.Image:
+def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Dict, preview: bool, print_toggles: Dict[str, bool] | None = None) -> Image.Image:
     layout = effective_layout(opts)
     qr_payload = build_qr_payload(text1, text2, text3, opts)
 
@@ -877,8 +923,13 @@ def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Di
     text_width = max(1, pw - (margin_x * 2))
     current_y = qr_top + qr_size + mm_to_dots(8)
 
+    toggles = print_toggles or {"print_text2": True, "print_text3": True, "print_footer": True}
+
     text_values = {1: text1, 2: text2, 3: text3}
+    field_enabled = {1: True, 2: toggles.get("print_text2", True), 3: toggles.get("print_text3", True)}
     for idx in range(1, FIELD_COUNT + 1):
+        if not field_enabled.get(idx, True):
+            continue
         cfg = get_field_config(opts, idx)
         font, lines, resolved_font_size = fit_field_lines(draw, text_values[idx], cfg, text_width)
         line_spacing = max(4, resolved_font_size // 7)
@@ -897,7 +948,7 @@ def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Di
         current_y += cfg["gap_after_dots"]
 
     footer_text = (footer or "").strip()
-    if footer_text:
+    if footer_text and toggles.get("print_footer", True):
         footer_cfg = get_footer_config(opts)
         font, lines, resolved_font_size = fit_field_lines(draw, footer_text, footer_cfg, text_width)
         line_spacing = max(4, resolved_font_size // 7)
@@ -927,11 +978,11 @@ def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Di
     return img
 
 
-def build_zpl(text1: str, text2: str, text3: str, footer: str, copies: int, opts: Dict) -> str:
+def build_zpl(text1: str, text2: str, text3: str, footer: str, copies: int, opts: Dict, print_toggles: Dict[str, bool] | None = None) -> str:
     layout = effective_layout(opts)
     pw = layout["effective_width_dots"]
     ll = layout["requested_height_dots"]
-    label_img = render_label_image(text1, text2, text3, footer, opts, preview=False).convert("1")
+    label_img = render_label_image(text1, text2, text3, footer, opts, preview=False, print_toggles=print_toggles).convert("1")
     total_bytes, bytes_per_row, graphic_hex = image_to_gfa(label_img)
     return f"""^XA
 ^CI28
@@ -1012,24 +1063,37 @@ def index():
 def print_label():
     opts = load_options()
     defaults = default_form_from_options(opts)
-    text1 = request.form.get("text1", defaults["text1"]).strip()
-    text2 = request.form.get("text2", defaults["text2"]).strip()
-    text3 = request.form.get("text3", defaults["text3"]).strip()
-    footer = request.form.get("footer", defaults["footer"]).strip()
-    copies_raw = request.form.get("copies", DEFAULT_FORM["copies"]).strip()
+    form = {
+        "text1": request.form.get("text1", defaults["text1"]).strip(),
+        "text2": request.form.get("text2", defaults["text2"]).strip(),
+        "text3": request.form.get("text3", defaults["text3"]).strip(),
+        "footer": request.form.get("footer", defaults["footer"]).strip(),
+        "copies": request.form.get("copies", DEFAULT_FORM["copies"]).strip() or DEFAULT_FORM["copies"],
+        "print_text2": normalize_form_checkbox(request.form.get("print_text2"), defaults["print_text2"]),
+        "print_text3": normalize_form_checkbox(request.form.get("print_text3"), defaults["print_text3"]),
+        "print_footer": normalize_form_checkbox(request.form.get("print_footer"), defaults["print_footer"]),
+    }
 
     result = {"success": False, "message": "Unknown error"}
     try:
+        text1 = form["text1"]
+        text2 = form["text2"]
+        text3 = form["text3"]
+        footer = form["footer"]
+        copies = max(1, min(50, int(form["copies"])))
+        print_toggles = parse_print_toggles(form)
         if not text1:
             raise ValueError(f"{opts['field1_label']} is required.")
-        if not text2:
-            raise ValueError(f"{opts['field2_label']} is required.")
-        if not text3:
-            raise ValueError(f"{opts['field3_label']} is required.")
-        copies = max(1, min(50, int(copies_raw)))
-        zpl = build_zpl(text1, text2, text3, footer, copies, opts)
+        zpl = build_zpl(text1, text2, text3, footer, copies, opts, print_toggles=print_toggles)
         qr_payload = build_qr_payload(text1, text2, text3, opts)
-        LOGGER.info("Print request received: copies=%s qr_payload=%r", copies, qr_payload)
+        LOGGER.info(
+            "Print request received: copies=%s qr_payload=%r print_text2=%s print_text3=%s print_footer=%s",
+            copies,
+            qr_payload,
+            print_toggles["print_text2"],
+            print_toggles["print_text3"],
+            print_toggles["print_footer"],
+        )
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
         result = {
             "success": True,
@@ -1039,7 +1103,6 @@ def print_label():
         LOGGER.exception("Print failed")
         result = {"success": False, "message": f"Print failed: {exc}"}
 
-    form = {"text1": text1, "text2": text2, "text3": text3, "footer": footer, "copies": copies_raw or DEFAULT_FORM["copies"]}
     return render_page(form, opts, result=result)
 
 
@@ -1052,8 +1115,13 @@ def preview():
     text3 = request.args.get("text3", defaults["text3"])
     footer = request.args.get("footer", defaults["footer"])
     copies = max(1, min(50, int(request.args.get("copies", DEFAULT_FORM["copies"]))))
-    zpl = build_zpl(text1, text2, text3, footer, copies, opts)
-    LOGGER.info("Generated ZPL preview for copies=%s", copies)
+    print_toggles = parse_print_toggles({
+        "print_text2": request.args.get("print_text2", defaults["print_text2"]),
+        "print_text3": request.args.get("print_text3", defaults["print_text3"]),
+        "print_footer": request.args.get("print_footer", defaults["print_footer"]),
+    })
+    zpl = build_zpl(text1, text2, text3, footer, copies, opts, print_toggles=print_toggles)
+    LOGGER.info("Generated ZPL preview for copies=%s with toggles=%s", copies, print_toggles)
     return Response(zpl, mimetype="text/plain; charset=utf-8")
 
 
@@ -1065,8 +1133,13 @@ def preview_png():
     text2 = request.args.get("text2", defaults["text2"])
     text3 = request.args.get("text3", defaults["text3"])
     footer = request.args.get("footer", defaults["footer"])
-    LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r footer=%r", text1, text2, text3, footer)
-    img = render_label_image(text1, text2, text3, footer, opts, preview=True)
+    print_toggles = parse_print_toggles({
+        "print_text2": request.args.get("print_text2", defaults["print_text2"]),
+        "print_text3": request.args.get("print_text3", defaults["print_text3"]),
+        "print_footer": request.args.get("print_footer", defaults["print_footer"]),
+    })
+    LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r footer=%r toggles=%s", text1, text2, text3, footer, print_toggles)
+    img = render_label_image(text1, text2, text3, footer, opts, preview=True, print_toggles=print_toggles)
     bio = BytesIO()
     img.save(bio, format="PNG", dpi=(203, 203), optimize=True)
     bio.seek(0)
@@ -1083,20 +1156,26 @@ def api_print():
     text3 = str(payload.get("text3", defaults["text3"])).strip()
     footer = str(payload.get("footer", defaults["footer"])).strip()
     copies = max(1, min(50, int(payload.get("copies", 1))))
-    if not text1 or not text2 or not text3:
+    print_toggles = parse_print_toggles({
+        "print_text2": normalize_form_checkbox(payload.get("print_text2"), "1"),
+        "print_text3": normalize_form_checkbox(payload.get("print_text3"), "1"),
+        "print_footer": normalize_form_checkbox(payload.get("print_footer"), "1"),
+    })
+    if not text1:
         return jsonify({
             "ok": False,
-            "error": f"{opts['field1_label']}, {opts['field2_label']}, and {opts['field3_label']} are required.",
+            "error": f"{opts['field1_label']} is required.",
         }), 400
     try:
-        zpl = build_zpl(text1, text2, text3, footer, copies, opts)
-        LOGGER.info("API print request received: copies=%s footer=%r", copies, footer)
+        zpl = build_zpl(text1, text2, text3, footer, copies, opts, print_toggles=print_toggles)
+        LOGGER.info("API print request received: copies=%s footer=%r toggles=%s", copies, footer, print_toggles)
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
         return jsonify({
             "ok": True,
             "printer": opts["printer_host"],
             "copies": copies,
             "qr_payload": build_qr_payload(text1, text2, text3, opts),
+            "print_toggles": print_toggles,
         })
     except Exception as exc:
         LOGGER.exception("API print failed")
