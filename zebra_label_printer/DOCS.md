@@ -93,6 +93,8 @@ field1_label: Project
 field2_label: Element
 field3_label: Zone
 qr_value_template: "text1 - text2 text3"
+qr_quiet_zone_modules: 4
+qr_error_correction: "M"
 ```
 
 ### QR payload template
@@ -108,6 +110,22 @@ Examples:
 - `"Project text1 Element text2 Zone text3"` → QR contains custom formatted data
 
 Any field that is not referenced in `qr_value_template` is still printed on the label in human-readable form.
+
+### QR settings
+
+You can also control the generated QR code in add-on config:
+
+- `qr_quiet_zone_modules`: quiet zone / border margin around the QR, in QR modules
+- `qr_error_correction`: redundancy level, one of `L`, `M`, `Q`, or `H`
+
+Examples:
+
+- `qr_quiet_zone_modules: 4` → standard quiet zone
+- `qr_quiet_zone_modules: 2` → tighter border margin
+- `qr_error_correction: "L"` → more capacity, less redundancy
+- `qr_error_correction: "H"` → less capacity, more redundancy
+
+The PNG preview draws a red border around the full QR footprint including the configured quiet zone. That red outline is preview-only and is **not** printed.
 
 ## Usage
 
@@ -174,3 +192,5 @@ The add-on sends UTF-8 ZPL (`^CI28`), but printed output still depends on the fo
 ## Live preview
 
 The PNG preview updates automatically when you change the field values or **Copies** in the web UI.
+
+Version 0.1.6 adds configurable QR quiet zone and QR error-correction settings in the add-on config, and it shows a red preview-only border around the QR footprint including the quiet zone.

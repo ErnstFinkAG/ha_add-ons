@@ -35,6 +35,15 @@ DEFAULT_OPTIONS = {
     "field2_label": "Text string 2",
     "field3_label": "Text string 3",
     "qr_value_template": "text1",
+    "qr_quiet_zone_modules": 4,
+    "qr_error_correction": "M",
+}
+
+QR_ERROR_CORRECTION_MAP = {
+    "L": qrcode.constants.ERROR_CORRECT_L,
+    "M": qrcode.constants.ERROR_CORRECT_M,
+    "Q": qrcode.constants.ERROR_CORRECT_Q,
+    "H": qrcode.constants.ERROR_CORRECT_H,
 }
 
 DEFAULT_FORM = {
@@ -261,6 +270,8 @@ HTML = """
         <li><strong>Field 2 label:</strong> <code>{{ field2_label }}</code></li>
         <li><strong>Field 3 label:</strong> <code>{{ field3_label }}</code></li>
         <li><strong>QR template:</strong> <code>{{ qr_value_template }}</code></li>
+        <li><strong>QR quiet zone:</strong> <code>{{ qr_quiet_zone_modules }} module(s)</code></li>
+        <li><strong>QR error correction:</strong> <code>{{ qr_error_correction }}</code></li>
         <li><strong>Current QR payload:</strong> <code>{{ qr_preview }}</code></li>
       </ul>
     </div>
@@ -270,6 +281,7 @@ HTML = """
       <p class="muted">
         Requested label: {{ requested_width_mm }} × {{ requested_height_mm }} mm<br>
         Requested QR: {{ requested_qr_mm }} × {{ requested_qr_mm }} mm<br>
+        QR quiet zone: {{ qr_quiet_zone_modules }} module(s), error correction: {{ qr_error_correction }}<br>
         Effective print width on ZT420/ZT421 @ 203 dpi: {{ effective_width_mm }} mm ({{ effective_width_dots }} dots)
       </p>
       {% if width_warning %}
@@ -356,6 +368,15 @@ def load_options() -> Dict:
     options["field2_label"] = str(options.get("field2_label") or DEFAULT_OPTIONS["field2_label"]).strip() or DEFAULT_OPTIONS["field2_label"]
     options["field3_label"] = str(options.get("field3_label") or DEFAULT_OPTIONS["field3_label"]).strip() or DEFAULT_OPTIONS["field3_label"]
     options["qr_value_template"] = str(options.get("qr_value_template") or DEFAULT_OPTIONS["qr_value_template"])
+
+    try:
+        quiet_zone = int(options.get("qr_quiet_zone_modules", DEFAULT_OPTIONS["qr_quiet_zone_modules"]))
+    except (TypeError, ValueError):
+        quiet_zone = DEFAULT_OPTIONS["qr_quiet_zone_modules"]
+    options["qr_quiet_zone_modules"] = max(0, min(20, quiet_zone))
+
+    level = str(options.get("qr_error_correction") or DEFAULT_OPTIONS["qr_error_correction"]).strip().upper()
+    options["qr_error_correction"] = level if level in QR_ERROR_CORRECTION_MAP else DEFAULT_OPTIONS["qr_error_correction"]
     return options
 
 
@@ -389,12 +410,12 @@ def effective_layout(opts: Dict) -> Dict:
     }
 
 
-def build_qr_image(data: str, size_dots: int) -> Image.Image:
+def build_qr_image(data: str, size_dots: int, opts: Dict) -> Image.Image:
     qr = qrcode.QRCode(
         version=None,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        error_correction=qr_error_correction_constant(opts),
         box_size=10,
-        border=4,
+        border=qr_quiet_zone_modules(opts),
     )
     qr.add_data(data)
     qr.make(fit=True)
@@ -496,7 +517,7 @@ def build_zpl(text1: str, text2: str, text3: str, copies: int, opts: Dict) -> st
     secondary_y = primary_y + (primary_h * primary_lines) + mm_to_dots(8)
     tertiary_y = secondary_y + (secondary_h * secondary_lines) + mm_to_dots(6)
 
-    qr_img = build_qr_image(qr_payload, qr_size)
+    qr_img = build_qr_image(qr_payload, qr_size, opts)
     total_bytes, bytes_per_row, graphic_hex = image_to_gfa(qr_img)
 
     esc1 = zpl_escape_utf8(text1)
@@ -605,17 +626,23 @@ def render_preview_image(text1: str, text2: str, text3: str, opts: Dict) -> Imag
     qr_left = max((pw - qr_size) // 2, 0)
     qr_top = layout["top_margin_dots"]
 
-    img = Image.new("L", (requested_w, requested_h), color=255)
+    img = Image.new("RGB", (requested_w, requested_h), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
 
     if requested_w > pw:
-        draw.rectangle((pw, 0, requested_w - 1, requested_h - 1), fill=244)
-        draw.line((pw, 0, pw, requested_h), fill=180, width=1)
+        draw.rectangle((pw, 0, requested_w - 1, requested_h - 1), fill=(244, 244, 244))
+        draw.line((pw, 0, pw, requested_h), fill=(180, 180, 180), width=1)
 
-    draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=205, width=2)
+    draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=(205, 205, 205), width=2)
 
-    qr_img = build_qr_image(qr_payload, qr_size).convert("L")
+    qr_img = build_qr_image(qr_payload, qr_size, opts).convert("RGB")
     img.paste(qr_img, (qr_left, qr_top))
+    preview_border_width = max(2, int(round(DOTS_PER_MM * 0.5)))
+    draw.rectangle(
+        (qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1),
+        outline=(220, 38, 38),
+        width=preview_border_width,
+    )
 
     margin_x = max((pw - qr_size) // 2, mm_to_dots(8))
     text_width = pw - (margin_x * 2)
@@ -633,11 +660,11 @@ def render_preview_image(text1: str, text2: str, text3: str, opts: Dict) -> Imag
     secondary_wrapped = wrap_text_lines(draw, text2, secondary_font, text_width, secondary_lines)
     tertiary_wrapped = wrap_text_lines(draw, text3, tertiary_font, text_width, tertiary_lines)
 
-    render_centered_lines(draw, primary_wrapped, primary_y, pw, primary_font, fill=0, line_spacing=14)
-    render_centered_lines(draw, secondary_wrapped, secondary_y, pw, secondary_font, fill=0, line_spacing=10)
-    render_centered_lines(draw, tertiary_wrapped, tertiary_y, pw, tertiary_font, fill=0, line_spacing=10)
+    render_centered_lines(draw, primary_wrapped, primary_y, pw, primary_font, fill=(0, 0, 0), line_spacing=14)
+    render_centered_lines(draw, secondary_wrapped, secondary_y, pw, secondary_font, fill=(0, 0, 0), line_spacing=10)
+    render_centered_lines(draw, tertiary_wrapped, tertiary_y, pw, tertiary_font, fill=(0, 0, 0), line_spacing=10)
 
-    return img.convert("1")
+    return img
 
 
 def send_to_printer(host: str, port: int, payload: str) -> None:
@@ -672,6 +699,8 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
         field2_label=opts["field2_label"],
         field3_label=opts["field3_label"],
         qr_value_template=opts["qr_value_template"],
+        qr_quiet_zone_modules=opts["qr_quiet_zone_modules"],
+        qr_error_correction=opts["qr_error_correction"],
         qr_preview=qr_preview,
         requested_width_mm=opts["label_width_mm"],
         requested_height_mm=opts["label_height_mm"],

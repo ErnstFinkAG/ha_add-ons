@@ -1,5 +1,5 @@
 name: "Zebra Label Printer"
-version: "0.1.5"
+version: "0.1.6"
 slug: "zebra_label_printer"
 description: >-
   Print large QR-code project labels to a Zebra ZT420/ZT421 over TCP (port 9100)
@@ -27,6 +27,8 @@ options:
   field2_label: "Text string 2"
   field3_label: "Text string 3"
   qr_value_template: "text1"
+  qr_quiet_zone_modules: 4
+  qr_error_correction: "M"
 schema:
   printer_host: str
   printer_port: port
@@ -38,3 +40,5 @@ schema:
   field2_label: str
   field3_label: str
   qr_value_template: str
+  qr_quiet_zone_modules: int
+  qr_error_correction: str
