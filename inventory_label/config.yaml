@@ -1,8 +1,8 @@
 name: "Inventory Label"
-version: "0.1.16"
+version: "0.1.17"
 slug: "inventory_label"
 description: >-
-  Print large QR-code project labels to a Zebra ZT420/ZT421 with live PNG preview, per-field styling, optional footer, and TCP 9100 printing
+  Print large QR-code project or inventory labels to a Zebra ZT420/ZT421 with live PNG preview, sign-off suggestions, optional weight, per-field styling, optional footer, and TCP 9100 printing
 url: "https://github.com/ErnstFinkAG/ha_add-ons/tree/main/inventory_label"
 startup: services
 boot: auto
@@ -47,6 +47,23 @@ options:
   field1_underline: false
   field2_underline: false
   field3_underline: false
+  sign_off_label: "Sign-off"
+  sign_off_default_value: ""
+  sign_off_options: ""
+  sign_off_alignment: "center"
+  sign_off_font_family: "sans"
+  sign_off_font_size_mm: 7
+  sign_off_bold: false
+  sign_off_italic: false
+  sign_off_underline: false
+  weight_label: "Weight (kg)"
+  weight_default_value: ""
+  weight_alignment: "center"
+  weight_font_family: "sans"
+  weight_font_size_mm: 7
+  weight_bold: false
+  weight_italic: false
+  weight_underline: false
   footer_label: "Footer"
   footer_default_value: "Ernst Fink AG, Schorenweg 144, 4585 Biezwil"
   footer_alignment: "center"
@@ -69,35 +86,52 @@ schema:
   field1_label: str
   field2_label: str
   field3_label: str
+  sign_off_label: str
+  weight_label: str
   footer_label: str
   field1_default_value: str
   field2_default_value: str
   field3_default_value: str
+  sign_off_default_value: str
+  sign_off_options: str
+  weight_default_value: str
   footer_default_value: str
   field1_alignment: str
   field2_alignment: str
   field3_alignment: str
+  sign_off_alignment: str
+  weight_alignment: str
   footer_alignment: str
   field1_font_family: str
   field2_font_family: str
   field3_font_family: str
+  sign_off_font_family: str
+  weight_font_family: str
   footer_font_family: str
   field1_font_size_mm: float
   field2_font_size_mm: float
   field3_font_size_mm: float
+  sign_off_font_size_mm: float
+  weight_font_size_mm: float
   footer_font_size_mm: float
   footer_bottom_margin_mm: float
   field1_bold: bool
   field2_bold: bool
   field3_bold: bool
+  sign_off_bold: bool
+  weight_bold: bool
   footer_bold: bool
   field1_italic: bool
   field2_italic: bool
   field3_italic: bool
+  sign_off_italic: bool
+  weight_italic: bool
   footer_italic: bool
   field1_underline: bool
   field2_underline: bool
   field3_underline: bool
+  sign_off_underline: bool
+  weight_underline: bool
   footer_underline: bool
   qr_value_template: str
   qr_quiet_zone_modules: int

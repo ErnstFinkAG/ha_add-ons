@@ -38,6 +38,7 @@ OPTIONS_PATH = "/data/options.json"
 DEFAULT_TEXT_BLOCK_MARGIN_MM = 8.0
 FIELD_COUNT = 3
 ALLOWED_QR_TOKENS = ("text1", "text2", "text3")
+OPTION_MAX_LINES = {"sign_off": 2, "weight": 1}
 ALIGNMENTS = {"left", "center", "right"}
 FONT_FAMILIES = {"sans", "serif", "mono"}
 FIELD_GAPS_MM = {1: 8.0, 2: 6.0, 3: 4.0}
@@ -153,6 +154,23 @@ DEFAULT_OPTIONS = {
     "footer_bold": False,
     "footer_italic": False,
     "footer_underline": False,
+    "sign_off_label": "Sign-off",
+    "sign_off_default_value": "",
+    "sign_off_options": "",
+    "sign_off_alignment": "center",
+    "sign_off_font_family": "sans",
+    "sign_off_font_size_mm": 7.0,
+    "sign_off_bold": False,
+    "sign_off_italic": False,
+    "sign_off_underline": False,
+    "weight_label": "Weight (kg)",
+    "weight_default_value": "",
+    "weight_alignment": "center",
+    "weight_font_family": "sans",
+    "weight_font_size_mm": 7.0,
+    "weight_bold": False,
+    "weight_italic": False,
+    "weight_underline": False,
     "qr_value_template": "{text1 - text2}",
     "qr_quiet_zone_modules": 3,
     "qr_error_correction": "M",
@@ -170,6 +188,7 @@ DEFAULT_FORM = {
     "print_text2": "1",
     "print_text3": "1",
     "print_footer": "1",
+    "print_weight": "0",
 }
 
 HTML = """
@@ -330,7 +349,7 @@ HTML = """
   <div class="wrap">
     <div class="card">
       <h1>Inventory Label</h1>
-      <p class="muted">Prints one large QR code label to a networked Zebra printer using raw ZPL over TCP. {{ field1_label }} accepts digits only.</p>
+      <p class="muted">Prints one large QR code label to a networked Zebra printer using raw ZPL over TCP. {{ field1_label }} accepts digits only, and {{ weight_label }} accepts digits only when enabled.</p>
       {% if result %}
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
       {% endif %}
@@ -345,6 +364,18 @@ HTML = """
         <label for="text3">{{ field3_label }}</label>
         <input id="text3" name="text3" value="{{ form.text3 }}">
         <label class="checkbox-row"><input id="print_text3" name="print_text3" type="checkbox" value="1" {% if form.print_text3 == '1' %}checked{% endif %}> Print {{ field3_label }}</label>
+
+        <label for="sign_off">{{ sign_off_label }}</label>
+        <input id="sign_off" name="sign_off" list="signoff-options" value="{{ form.sign_off }}" autocomplete="off">
+        <datalist id="signoff-options">
+          {% for name in sign_off_options %}
+            <option value="{{ name }}"></option>
+          {% endfor %}
+        </datalist>
+
+        <label for="weight">{{ weight_label }}</label>
+        <input id="weight" name="weight" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="{{ form.weight }}">
+        <label class="checkbox-row"><input id="print_weight" name="print_weight" type="checkbox" value="1" {% if form.print_weight == '1' %}checked{% endif %}> Print {{ weight_label }}</label>
 
         <label for="footer">{{ footer_label }}</label>
         <input id="footer" name="footer" value="{{ form.footer }}">
@@ -363,8 +394,8 @@ HTML = """
 
         <div class="btns">
           <button type="submit">Print label</button>
-          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_footer={{ form.print_footer }}">Preview ZPL</a>
-          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_footer={{ form.print_footer }}" target="_blank" rel="noopener">Open PNG preview</a>
+          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}">Preview ZPL</a>
+          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}" target="_blank" rel="noopener">Open PNG preview</a>
         </div>
       </form>
     </div>
@@ -374,7 +405,7 @@ HTML = """
       <div class="preview-wrap">
         <div class="preview-stage">
           <div class="preview-frame">
-            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_footer={{ form.print_footer }}" alt="Label preview">
+            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}" alt="Label preview">
           </div>
         </div>
       </div>
@@ -391,13 +422,16 @@ HTML = """
         <li><strong>Field 1 label:</strong> <code>{{ field1_label }}</code> · <strong>default:</strong> <code>{{ field1_default_value }}</code> · <strong>style:</strong> <code>{{ field1_style_summary }}</code></li>
         <li><strong>Field 2 label:</strong> <code>{{ field2_label }}</code> · <strong>default:</strong> <code>{{ field2_default_value }}</code> · <strong>style:</strong> <code>{{ field2_style_summary }}</code></li>
         <li><strong>Field 3 label:</strong> <code>{{ field3_label }}</code> · <strong>default:</strong> <code>{{ field3_default_value }}</code> · <strong>style:</strong> <code>{{ field3_style_summary }}</code></li>
+        <li><strong>Sign-off label:</strong> <code>{{ sign_off_label }}</code> · <strong>default:</strong> <code>{{ sign_off_default_value }}</code> · <strong>style:</strong> <code>{{ sign_off_style_summary }}</code></li>
+        <li><strong>Configured sign-off names:</strong> <code>{{ sign_off_options_display }}</code></li>
+        <li><strong>Weight label:</strong> <code>{{ weight_label }}</code> · <strong>default:</strong> <code>{{ weight_default_value }}</code> · <strong>style:</strong> <code>{{ weight_style_summary }}</code></li>
         <li><strong>Footer label:</strong> <code>{{ footer_label }}</code> · <strong>default:</strong> <code>{{ footer_default_value }}</code> · <strong>style:</strong> <code>{{ footer_style_summary }}</code></li>
         <li><strong>QR template:</strong> <code>{{ qr_value_template }}</code></li>
         <li><strong>QR quiet zone:</strong> <code>{{ qr_quiet_zone_modules }} module(s)</code></li>
         <li><strong>QR error correction:</strong> <code>{{ qr_error_correction }}</code></li>
         <li><strong>Footer bottom margin:</strong> <code>{{ footer_bottom_margin_mm }} mm</code></li>
         <li><strong>Current QR payload:</strong> <code>{{ qr_preview }}</code></li>
-        <li><strong>Current print selection:</strong> <code>field1=on, field2={{ "on" if form.print_text2 == "1" else "off" }}, field3={{ "on" if form.print_text3 == "1" else "off" }}, footer={{ "on" if form.print_footer == "1" else "off" }}</code></li>
+        <li><strong>Current print selection:</strong> <code>field1=on, field2={{ "on" if form.print_text2 == "1" else "off" }}, field3={{ "on" if form.print_text3 == "1" else "off" }}, sign-off={{ "on" if form.sign_off else "off" }}, weight={{ "on" if form.print_weight == "1" else "off" }}, footer={{ "on" if form.print_footer == "1" else "off" }}</code></li>
       </ul>
     </div>
 
@@ -413,7 +447,7 @@ HTML = """
       {% if width_warning %}
       <p class="warn">{{ width_warning }}</p>
       {% endif %}
-      <p class="muted">Field 1 is always printed in human-readable form. Fields 2, 3, and the footer can be turned on or off in the UI for each label. The QR code follows the configured template above.</p>
+      <p class="muted">Field 1 is always printed in human-readable form. Fields 2, 3, weight, and the footer can be turned on or off in the UI for each label. Sign-off prints whenever it is filled in. The QR code follows the configured template above.</p>
     </div>
   </div>
   <script>
@@ -422,15 +456,18 @@ HTML = """
       const text1 = document.getElementById("text1");
       const text2 = document.getElementById("text2");
       const text3 = document.getElementById("text3");
+      const signOff = document.getElementById("sign_off");
+      const weight = document.getElementById("weight");
       const footer = document.getElementById("footer");
       const printText2 = document.getElementById("print_text2");
       const printText3 = document.getElementById("print_text3");
+      const printWeight = document.getElementById("print_weight");
       const printFooter = document.getElementById("print_footer");
       const copies = document.getElementById("copies");
       const previewImage = document.getElementById("preview-image");
       const previewPngLink = document.getElementById("preview-png-link");
       const previewZplLink = document.getElementById("preview-zpl-link");
-      if (!text1 || !text2 || !text3 || !footer || !printText2 || !printText3 || !printFooter || !copies || !previewImage || !previewPngLink || !previewZplLink) return;
+      if (!text1 || !text2 || !text3 || !signOff || !weight || !footer || !printText2 || !printText3 || !printWeight || !printFooter || !copies || !previewImage || !previewPngLink || !previewZplLink) return;
 
       let refreshTimer = null;
       let previewNonce = Date.now();
@@ -446,10 +483,13 @@ HTML = """
         params.set("text1", text1.value || "");
         params.set("text2", text2.value || "");
         params.set("text3", text3.value || "");
+        params.set("sign_off", signOff.value || "");
+        params.set("weight", weight.value || "");
         params.set("footer", footer.value || "");
         params.set("copies", normalizedCopies());
         params.set("print_text2", printText2.checked ? "1" : "0");
         params.set("print_text3", printText3.checked ? "1" : "0");
+        params.set("print_weight", printWeight.checked ? "1" : "0");
         params.set("print_footer", printFooter.checked ? "1" : "0");
         return params;
       }
@@ -483,12 +523,27 @@ HTML = """
         applyPreviewUpdate();
       });
 
-      [text2, text3, footer, printText2, printText3, printFooter, copies].forEach((input) => {
+      const sanitizeWeight = () => {
+        const digits = (weight.value || "").replace(/[^0-9]+/g, "");
+        if (digits !== weight.value) weight.value = digits;
+      };
+
+      weight.addEventListener("input", () => {
+        sanitizeWeight();
+        schedulePreviewUpdate();
+      });
+      weight.addEventListener("change", () => {
+        sanitizeWeight();
+        applyPreviewUpdate();
+      });
+
+      [text2, text3, signOff, footer, printText2, printText3, printWeight, printFooter, copies].forEach((input) => {
         input.addEventListener("input", schedulePreviewUpdate);
         input.addEventListener("change", applyPreviewUpdate);
       });
 
       sanitizeText1();
+      sanitizeWeight();
       applyPreviewUpdate();
     })();
   </script>
@@ -602,6 +657,23 @@ def load_options() -> Dict:
     options["footer_bold"] = normalize_bool(options.get("footer_bold"), DEFAULT_OPTIONS["footer_bold"])
     options["footer_italic"] = normalize_bool(options.get("footer_italic"), DEFAULT_OPTIONS["footer_italic"])
     options["footer_underline"] = normalize_bool(options.get("footer_underline"), DEFAULT_OPTIONS["footer_underline"])
+    options["sign_off_label"] = normalize_string(options.get("sign_off_label"), DEFAULT_OPTIONS["sign_off_label"])
+    options["sign_off_default_value"] = str(options.get("sign_off_default_value") or DEFAULT_OPTIONS["sign_off_default_value"])
+    options["sign_off_options"] = str(options.get("sign_off_options") or DEFAULT_OPTIONS["sign_off_options"])
+    options["sign_off_alignment"] = normalize_alignment(options.get("sign_off_alignment"), DEFAULT_OPTIONS["sign_off_alignment"])
+    options["sign_off_font_family"] = normalize_font_family(options.get("sign_off_font_family"), DEFAULT_OPTIONS["sign_off_font_family"])
+    options["sign_off_font_size_mm"] = normalize_float(options.get("sign_off_font_size_mm"), DEFAULT_OPTIONS["sign_off_font_size_mm"], 2.0, 30.0)
+    options["sign_off_bold"] = normalize_bool(options.get("sign_off_bold"), DEFAULT_OPTIONS["sign_off_bold"])
+    options["sign_off_italic"] = normalize_bool(options.get("sign_off_italic"), DEFAULT_OPTIONS["sign_off_italic"])
+    options["sign_off_underline"] = normalize_bool(options.get("sign_off_underline"), DEFAULT_OPTIONS["sign_off_underline"])
+    options["weight_label"] = normalize_string(options.get("weight_label"), DEFAULT_OPTIONS["weight_label"])
+    options["weight_default_value"] = digits_only(options.get("weight_default_value") or DEFAULT_OPTIONS["weight_default_value"])
+    options["weight_alignment"] = normalize_alignment(options.get("weight_alignment"), DEFAULT_OPTIONS["weight_alignment"])
+    options["weight_font_family"] = normalize_font_family(options.get("weight_font_family"), DEFAULT_OPTIONS["weight_font_family"])
+    options["weight_font_size_mm"] = normalize_float(options.get("weight_font_size_mm"), DEFAULT_OPTIONS["weight_font_size_mm"], 2.0, 30.0)
+    options["weight_bold"] = normalize_bool(options.get("weight_bold"), DEFAULT_OPTIONS["weight_bold"])
+    options["weight_italic"] = normalize_bool(options.get("weight_italic"), DEFAULT_OPTIONS["weight_italic"])
+    options["weight_underline"] = normalize_bool(options.get("weight_underline"), DEFAULT_OPTIONS["weight_underline"])
     return options
 
 
@@ -610,10 +682,13 @@ def default_form_from_options(opts: Dict) -> Dict[str, str]:
         "text1": digits_only(opts.get("field1_default_value") or ""),
         "text2": str(opts.get("field2_default_value") or ""),
         "text3": str(opts.get("field3_default_value") or ""),
+        "sign_off": str(opts.get("sign_off_default_value") or ""),
+        "weight": digits_only(opts.get("weight_default_value") or ""),
         "footer": str(opts.get("footer_default_value") or ""),
         "copies": DEFAULT_FORM["copies"],
         "print_text2": DEFAULT_FORM["print_text2"],
         "print_text3": DEFAULT_FORM["print_text3"],
+        "print_weight": DEFAULT_FORM["print_weight"],
         "print_footer": DEFAULT_FORM["print_footer"],
     }
 
@@ -624,10 +699,13 @@ def form_data_from_request(opts: Dict) -> Dict[str, str]:
         "text1": digits_only(request.values.get("text1", defaults["text1"]), defaults["text1"]),
         "text2": request.values.get("text2", defaults["text2"]),
         "text3": request.values.get("text3", defaults["text3"]),
+        "sign_off": request.values.get("sign_off", defaults["sign_off"]),
+        "weight": digits_only(request.values.get("weight", defaults["weight"]), defaults["weight"]),
         "footer": request.values.get("footer", defaults["footer"]),
         "copies": request.values.get("copies", defaults["copies"]),
         "print_text2": normalize_form_checkbox(request.values.get("print_text2"), defaults["print_text2"]),
         "print_text3": normalize_form_checkbox(request.values.get("print_text3"), defaults["print_text3"]),
+        "print_weight": normalize_form_checkbox(request.values.get("print_weight"), defaults["print_weight"]),
         "print_footer": normalize_form_checkbox(request.values.get("print_footer"), defaults["print_footer"]),
     }
 
@@ -652,10 +730,20 @@ def validate_text1_numeric(value: object, field1_label: str) -> str:
     return text
 
 
+def validate_optional_numeric(value: object, label: str) -> str:
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return ""
+    if not text.isdigit():
+        raise ValueError(f"{label} must contain numbers only.")
+    return text
+
+
 def parse_print_toggles(data: Dict[str, str]) -> Dict[str, bool]:
     return {
         "print_text2": normalize_bool(data.get("print_text2"), True),
         "print_text3": normalize_bool(data.get("print_text3"), True),
+        "print_weight": normalize_bool(data.get("print_weight"), False),
         "print_footer": normalize_bool(data.get("print_footer"), True),
     }
 
@@ -774,6 +862,10 @@ def footer_style_summary(opts: Dict) -> str:
     return f"{style_summary_from_prefix(opts, 'footer')}, bottom margin {opts['footer_bottom_margin_mm']} mm"
 
 
+def option_style_summary(opts: Dict, name: str) -> str:
+    return style_summary_from_prefix(opts, name)
+
+
 def get_field_config(opts: Dict, idx: int) -> Dict:
     return {
         "label": opts[f"field{idx}_label"],
@@ -804,6 +896,32 @@ def get_footer_config(opts: Dict) -> Dict:
         "gap_after_dots": 0,
     }
 
+
+def get_optional_block_config(opts: Dict, name: str) -> Dict:
+    return {
+        "label": opts[f"{name}_label"],
+        "default_value": opts[f"{name}_default_value"],
+        "alignment": opts[f"{name}_alignment"],
+        "font_family": opts[f"{name}_font_family"],
+        "font_size_mm": opts[f"{name}_font_size_mm"],
+        "bold": opts[f"{name}_bold"],
+        "italic": opts[f"{name}_italic"],
+        "underline": opts[f"{name}_underline"],
+        "max_lines": OPTION_MAX_LINES.get(name, 2),
+        "gap_after_dots": mm_to_dots(4.0 if name == "sign_off" else 6.0),
+    }
+
+
+def parse_sign_off_options(opts: Dict) -> List[str]:
+    raw = str(opts.get("sign_off_options") or "")
+    parts = [part.strip() for part in re.split(r"\n|,|;", raw)]
+    seen = set()
+    names: List[str] = []
+    for part in parts:
+        if part and part.lower() not in seen:
+            seen.add(part.lower())
+            names.append(part)
+    return names
 
 def text_line_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
     bbox = draw.textbbox((0, 0), "Ag", font=font)
@@ -923,7 +1041,7 @@ def text_block_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont, line
     return (line_count * line_h) + (max(0, line_count - 1) * line_spacing)
 
 
-def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Dict, preview: bool, print_toggles: Dict[str, bool] | None = None) -> Image.Image:
+def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, opts: Dict, preview: bool, print_toggles: Dict[str, bool] | None = None) -> Image.Image:
     layout = effective_layout(opts)
     qr_payload = build_qr_payload(text1, text2, text3, opts)
 
@@ -959,7 +1077,7 @@ def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Di
     text_width = max(1, pw - (margin_x * 2))
     current_y = qr_top + qr_size + mm_to_dots(8)
 
-    toggles = print_toggles or {"print_text2": True, "print_text3": True, "print_footer": True}
+    toggles = print_toggles or {"print_text2": True, "print_text3": True, "print_weight": False, "print_footer": True}
 
     text_values = {1: text1, 2: text2, 3: text3}
     field_enabled = {1: True, 2: toggles.get("print_text2", True), 3: toggles.get("print_text3", True)}
@@ -982,6 +1100,44 @@ def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Di
             line_spacing=line_spacing,
         )
         current_y += cfg["gap_after_dots"]
+
+    sign_off_text = (sign_off or "").strip()
+    if sign_off_text:
+        sign_off_cfg = get_optional_block_config(opts, "sign_off")
+        font, lines, resolved_font_size = fit_field_lines(draw, sign_off_text, sign_off_cfg, text_width)
+        line_spacing = max(4, resolved_font_size // 7)
+        current_y = draw_aligned_text_lines(
+            draw,
+            lines,
+            current_y,
+            margin_x,
+            text_width,
+            font,
+            sign_off_cfg["alignment"],
+            sign_off_cfg["underline"],
+            fill=(0, 0, 0),
+            line_spacing=line_spacing,
+        )
+        current_y += sign_off_cfg["gap_after_dots"]
+
+    weight_text = (weight or "").strip()
+    if weight_text and toggles.get("print_weight", False):
+        weight_cfg = get_optional_block_config(opts, "weight")
+        font, lines, resolved_font_size = fit_field_lines(draw, f"{weight_text} kg", weight_cfg, text_width)
+        line_spacing = max(4, resolved_font_size // 7)
+        current_y = draw_aligned_text_lines(
+            draw,
+            lines,
+            current_y,
+            margin_x,
+            text_width,
+            font,
+            weight_cfg["alignment"],
+            weight_cfg["underline"],
+            fill=(0, 0, 0),
+            line_spacing=line_spacing,
+        )
+        current_y += weight_cfg["gap_after_dots"]
 
     footer_text = (footer or "").strip()
     if footer_text and toggles.get("print_footer", True):
@@ -1015,11 +1171,11 @@ def render_label_image(text1: str, text2: str, text3: str, footer: str, opts: Di
     return img
 
 
-def build_zpl(text1: str, text2: str, text3: str, footer: str, copies: int, opts: Dict, print_toggles: Dict[str, bool] | None = None) -> str:
+def build_zpl(text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, copies: int, opts: Dict, print_toggles: Dict[str, bool] | None = None) -> str:
     layout = effective_layout(opts)
     pw = layout["effective_width_dots"]
     ll = layout["requested_height_dots"]
-    label_img = render_label_image(text1, text2, text3, footer, opts, preview=False, print_toggles=print_toggles).convert("1")
+    label_img = render_label_image(text1, text2, text3, sign_off, weight, footer, opts, preview=False, print_toggles=print_toggles).convert("1")
     total_bytes, bytes_per_row, graphic_hex = image_to_gfa(label_img)
     return f"""^XA
 ^CI28
@@ -1041,6 +1197,7 @@ def send_to_printer(host: str, port: int, payload: str) -> None:
 
 def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) -> str:
     layout = effective_layout(opts)
+    sign_off_names = parse_sign_off_options(opts)
     try:
         qr_preview = build_qr_payload(form.get("text1", ""), form.get("text2", ""), form.get("text3", ""), opts)
     except Exception as exc:
@@ -1061,6 +1218,14 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
         field1_style_summary=field_style_summary(opts, 1),
         field2_style_summary=field_style_summary(opts, 2),
         field3_style_summary=field_style_summary(opts, 3),
+        sign_off_label=opts["sign_off_label"],
+        sign_off_default_value=opts["sign_off_default_value"],
+        sign_off_options=sign_off_names,
+        sign_off_options_display=", ".join(sign_off_names) if sign_off_names else "(none)",
+        sign_off_style_summary=option_style_summary(opts, "sign_off"),
+        weight_label=opts["weight_label"],
+        weight_default_value=opts["weight_default_value"],
+        weight_style_summary=option_style_summary(opts, "weight"),
         footer_label=opts["footer_label"],
         footer_default_value=opts["footer_default_value"],
         footer_style_summary=footer_style_summary(opts),
@@ -1074,6 +1239,7 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
         effective_width_mm=dots_to_mm(layout["effective_width_dots"]),
         effective_width_dots=layout["effective_width_dots"],
         width_warning=layout["width_warning"],
+        footer_bottom_margin_mm=opts["footer_bottom_margin_mm"],
         ingress_base=ingress_base_path(),
     )
 
@@ -1104,10 +1270,13 @@ def print_label():
         "text1": digits_only(request.form.get("text1", defaults["text1"]), defaults["text1"]),
         "text2": request.form.get("text2", defaults["text2"]).strip(),
         "text3": request.form.get("text3", defaults["text3"]).strip(),
+        "sign_off": request.form.get("sign_off", defaults["sign_off"]).strip(),
+        "weight": digits_only(request.form.get("weight", defaults["weight"]), defaults["weight"]),
         "footer": request.form.get("footer", defaults["footer"]).strip(),
         "copies": request.form.get("copies", DEFAULT_FORM["copies"]).strip() or DEFAULT_FORM["copies"],
         "print_text2": normalize_form_checkbox(request.form.get("print_text2"), defaults["print_text2"]),
         "print_text3": normalize_form_checkbox(request.form.get("print_text3"), defaults["print_text3"]),
+        "print_weight": normalize_form_checkbox(request.form.get("print_weight"), defaults["print_weight"]),
         "print_footer": normalize_form_checkbox(request.form.get("print_footer"), defaults["print_footer"]),
     }
 
@@ -1118,17 +1287,23 @@ def print_label():
         form["text1"] = text1
         text2 = form["text2"]
         text3 = form["text3"]
+        sign_off = form["sign_off"]
+        weight = validate_optional_numeric(form["weight"], opts["weight_label"])
+        form["weight"] = weight
         footer = form["footer"]
         copies = max(1, min(50, int(form["copies"])))
         print_toggles = parse_print_toggles(form)
-        zpl = build_zpl(text1, text2, text3, footer, copies, opts, print_toggles=print_toggles)
+        zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, copies, opts, print_toggles=print_toggles)
         qr_payload = build_qr_payload(text1, text2, text3, opts)
         LOGGER.info(
-            "Print request received: copies=%s qr_payload=%r print_text2=%s print_text3=%s print_footer=%s",
+            "Print request received: copies=%s qr_payload=%r sign_off=%r weight=%r print_text2=%s print_text3=%s print_weight=%s print_footer=%s",
             copies,
             qr_payload,
+            sign_off,
+            weight,
             print_toggles["print_text2"],
             print_toggles["print_text3"],
+            print_toggles["print_weight"],
             print_toggles["print_footer"],
         )
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
@@ -1150,6 +1325,8 @@ def preview():
     raw_text1 = request.args.get("text1", defaults["text1"])
     text2 = request.args.get("text2", defaults["text2"])
     text3 = request.args.get("text3", defaults["text3"])
+    sign_off = request.args.get("sign_off", defaults["sign_off"])
+    weight = request.args.get("weight", defaults["weight"])
     footer = request.args.get("footer", defaults["footer"])
     try:
         text1 = validate_text1_numeric(raw_text1, opts["field1_label"])
@@ -1157,9 +1334,11 @@ def preview():
         print_toggles = parse_print_toggles({
             "print_text2": request.args.get("print_text2", defaults["print_text2"]),
             "print_text3": request.args.get("print_text3", defaults["print_text3"]),
+            "print_weight": request.args.get("print_weight", defaults["print_weight"]),
             "print_footer": request.args.get("print_footer", defaults["print_footer"]),
         })
-        zpl = build_zpl(text1, text2, text3, footer, copies, opts, print_toggles=print_toggles)
+        weight = validate_optional_numeric(weight, opts["weight_label"])
+        zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, copies, opts, print_toggles=print_toggles)
         LOGGER.info("Generated ZPL preview for copies=%s with toggles=%s", copies, print_toggles)
         return Response(zpl, mimetype="text/plain; charset=utf-8")
     except Exception as exc:
@@ -1174,16 +1353,20 @@ def preview_png():
     raw_text1 = request.args.get("text1", defaults["text1"])
     text2 = request.args.get("text2", defaults["text2"])
     text3 = request.args.get("text3", defaults["text3"])
+    sign_off = request.args.get("sign_off", defaults["sign_off"])
+    weight = request.args.get("weight", defaults["weight"])
     footer = request.args.get("footer", defaults["footer"])
     try:
         text1 = validate_text1_numeric(raw_text1, opts["field1_label"])
         print_toggles = parse_print_toggles({
             "print_text2": request.args.get("print_text2", defaults["print_text2"]),
             "print_text3": request.args.get("print_text3", defaults["print_text3"]),
+            "print_weight": request.args.get("print_weight", defaults["print_weight"]),
             "print_footer": request.args.get("print_footer", defaults["print_footer"]),
         })
-        LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r footer=%r toggles=%s", text1, text2, text3, footer, print_toggles)
-        img = render_label_image(text1, text2, text3, footer, opts, preview=True, print_toggles=print_toggles)
+        weight = validate_optional_numeric(weight, opts["weight_label"])
+        LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r sign_off=%r weight=%r footer=%r toggles=%s", text1, text2, text3, sign_off, weight, footer, print_toggles)
+        img = render_label_image(text1, text2, text3, sign_off, weight, footer, opts, preview=True, print_toggles=print_toggles)
         bio = BytesIO()
         img.save(bio, format="PNG", dpi=(203, 203), optimize=True)
         bio.seek(0)
@@ -1201,17 +1384,21 @@ def api_print():
     raw_text1 = payload.get("text1", defaults["text1"])
     text2 = str(payload.get("text2", defaults["text2"])).strip()
     text3 = str(payload.get("text3", defaults["text3"])).strip()
+    sign_off = str(payload.get("sign_off", defaults["sign_off"])).strip()
+    weight = digits_only(payload.get("weight", defaults["weight"]), defaults["weight"])
     footer = str(payload.get("footer", defaults["footer"])).strip()
     copies = max(1, min(50, int(payload.get("copies", 1))))
     print_toggles = parse_print_toggles({
         "print_text2": normalize_form_checkbox(payload.get("print_text2"), "1"),
         "print_text3": normalize_form_checkbox(payload.get("print_text3"), "1"),
+        "print_weight": normalize_form_checkbox(payload.get("print_weight"), "0"),
         "print_footer": normalize_form_checkbox(payload.get("print_footer"), "1"),
     })
     try:
         text1 = validate_text1_numeric(raw_text1, opts["field1_label"])
-        zpl = build_zpl(text1, text2, text3, footer, copies, opts, print_toggles=print_toggles)
-        LOGGER.info("API print request received: copies=%s footer=%r toggles=%s", copies, footer, print_toggles)
+        weight = validate_optional_numeric(weight, opts["weight_label"])
+        zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, copies, opts, print_toggles=print_toggles)
+        LOGGER.info("API print request received: copies=%s sign_off=%r weight=%r footer=%r toggles=%s", copies, sign_off, weight, footer, print_toggles)
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
         return jsonify({
             "ok": True,
