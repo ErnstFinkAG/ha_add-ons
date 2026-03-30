@@ -12,6 +12,7 @@ This repository is intended to be hosted at:
 - live PNG preview rendered from the same layout geometry used for printing
 - red preview-only border showing the full QR footprint including quiet zone
 - multilingual UI with German and English via `ui_language`
+- optional rotated print layout via `print_rotation_degrees` (`0`, `90`, or `270`)
 - 3 configurable main text fields
 - sign-off input with configured suggestions and free-text entry
 - optional numeric-only weight field with per-print checkbox
@@ -66,6 +67,7 @@ label_width_mm: 170
 label_height_mm: 305
 qr_size_mm: 170
 top_margin_mm: 0
+print_rotation_degrees: 0
 field1_label: Projektnummer
 field2_label: Projektname
 field3_label: Element
@@ -131,6 +133,18 @@ Allowed values:
 - `en`
 
 This setting changes the static UI text, status messages, and validation messages. Your configured field labels stay exactly as you define them.
+
+## Rotated print layout
+
+Use `print_rotation_degrees` to rotate the whole label layout while keeping the printer and media setup unchanged.
+
+Allowed values:
+
+- `0` = normal layout with the QR code above the text blocks
+- `90` = rotated layout
+- `270` = rotated layout in the opposite direction
+
+In rotated mode, the QR code and text layout are turned together, so when you view the label in the rotated reading direction, the QR code sits to the left of the text blocks.
 
 ## Sign-off suggestions
 

@@ -44,6 +44,7 @@ OPTION_MAX_LINES = {"sign_off": 2, "weight": 1}
 ALIGNMENTS = {"left", "center", "right"}
 FONT_FAMILIES = {"sans", "serif", "mono"}
 SUPPORTED_UI_LANGUAGES = {"en", "de"}
+SUPPORTED_ROTATIONS = {0, 90, 270}
 FIELD_GAPS_MM = {1: 8.0, 2: 6.0, 3: 4.0}
 FIELD_MAX_LINES = {1: 4, 2: 3, 3: 3}
 FOOTER_MAX_LINES = 3
@@ -178,6 +179,7 @@ DEFAULT_OPTIONS = {
     "qr_value_template": "{text1 - text2}",
     "qr_quiet_zone_modules": 3,
     "qr_error_correction": "M",
+    "print_rotation_degrees": 0,
 }
 
 QR_ERROR_CORRECTION_MAP = {
@@ -217,6 +219,7 @@ UI_STRINGS = {
         "module_word": "module(s)",
         "qr_error_correction": "QR error correction",
         "footer_bottom_margin": "Footer bottom margin",
+        "print_rotation": "Print rotation",
         "current_qr_payload": "Current QR payload",
         "current_print_selection": "Current print selection",
         "layout_heading": "Layout",
@@ -264,6 +267,7 @@ UI_STRINGS = {
         "module_word": "Modul(e)",
         "qr_error_correction": "QR-Fehlerkorrektur",
         "footer_bottom_margin": "Fußzeilen-Abstand unten",
+        "print_rotation": "Drehung des Druckbilds",
         "current_qr_payload": "Aktueller QR-Inhalt",
         "current_print_selection": "Aktuelle Druckauswahl",
         "layout_heading": "Layout",
@@ -541,6 +545,7 @@ HTML = """
         {{ ui.requested_qr }}: {{ requested_qr_mm }} × {{ requested_qr_mm }} mm<br>
         QR quiet zone: {{ qr_quiet_zone_modules }} module(s), error correction: {{ qr_error_correction }}<br>
         Footer bottom margin: {{ footer_bottom_margin_mm }} mm<br>
+        {{ ui.print_rotation }}: {{ print_rotation_degrees }}°<br>
         {{ ui.effective_print_width }}: {{ effective_width_mm }} mm ({{ effective_width_dots }} dots)
       </p>
       {% if width_warning %}
@@ -727,6 +732,14 @@ def normalize_ui_language(value: object, default: str) -> str:
     return language if language in SUPPORTED_UI_LANGUAGES else default
 
 
+def normalize_rotation_degrees(value: object, default: int) -> int:
+    try:
+        rotation = int(value)
+    except (TypeError, ValueError):
+        rotation = default
+    return rotation if rotation in SUPPORTED_ROTATIONS else default
+
+
 def get_ui_strings(language: object) -> Dict[str, str]:
     lang = normalize_ui_language(language, DEFAULT_OPTIONS["ui_language"])
     ui = dict(UI_STRINGS["en"])
@@ -765,6 +778,7 @@ def load_options() -> Dict:
     options["qr_quiet_zone_modules"] = normalize_int(options.get("qr_quiet_zone_modules"), DEFAULT_OPTIONS["qr_quiet_zone_modules"], 0, 20)
     level = str(options.get("qr_error_correction") or DEFAULT_OPTIONS["qr_error_correction"]).strip().upper()
     options["qr_error_correction"] = level if level in QR_ERROR_CORRECTION_MAP else DEFAULT_OPTIONS["qr_error_correction"]
+    options["print_rotation_degrees"] = normalize_rotation_degrees(options.get("print_rotation_degrees"), DEFAULT_OPTIONS["print_rotation_degrees"])
 
     for idx in range(1, FIELD_COUNT + 1):
         options[f"field{idx}_label"] = normalize_string(options.get(f"field{idx}_label"), DEFAULT_OPTIONS[f"field{idx}_label"])
@@ -1184,33 +1198,26 @@ def text_block_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont, line
     return (line_count * line_h) + (max(0, line_count - 1) * line_spacing)
 
 
-def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, opts: Dict, preview: bool, print_toggles: Dict[str, bool] | None = None) -> Image.Image:
+def draw_background_for_preview(img: Image.Image, requested_w: int, requested_h: int, printable_left: int, printable_w: int) -> None:
+    draw = ImageDraw.Draw(img)
+    content_right = printable_left + printable_w
+    if printable_left > 0:
+        draw.rectangle((0, 0, printable_left - 1, requested_h - 1), fill=(244, 244, 244))
+    if content_right < requested_w:
+        draw.rectangle((content_right, 0, requested_w - 1, requested_h - 1), fill=(244, 244, 244))
+    draw.line((printable_left, 0, printable_left, requested_h), fill=(180, 180, 180), width=1)
+    draw.line((content_right - 1, 0, content_right - 1, requested_h), fill=(180, 180, 180), width=1)
+    draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=(205, 205, 205), width=2)
+
+
+def render_portrait_content(printable_w: int, canvas_h: int, text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, opts: Dict, preview: bool, print_toggles: Dict[str, bool]) -> Image.Image:
     layout = effective_layout(opts)
     qr_payload = build_qr_payload(text1, text2, text3, opts)
-
-    requested_w = layout["requested_width_dots"]
-    requested_h = layout["requested_height_dots"]
-    pw = layout["effective_width_dots"]
-    canvas_width = requested_w if preview else pw
-    canvas_height = requested_h
-
-    img = Image.new("RGB", (canvas_width, canvas_height), color=(255, 255, 255))
+    img = Image.new("RGB", (printable_w, canvas_h), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
 
-    content_left = 0
-    if preview and requested_w > pw:
-        content_left = max((requested_w - pw) // 2, 0)
-        content_right = content_left + pw
-        if content_left > 0:
-            draw.rectangle((0, 0, content_left - 1, requested_h - 1), fill=(244, 244, 244))
-        if content_right < requested_w:
-            draw.rectangle((content_right, 0, requested_w - 1, requested_h - 1), fill=(244, 244, 244))
-        draw.line((content_left, 0, content_left, requested_h), fill=(180, 180, 180), width=1)
-        draw.line((content_right - 1, 0, content_right - 1, requested_h), fill=(180, 180, 180), width=1)
-        draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=(205, 205, 205), width=2)
-
-    qr_size = min(layout["qr_size_dots"], pw)
-    qr_left = content_left + max((pw - qr_size) // 2, 0)
+    qr_size = min(layout["qr_size_dots"], printable_w)
+    qr_left = max((printable_w - qr_size) // 2, 0)
     qr_top = layout["top_margin_dots"]
     qr_img = build_qr_image(qr_payload, qr_size, opts).convert("RGB")
     img.paste(qr_img, (qr_left, qr_top))
@@ -1223,23 +1230,21 @@ def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight
             width=preview_border_width,
         )
 
-    margin_x = content_left + max((pw - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM))
-    text_width = max(1, pw - (margin_x * 2))
+    margin_x = max((printable_w - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM))
+    text_width = max(1, printable_w - (margin_x * 2))
     current_y = qr_top + qr_size + mm_to_dots(8)
-
-    toggles = print_toggles or {"print_text2": True, "print_text3": True, "print_weight": False, "print_footer": True}
 
     weight_text = (weight or "").strip()
     combined_field3_and_weight = False
 
     text_values = {1: text1, 2: text2, 3: text3}
-    field_enabled = {1: True, 2: toggles.get("print_text2", True), 3: toggles.get("print_text3", True)}
+    field_enabled = {1: True, 2: print_toggles.get("print_text2", True), 3: print_toggles.get("print_text3", True)}
     for idx in range(1, FIELD_COUNT + 1):
         if not field_enabled.get(idx, True):
             continue
 
         field_value = text_values[idx]
-        if idx == 3 and toggles.get("print_weight", False) and weight_text:
+        if idx == 3 and print_toggles.get("print_weight", False) and weight_text:
             field3_value = (field_value or "").strip()
             field_value = f"{field3_value} - {weight_text} kg" if field3_value else f"{weight_text} kg"
             combined_field3_and_weight = True
@@ -1280,7 +1285,7 @@ def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight
         )
         current_y += sign_off_cfg["gap_after_dots"]
 
-    if weight_text and toggles.get("print_weight", False) and not combined_field3_and_weight:
+    if weight_text and print_toggles.get("print_weight", False) and not combined_field3_and_weight:
         weight_cfg = get_optional_block_config(opts, "weight")
         font, lines, resolved_font_size = fit_field_lines(draw, f"{weight_text} kg", weight_cfg, text_width)
         line_spacing = max(4, resolved_font_size // 7)
@@ -1299,20 +1304,20 @@ def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight
         current_y += weight_cfg["gap_after_dots"]
 
     footer_text = compose_footer_text(footer)
-    if footer_text and toggles.get("print_footer", True):
+    if footer_text and print_toggles.get("print_footer", True):
         footer_cfg = get_footer_config(opts)
         font, lines, resolved_font_size = fit_field_lines(draw, footer_text, footer_cfg, text_width)
         line_spacing = max(4, resolved_font_size // 7)
         footer_height = text_block_height(draw, font, len(lines), line_spacing)
         footer_bottom_margin_dots = mm_to_dots(footer_cfg.get("bottom_margin_mm", 0.0)) if footer_cfg.get("bottom_margin_mm", 0.0) > 0 else 0
-        footer_y = max(0, canvas_height - footer_height - footer_bottom_margin_dots)
+        footer_y = max(0, canvas_h - footer_height - footer_bottom_margin_dots)
         if footer_y < current_y:
             LOGGER.warning(
                 "Footer overlaps content: footer_y=%s current_y=%s footer_height=%s label_height=%s",
                 footer_y,
                 current_y,
                 footer_height,
-                canvas_height,
+                canvas_h,
             )
         draw_aligned_text_lines(
             draw,
@@ -1328,6 +1333,167 @@ def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight
         )
 
     return img
+
+
+def render_rotated_content(printable_w: int, canvas_h: int, text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, opts: Dict, preview: bool, print_toggles: Dict[str, bool], rotation_degrees: int) -> Image.Image:
+    layout = effective_layout(opts)
+    qr_payload = build_qr_payload(text1, text2, text3, opts)
+    logical_w = canvas_h
+    logical_h = printable_w
+    landscape = Image.new("RGB", (logical_w, logical_h), color=(255, 255, 255))
+    draw = ImageDraw.Draw(landscape)
+
+    qr_size = min(layout["qr_size_dots"], logical_h)
+    qr_left = min(max(layout["top_margin_dots"], 0), max(0, logical_w - qr_size))
+    qr_top = max((logical_h - qr_size) // 2, 0)
+    qr_img = build_qr_image(qr_payload, qr_size, opts).convert("RGB")
+    landscape.paste(qr_img, (qr_left, qr_top))
+
+    if preview:
+        preview_border_width = max(2, int(round(DOTS_PER_MM * 0.5)))
+        draw.rectangle(
+            (qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1),
+            outline=(220, 38, 38),
+            width=preview_border_width,
+        )
+
+    inter_block_gap = mm_to_dots(8)
+    left_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
+    right_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
+    text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
+    text_right_margin = right_margin
+    text_width = max(1, logical_w - text_left - text_right_margin)
+    text_box_top = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
+    text_box_bottom = logical_h - mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
+    current_y = text_box_top
+
+    weight_text = (weight or "").strip()
+    combined_field3_and_weight = False
+
+    text_values = {1: text1, 2: text2, 3: text3}
+    field_enabled = {1: True, 2: print_toggles.get("print_text2", True), 3: print_toggles.get("print_text3", True)}
+    for idx in range(1, FIELD_COUNT + 1):
+        if not field_enabled.get(idx, True):
+            continue
+        field_value = text_values[idx]
+        if idx == 3 and print_toggles.get("print_weight", False) and weight_text:
+            field3_value = (field_value or "").strip()
+            field_value = f"{field3_value} - {weight_text} kg" if field3_value else f"{weight_text} kg"
+            combined_field3_and_weight = True
+
+        cfg = get_field_config(opts, idx)
+        font, lines, resolved_font_size = fit_field_lines(draw, field_value, cfg, text_width)
+        line_spacing = max(4, resolved_font_size // 7)
+        current_y = draw_aligned_text_lines(
+            draw,
+            lines,
+            current_y,
+            text_left,
+            text_width,
+            font,
+            cfg["alignment"],
+            cfg["underline"],
+            fill=(0, 0, 0),
+            line_spacing=line_spacing,
+        )
+        current_y += cfg["gap_after_dots"]
+
+    sign_off_text = (sign_off or "").strip()
+    if sign_off_text:
+        sign_off_cfg = get_optional_block_config(opts, "sign_off")
+        font, lines, resolved_font_size = fit_field_lines(draw, sign_off_text, sign_off_cfg, text_width)
+        line_spacing = max(4, resolved_font_size // 7)
+        current_y = draw_aligned_text_lines(
+            draw,
+            lines,
+            current_y,
+            text_left,
+            text_width,
+            font,
+            sign_off_cfg["alignment"],
+            sign_off_cfg["underline"],
+            fill=(0, 0, 0),
+            line_spacing=line_spacing,
+        )
+        current_y += sign_off_cfg["gap_after_dots"]
+
+    if weight_text and print_toggles.get("print_weight", False) and not combined_field3_and_weight:
+        weight_cfg = get_optional_block_config(opts, "weight")
+        font, lines, resolved_font_size = fit_field_lines(draw, f"{weight_text} kg", weight_cfg, text_width)
+        line_spacing = max(4, resolved_font_size // 7)
+        current_y = draw_aligned_text_lines(
+            draw,
+            lines,
+            current_y,
+            text_left,
+            text_width,
+            font,
+            weight_cfg["alignment"],
+            weight_cfg["underline"],
+            fill=(0, 0, 0),
+            line_spacing=line_spacing,
+        )
+        current_y += weight_cfg["gap_after_dots"]
+
+    footer_text = compose_footer_text(footer)
+    if footer_text and print_toggles.get("print_footer", True):
+        footer_cfg = get_footer_config(opts)
+        font, lines, resolved_font_size = fit_field_lines(draw, footer_text, footer_cfg, text_width)
+        line_spacing = max(4, resolved_font_size // 7)
+        footer_height = text_block_height(draw, font, len(lines), line_spacing)
+        footer_bottom_margin_dots = mm_to_dots(footer_cfg.get("bottom_margin_mm", 0.0)) if footer_cfg.get("bottom_margin_mm", 0.0) > 0 else 0
+        footer_y = max(text_box_top, text_box_bottom - footer_height - footer_bottom_margin_dots)
+        if footer_y < current_y:
+            LOGGER.warning(
+                "Footer overlaps rotated content: footer_y=%s current_y=%s footer_height=%s logical_height=%s",
+                footer_y,
+                current_y,
+                footer_height,
+                logical_h,
+            )
+        draw_aligned_text_lines(
+            draw,
+            lines,
+            footer_y,
+            text_left,
+            text_width,
+            font,
+            footer_cfg["alignment"],
+            footer_cfg["underline"],
+            fill=(0, 0, 0),
+            line_spacing=line_spacing,
+        )
+
+    if rotation_degrees == 90:
+        return landscape.transpose(Image.Transpose.ROTATE_270)
+    return landscape.transpose(Image.Transpose.ROTATE_90)
+
+
+def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, opts: Dict, preview: bool, print_toggles: Dict[str, bool] | None = None) -> Image.Image:
+    layout = effective_layout(opts)
+    requested_w = layout["requested_width_dots"]
+    requested_h = layout["requested_height_dots"]
+    printable_w = layout["effective_width_dots"]
+    rotation_degrees = normalize_rotation_degrees(opts.get("print_rotation_degrees"), DEFAULT_OPTIONS["print_rotation_degrees"])
+    print_toggles = print_toggles or {"print_text2": True, "print_text3": True, "print_weight": False, "print_footer": True}
+
+    printable_image = (
+        render_portrait_content(printable_w, requested_h, text1, text2, text3, sign_off, weight, footer, opts, preview, print_toggles)
+        if rotation_degrees == 0
+        else render_rotated_content(printable_w, requested_h, text1, text2, text3, sign_off, weight, footer, opts, preview, print_toggles, rotation_degrees)
+    )
+
+    if not preview:
+        return printable_image
+
+    if requested_w <= printable_w:
+        return printable_image
+
+    canvas = Image.new("RGB", (requested_w, requested_h), color=(255, 255, 255))
+    printable_left = max((requested_w - printable_w) // 2, 0)
+    draw_background_for_preview(canvas, requested_w, requested_h, printable_left, printable_w)
+    canvas.paste(printable_image, (printable_left, 0))
+    return canvas
 
 
 def build_zpl(text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, copies: int, opts: Dict, print_toggles: Dict[str, bool] | None = None) -> str:
@@ -1403,6 +1569,7 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
         effective_width_dots=layout["effective_width_dots"],
         width_warning=layout["width_warning"],
         footer_bottom_margin_mm=opts["footer_bottom_margin_mm"],
+        print_rotation_degrees=opts["print_rotation_degrees"],
         ingress_base=ingress_base_path(),
     )
 
