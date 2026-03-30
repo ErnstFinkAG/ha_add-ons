@@ -10,6 +10,7 @@ This repository is intended to be hosted at:
 
 - 1 large QR code per label
 - live PNG preview rendered from the same layout geometry used for printing
+- preview is shown at the configured label size in mm to approximate a 1:1 on-screen view
 - red preview-only border showing the full QR footprint including quiet zone
 - multilingual UI with German and English via `ui_language`
 - optional rotated print layout via `print_rotation_degrees` (`0`, `90`, or `270`)
@@ -19,6 +20,7 @@ This repository is intended to be hosted at:
 - optional footer anchored to the physical bottom of the label
 - automatic current date appended to the footer
 - per-field defaults, alignment, font family, font size, bold, italic, and underline
+- default-value config fields may be left empty
 - per-print checkboxes in the UI to hide field 2, field 3, weight, and the footer
 - configurable QR payload template using `text1`, `text2`, and `text3`
 - numeric-only first field input in the UI for project or inventory numbers

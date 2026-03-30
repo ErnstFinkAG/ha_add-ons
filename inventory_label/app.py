@@ -202,7 +202,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi. When print rotation is enabled, the preview keeps the same rotated aspect ratio as the printed label. The red outline shows the full QR footprint including the configured quiet zone. Screen size can still vary with browser zoom and display scaling.",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi. The preview is shown at the configured label size in mm to approximate a 1:1 on-screen view. When print rotation is enabled, the preview keeps the same rotated aspect ratio as the printed label. The red outline shows the full QR footprint including the configured quiet zone. Actual physical size can still vary with browser zoom, OS scaling, and display calibration.",
         "configured_label_mapping": "Configured label mapping",
         "field1_label_meta": "Field 1 label",
         "field2_label_meta": "Field 2 label",
@@ -250,7 +250,7 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Das PNG wird aus denselben Layout-Koordinaten wie der Druck erzeugt und mit 203 dpi exportiert. Wenn eine Druckdrehung aktiviert ist, wird auch die Vorschau für die bessere Lesbarkeit am Bildschirm gedreht. Die rote Umrandung zeigt den gesamten QR-Bereich einschließlich der konfigurierten Ruhezone. Die tatsächliche Bildschirmgröße kann durch Browser-Zoom und Anzeige-Skalierung abweichen.",
+        "preview_meta": "Das PNG wird aus denselben Layout-Koordinaten wie der Druck erzeugt und mit 203 dpi exportiert. Die Vorschau wird in der konfigurierten Etikettengröße in mm angezeigt, um eine möglichst 1:1 Bildschirmdarstellung anzunähern. Wenn eine Druckdrehung aktiviert ist, behält auch die Vorschau das gedrehte Seitenverhältnis des gedruckten Etiketts. Die rote Umrandung zeigt den gesamten QR-Bereich einschließlich der konfigurierten Ruhezone. Die tatsächliche physische Größe kann durch Browser-Zoom, OS-Skalierung und Bildschirmkalibrierung trotzdem abweichen.",
         "configured_label_mapping": "Konfigurierte Etikettenzuordnung",
         "field1_label_meta": "Feld-1-Bezeichnung",
         "field2_label_meta": "Feld-2-Bezeichnung",
@@ -407,12 +407,13 @@ HTML = """
       display: flex;
       justify-content: center;
       align-items: flex-start;
-      min-width: min-content;
+      min-width: max-content;
     }
     .preview-frame {
-      width: min(100%, 420px);
-      max-width: 100%;
-      aspect-ratio: {{ preview_display_width_mm }} / {{ preview_display_height_mm }};
+      width: {{ preview_display_width_mm }}mm;
+      height: {{ preview_display_height_mm }}mm;
+      flex: 0 0 auto;
+      max-width: none;
       background: var(--label-bg);
       border: 1px solid var(--label-edge);
       box-shadow: 0 10px 30px rgba(0,0,0,0.28);
@@ -603,7 +604,14 @@ HTML = """
         const naturalWidth = previewImage.naturalWidth || 0;
         const naturalHeight = previewImage.naturalHeight || 0;
         if (!naturalWidth || !naturalHeight) return;
-        previewFrame.style.aspectRatio = `${naturalWidth} / ${naturalHeight}`;
+        // Keep the preview at the configured physical mm size while still matching the loaded image orientation.
+        if (naturalWidth >= naturalHeight) {
+          previewFrame.style.width = `${Math.max({{ preview_display_width_mm }}, {{ preview_display_height_mm }})}mm`;
+          previewFrame.style.height = `${Math.min({{ preview_display_width_mm }}, {{ preview_display_height_mm }})}mm`;
+        } else {
+          previewFrame.style.width = `${Math.min({{ preview_display_width_mm }}, {{ preview_display_height_mm }})}mm`;
+          previewFrame.style.height = `${Math.max({{ preview_display_width_mm }}, {{ preview_display_height_mm }})}mm`;
+        }
       }
 
       function applyPreviewUpdate() {
@@ -792,7 +800,7 @@ def load_options() -> Dict:
 
     for idx in range(1, FIELD_COUNT + 1):
         options[f"field{idx}_label"] = normalize_string(options.get(f"field{idx}_label"), DEFAULT_OPTIONS[f"field{idx}_label"])
-        options[f"field{idx}_default_value"] = str(options.get(f"field{idx}_default_value") or DEFAULT_OPTIONS[f"field{idx}_default_value"])
+        options[f"field{idx}_default_value"] = "" if options.get(f"field{idx}_default_value") is None else str(options.get(f"field{idx}_default_value"))
         options[f"field{idx}_alignment"] = normalize_alignment(options.get(f"field{idx}_alignment"), DEFAULT_OPTIONS[f"field{idx}_alignment"])
         options[f"field{idx}_font_family"] = normalize_font_family(options.get(f"field{idx}_font_family"), DEFAULT_OPTIONS[f"field{idx}_font_family"])
         options[f"field{idx}_font_size_mm"] = normalize_float(options.get(f"field{idx}_font_size_mm"), DEFAULT_OPTIONS[f"field{idx}_font_size_mm"], 2.0, 30.0)
@@ -800,7 +808,7 @@ def load_options() -> Dict:
         options[f"field{idx}_italic"] = normalize_bool(options.get(f"field{idx}_italic"), DEFAULT_OPTIONS[f"field{idx}_italic"])
         options[f"field{idx}_underline"] = normalize_bool(options.get(f"field{idx}_underline"), DEFAULT_OPTIONS[f"field{idx}_underline"])
     options["footer_label"] = normalize_string(options.get("footer_label"), DEFAULT_OPTIONS["footer_label"])
-    options["footer_default_value"] = str(options.get("footer_default_value") or DEFAULT_OPTIONS["footer_default_value"])
+    options["footer_default_value"] = "" if options.get("footer_default_value") is None else str(options.get("footer_default_value"))
     options["footer_alignment"] = normalize_alignment(options.get("footer_alignment"), DEFAULT_OPTIONS["footer_alignment"])
     options["footer_font_family"] = normalize_font_family(options.get("footer_font_family"), DEFAULT_OPTIONS["footer_font_family"])
     options["footer_font_size_mm"] = normalize_float(options.get("footer_font_size_mm"), DEFAULT_OPTIONS["footer_font_size_mm"], 2.0, 30.0)
@@ -809,7 +817,7 @@ def load_options() -> Dict:
     options["footer_italic"] = normalize_bool(options.get("footer_italic"), DEFAULT_OPTIONS["footer_italic"])
     options["footer_underline"] = normalize_bool(options.get("footer_underline"), DEFAULT_OPTIONS["footer_underline"])
     options["sign_off_label"] = normalize_string(options.get("sign_off_label"), DEFAULT_OPTIONS["sign_off_label"])
-    options["sign_off_default_value"] = str(options.get("sign_off_default_value") or DEFAULT_OPTIONS["sign_off_default_value"])
+    options["sign_off_default_value"] = "" if options.get("sign_off_default_value") is None else str(options.get("sign_off_default_value"))
     options["sign_off_options"] = str(options.get("sign_off_options") or DEFAULT_OPTIONS["sign_off_options"])
     options["sign_off_alignment"] = normalize_alignment(options.get("sign_off_alignment"), DEFAULT_OPTIONS["sign_off_alignment"])
     options["sign_off_font_family"] = normalize_font_family(options.get("sign_off_font_family"), DEFAULT_OPTIONS["sign_off_font_family"])
@@ -818,7 +826,7 @@ def load_options() -> Dict:
     options["sign_off_italic"] = normalize_bool(options.get("sign_off_italic"), DEFAULT_OPTIONS["sign_off_italic"])
     options["sign_off_underline"] = normalize_bool(options.get("sign_off_underline"), DEFAULT_OPTIONS["sign_off_underline"])
     options["weight_label"] = normalize_string(options.get("weight_label"), DEFAULT_OPTIONS["weight_label"])
-    options["weight_default_value"] = digits_only(options.get("weight_default_value") or DEFAULT_OPTIONS["weight_default_value"])
+    options["weight_default_value"] = digits_only("" if options.get("weight_default_value") is None else options.get("weight_default_value"))
     options["weight_alignment"] = normalize_alignment(options.get("weight_alignment"), DEFAULT_OPTIONS["weight_alignment"])
     options["weight_font_family"] = normalize_font_family(options.get("weight_font_family"), DEFAULT_OPTIONS["weight_font_family"])
     options["weight_font_size_mm"] = normalize_float(options.get("weight_font_size_mm"), DEFAULT_OPTIONS["weight_font_size_mm"], 2.0, 30.0)
