@@ -1272,10 +1272,6 @@ def render_portrait_content(printable_w: int, canvas_h: int, text1: str, text2: 
             continue
 
         field_value = text_values[idx]
-        if idx == 3 and print_toggles.get("print_weight", False) and weight_text:
-            field3_value = (field_value or "").strip()
-            field_value = f"{field3_value} - {weight_text} kg" if field3_value else f"{weight_text} kg"
-            combined_field3_and_weight = True
 
         cfg = get_field_config(opts, idx)
         font, lines, resolved_font_size = fit_field_lines(draw, field_value, cfg, text_width)
@@ -1403,10 +1399,6 @@ def render_rotated_content(printable_w: int, canvas_h: int, text1: str, text2: s
         if not field_enabled.get(idx, True):
             continue
         field_value = text_values[idx]
-        if idx == 3 and print_toggles.get("print_weight", False) and weight_text:
-            field3_value = (field_value or "").strip()
-            field_value = f"{field3_value} - {weight_text} kg" if field3_value else f"{weight_text} kg"
-            combined_field3_and_weight = True
 
         cfg = get_field_config(opts, idx)
         font, lines, resolved_font_size = fit_field_lines(draw, field_value, cfg, text_width)
