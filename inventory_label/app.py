@@ -569,9 +569,10 @@ HTML = """
       const printFooter = document.getElementById("print_footer");
       const copies = document.getElementById("copies");
       const previewImage = document.getElementById("preview-image");
+      const previewFrame = document.querySelector(".preview-frame");
       const previewPngLink = document.getElementById("preview-png-link");
       const previewZplLink = document.getElementById("preview-zpl-link");
-      if (!text1 || !text2 || !text3 || !signOff || !weight || !footer || !printText2 || !printText3 || !printWeight || !printFooter || !copies || !previewImage || !previewPngLink || !previewZplLink) return;
+      if (!text1 || !text2 || !text3 || !signOff || !weight || !footer || !printText2 || !printText3 || !printWeight || !printFooter || !copies || !previewImage || !previewFrame || !previewPngLink || !previewZplLink) return;
 
       let refreshTimer = null;
       let previewNonce = Date.now();
@@ -596,6 +597,13 @@ HTML = """
         params.set("print_weight", printWeight.checked ? "1" : "0");
         params.set("print_footer", printFooter.checked ? "1" : "0");
         return params;
+      }
+
+      function syncPreviewFrameToImage() {
+        const naturalWidth = previewImage.naturalWidth || 0;
+        const naturalHeight = previewImage.naturalHeight || 0;
+        if (!naturalWidth || !naturalHeight) return;
+        previewFrame.style.aspectRatio = `${naturalWidth} / ${naturalHeight}`;
       }
 
       function applyPreviewUpdate() {
@@ -651,6 +659,8 @@ HTML = """
         checkbox.addEventListener("change", applyPreviewUpdate);
         checkbox.addEventListener("click", applyPreviewUpdate);
       });
+
+      previewImage.addEventListener("load", syncPreviewFrameToImage);
 
       sanitizeText1();
       sanitizeWeight();
