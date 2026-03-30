@@ -226,7 +226,7 @@ UI_STRINGS = {
         "requested_label": "Requested label",
         "requested_qr": "Requested QR",
         "effective_print_width": "Effective print width on ZT420/ZT421 @ 203 dpi",
-        "layout_note": "Field 1 is always printed in human-readable form. Fields 2, 3, weight, and the footer can be turned on or off in the UI for each label. Sign-off prints whenever it is filled in. When field 3 and weight are both enabled, the weight is appended to field 3 with <code> - </code> before <code>kg</code>. When the footer is enabled, today's date is appended automatically at the end. The QR code follows the configured template above.",
+        "layout_note": "Field 1 is always printed in human-readable form. Fields 2, 3, weight, and the footer can be turned on or off in the UI for each label. Sign-off prints whenever it is filled in. Weight prints on its own line whenever it is enabled and filled in. When the footer is enabled, today's date is appended automatically at the end. The QR code follows the configured template above.",
         "on": "on",
         "off": "off",
         "none": "(none)",
@@ -1264,7 +1264,6 @@ def render_portrait_content(printable_w: int, canvas_h: int, text1: str, text2: 
     current_y = qr_top + qr_size + mm_to_dots(8)
 
     weight_text = (weight or "").strip()
-    combined_field3_and_weight = False
 
     text_values = {1: text1, 2: text2, 3: text3}
     field_enabled = {1: True, 2: print_toggles.get("print_text2", True), 3: print_toggles.get("print_text3", True)}
@@ -1314,7 +1313,7 @@ def render_portrait_content(printable_w: int, canvas_h: int, text1: str, text2: 
         )
         current_y += sign_off_cfg["gap_after_dots"]
 
-    if weight_text and print_toggles.get("print_weight", False) and not combined_field3_and_weight:
+    if weight_text and print_toggles.get("print_weight", False):
         weight_cfg = get_optional_block_config(opts, "weight")
         font, lines, resolved_font_size = fit_field_lines(draw, f"{weight_text} kg", weight_cfg, text_width)
         line_spacing = max(4, resolved_font_size // 7)
@@ -1397,7 +1396,6 @@ def render_rotated_content(printable_w: int, canvas_h: int, text1: str, text2: s
     current_y = text_box_top
 
     weight_text = (weight or "").strip()
-    combined_field3_and_weight = False
 
     text_values = {1: text1, 2: text2, 3: text3}
     field_enabled = {1: True, 2: print_toggles.get("print_text2", True), 3: print_toggles.get("print_text3", True)}
@@ -1446,7 +1444,7 @@ def render_rotated_content(printable_w: int, canvas_h: int, text1: str, text2: s
         )
         current_y += sign_off_cfg["gap_after_dots"]
 
-    if weight_text and print_toggles.get("print_weight", False) and not combined_field3_and_weight:
+    if weight_text and print_toggles.get("print_weight", False):
         weight_cfg = get_optional_block_config(opts, "weight")
         font, lines, resolved_font_size = fit_field_lines(draw, f"{weight_text} kg", weight_cfg, text_width)
         line_spacing = max(4, resolved_font_size // 7)

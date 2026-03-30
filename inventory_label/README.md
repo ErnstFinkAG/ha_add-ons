@@ -175,7 +175,7 @@ Behavior:
 
 - the UI only accepts digits
 - the current label can enable or disable weight printing with a checkbox
-- when field 3 and weight are both enabled, the printed line becomes `<field3> - <weight> kg`
+- when weight is enabled, it prints on its own line as `<weight> kg`, even when field 3 is also enabled
 - otherwise weight prints on its own line as `<weight> kg`
 
 ## QR payload template
