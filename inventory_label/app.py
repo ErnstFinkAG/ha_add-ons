@@ -202,7 +202,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi. The preview is shown at the configured label size in mm to approximate a 1:1 on-screen view. When print rotation is enabled, the preview keeps the same rotated aspect ratio as the printed label and, in horizontal mode, expands to fit the available preview width. The red outline shows the full QR footprint including the configured quiet zone. Actual physical size can still vary with browser zoom, OS scaling, and display calibration.",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi. The preview is shown at the configured label size in mm to approximate a 1:1 on-screen view. When print rotation is enabled, the preview keeps the same rotated aspect ratio as the printed label and, in horizontal mode, expands to the available preview width without horizontal scrolling. The red outline shows the full QR footprint including the configured quiet zone. Actual physical size can still vary with browser zoom, OS scaling, and display calibration.",
         "configured_label_mapping": "Configured label mapping",
         "field1_label_meta": "Field 1 label",
         "field2_label_meta": "Field 2 label",
@@ -407,7 +407,8 @@ HTML = """
       display: flex;
       justify-content: center;
       align-items: flex-start;
-      min-width: max-content;
+      min-width: 0;
+      width: 100%;
     }
     .preview-frame {
       width: {{ preview_display_width_mm }}mm;
@@ -572,9 +573,10 @@ HTML = """
       const previewImage = document.getElementById("preview-image");
       const previewFrame = document.querySelector(".preview-frame");
       const previewWrap = document.querySelector(".preview-wrap");
+      const previewStage = document.querySelector(".preview-stage");
       const previewPngLink = document.getElementById("preview-png-link");
       const previewZplLink = document.getElementById("preview-zpl-link");
-      if (!text1 || !text2 || !text3 || !signOff || !weight || !footer || !printText2 || !printText3 || !printWeight || !printFooter || !copies || !previewImage || !previewFrame || !previewWrap || !previewPngLink || !previewZplLink) return;
+      if (!text1 || !text2 || !text3 || !signOff || !weight || !footer || !printText2 || !printText3 || !printWeight || !printFooter || !copies || !previewImage || !previewFrame || !previewWrap || !previewStage || !previewPngLink || !previewZplLink) return;
 
       let refreshTimer = null;
       let previewNonce = Date.now();
@@ -605,12 +607,18 @@ HTML = """
         const naturalWidth = previewImage.naturalWidth || 0;
         const naturalHeight = previewImage.naturalHeight || 0;
         if (!naturalWidth || !naturalHeight) return;
+        const wrapStyles = window.getComputedStyle(previewWrap);
+        const horizontalPadding = (parseFloat(wrapStyles.paddingLeft || "0") || 0) + (parseFloat(wrapStyles.paddingRight || "0") || 0);
+        const availableWidth = Math.max(160, Math.floor(previewWrap.clientWidth - horizontalPadding - 2));
         if (naturalWidth >= naturalHeight) {
-          const availableWidth = Math.max(160, previewWrap.clientWidth - 2);
           const scaledHeight = Math.max(1, Math.round((availableWidth * naturalHeight) / naturalWidth));
+          previewWrap.style.overflowX = "hidden";
+          previewStage.style.width = "100%";
           previewFrame.style.width = `${availableWidth}px`;
           previewFrame.style.height = `${scaledHeight}px`;
         } else {
+          previewWrap.style.overflowX = "auto";
+          previewStage.style.width = "100%";
           previewFrame.style.width = `${Math.min({{ preview_display_width_mm }}, {{ preview_display_height_mm }})}mm`;
           previewFrame.style.height = `${Math.max({{ preview_display_width_mm }}, {{ preview_display_height_mm }})}mm`;
         }
