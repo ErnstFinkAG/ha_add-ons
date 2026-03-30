@@ -11,10 +11,12 @@ This repository is intended to be hosted at:
 - 1 large QR code per label
 - live PNG preview rendered from the same layout geometry used for printing
 - red preview-only border showing the full QR footprint including quiet zone
+- multilingual UI with German and English via `ui_language`
 - 3 configurable main text fields
 - sign-off input with configured suggestions and free-text entry
 - optional numeric-only weight field with per-print checkbox
 - optional footer anchored to the physical bottom of the label
+- automatic current date appended to the footer
 - per-field defaults, alignment, font family, font size, bold, italic, and underline
 - per-print checkboxes in the UI to hide field 2, field 3, weight, and the footer
 - configurable QR payload template using `text1`, `text2`, and `text3`
@@ -40,14 +42,6 @@ ha_add-ons/
 
 This add-on is built around a Zebra ZT420 or ZT421 at 203 dpi.
 
-Configured defaults in this version:
-
-- printer host: `10.50.20.12`
-- printer port: `9100`
-- label size: `170 × 305 mm`
-- QR size: `170 × 170 mm`
-- top margin: `0 mm`
-
 Important width note:
 
 A 203 dpi ZT420 or ZT421 has a maximum print width of 168 mm, or 1344 dots. When the configured label width is 170 mm, the add-on clamps the actual ZPL print width to the printer-safe maximum.
@@ -56,12 +50,7 @@ A 203 dpi ZT420 or ZT421 has a maximum print width of 168 mm, or 1344 dots. When
 
 1. Open **Settings → Add-ons → Add-on Store**.
 2. Open the menu and choose **Repositories**.
-3. Add:
-
-   ```text
-   https://github.com/ErnstFinkAG/ha_add-ons
-   ```
-
+3. Add `https://github.com/ErnstFinkAG/ha_add-ons`.
 4. Install **Inventory Label**.
 5. Configure the add-on.
 6. Start the add-on.
@@ -70,6 +59,7 @@ A 203 dpi ZT420 or ZT421 has a maximum print width of 168 mm, or 1344 dots. When
 ## Current default configuration
 
 ```yaml
+ui_language: de
 printer_host: 10.50.20.12
 printer_port: 9100
 label_width_mm: 170
@@ -126,18 +116,25 @@ footer_bottom_margin_mm: 0
 footer_bold: false
 footer_italic: false
 footer_underline: false
-
-The footer is printed at the bottom of the label, and the current date is appended automatically at the end when the footer is enabled.
 qr_value_template: "{text1 - text2}"
 qr_quiet_zone_modules: 3
 qr_error_correction: M
 ```
 
+## Language setting
+
+Use `ui_language` to switch the web UI between German and English.
+
+Allowed values:
+
+- `de`
+- `en`
+
+This setting changes the static UI text, status messages, and validation messages. Your configured field labels stay exactly as you define them.
+
 ## Sign-off suggestions
 
-Use `sign_off_options` to define suggestions shown in the UI.
-
-The operator can still type any custom name directly.
+Use `sign_off_options` to define suggestions shown in the UI. The operator can still type any custom name directly.
 
 Supported separators in `sign_off_options`:
 
@@ -145,19 +142,13 @@ Supported separators in `sign_off_options`:
 - commas
 - semicolons
 
-Examples:
+Example:
 
 ```yaml
 sign_off_options: |
   Max Muster
   Erika Beispiel
   John Doe
-```
-
-or:
-
-```yaml
-sign_off_options: "Max Muster, Erika Beispiel, John Doe"
 ```
 
 ## Weight field
@@ -168,7 +159,8 @@ Behavior:
 
 - the UI only accepts digits
 - the current label can enable or disable weight printing with a checkbox
-- when printed, the add-on renders the value as `<number> kg`
+- when field 3 and weight are both enabled, the printed line becomes `<field3> - <weight> kg`
+- otherwise weight prints on its own line as `<weight> kg`
 
 ## QR payload template
 
@@ -201,12 +193,6 @@ Fields not used in the QR template are still printed on the label in human-reada
 
 Controls the quiet zone around the QR code in QR modules.
 
-Examples:
-
-- `4` for a typical standard quiet zone
-- `3` for a tighter border
-- `2` for an even tighter border
-
 ### `qr_error_correction`
 
 Allowed values:
@@ -217,96 +203,3 @@ Allowed values:
 - `H`
 
 Higher levels give more redundancy and lower data capacity.
-
-## Footer behavior
-
-The footer is anchored to the physical bottom of the label.
-
-Use `footer_bottom_margin_mm` to move it up from the edge.
-
-Examples:
-
-- `0` puts it at the bottom
-- `3` moves it up by 3 mm
-- `5` moves it up by 5 mm
-
-## Web UI behavior
-
-The add-on UI lets the operator:
-
-- edit field 1, field 2, field 3, sign-off, weight, and footer text
-- choose a sign-off from configured suggestions or type a custom one
-- set copies
-- enable or disable printing of field 2, field 3, weight, and footer for the current label
-- inspect the live PNG preview
-- open the full PNG preview
-- inspect the generated ZPL before printing
-
-Field 1 is always printed.
-
-The sign-off prints whenever it contains a value.
-
-The QR code still follows `qr_value_template` independently of whether field 2, field 3, weight, or the footer is hidden from the human-readable print output.
-
-## Preview behavior
-
-The PNG preview is generated from the same layout coordinates used for print generation and exported at 203 dpi.
-
-That means:
-
-- QR size, field placement, spacing, sign-off placement, weight placement, and footer placement match the print layout geometry
-- the red border shows the full QR footprint including the configured quiet zone
-- on-screen physical size still depends on browser zoom and monitor scaling
-
-## JSON API
-
-The add-on also exposes a simple JSON endpoint inside the add-on container:
-
-`POST /api/print`
-
-Example payload:
-
-```json
-{
-  "text1": "250001",
-  "text2": "EFH Huggentobbler Biel",
-  "text3": "DE1",
-  "sign_off": "Max Muster",
-  "weight": "1250",
-  "footer": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
-  "copies": 1,
-  "print_text2": true,
-  "print_text3": true,
-  "print_weight": true,
-  "print_footer": true
-}
-```
-
-## Troubleshooting
-
-### UI works but nothing prints
-
-- confirm `printer_host` is the Zebra IP
-- confirm the printer accepts raw printing on port `9100`
-- confirm the printer is not paused or in error state
-- confirm the media is calibrated on the printer
-
-### Preview works but printing is clipped
-
-- verify the stock size and orientation on the printer
-- reduce `qr_size_mm` or add more top margin if needed
-- remember the printer-safe width is 168 mm even if the configured label width is 170 mm
-
-### Numeric fields reject input
-
-- field 1 accepts digits only
-- weight accepts digits only when you use it
-- remove spaces, decimal separators, and unit text from the input itself
-
-### Characters do not render as expected
-
-The add-on renders text as graphics for consistent preview and print styling, but printer-side QR and ZPL behavior still depend on the Zebra firmware and fonts available in the environment.
-
-## Version in this bundle
-
-This synced documentation bundle corresponds to add-on version `0.1.21`.

@@ -43,6 +43,7 @@ ALLOWED_QR_TOKENS = ("text1", "text2", "text3")
 OPTION_MAX_LINES = {"sign_off": 2, "weight": 1}
 ALIGNMENTS = {"left", "center", "right"}
 FONT_FAMILIES = {"sans", "serif", "mono"}
+SUPPORTED_UI_LANGUAGES = {"en", "de"}
 FIELD_GAPS_MM = {1: 8.0, 2: 6.0, 3: 4.0}
 FIELD_MAX_LINES = {1: 4, 2: 3, 3: 3}
 FOOTER_MAX_LINES = 3
@@ -117,6 +118,7 @@ FONT_PATHS = {
 }
 
 DEFAULT_OPTIONS = {
+    "ui_language": "de",
     "printer_host": "10.50.20.12",
     "printer_port": 9100,
     "label_width_mm": 170.0,
@@ -185,6 +187,103 @@ QR_ERROR_CORRECTION_MAP = {
     "H": qrcode.constants.ERROR_CORRECT_H,
 }
 
+UI_STRINGS = {
+    "en": {
+        "lang": "en",
+        "page_title": "Inventory Label",
+        "intro_text": "Prints one large QR code label to a networked Zebra printer using raw ZPL over TCP. {field1_label} accepts digits only, and {weight_label} accepts digits only when enabled.",
+        "print_field": "Print",
+        "copies": "Copies",
+        "configured_printer": "Configured printer",
+        "print_label_button": "Print label",
+        "preview_zpl": "Preview ZPL",
+        "open_png_preview": "Open PNG preview",
+        "preview_heading": "Preview",
+        "preview_alt": "Label preview",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi. The red outline shows the full QR footprint including the configured quiet zone. Screen size can still vary with browser zoom and display scaling.",
+        "configured_label_mapping": "Configured label mapping",
+        "field1_label_meta": "Field 1 label",
+        "field2_label_meta": "Field 2 label",
+        "field3_label_meta": "Field 3 label",
+        "sign_off_label_meta": "Sign-off label",
+        "configured_sign_off_names": "Configured sign-off names",
+        "weight_label_meta": "Weight label",
+        "footer_label_meta": "Footer label",
+        "default_word": "default",
+        "style_word": "style",
+        "printed_as": "printed as",
+        "qr_template": "QR template",
+        "qr_quiet_zone": "QR quiet zone",
+        "module_word": "module(s)",
+        "qr_error_correction": "QR error correction",
+        "footer_bottom_margin": "Footer bottom margin",
+        "current_qr_payload": "Current QR payload",
+        "current_print_selection": "Current print selection",
+        "layout_heading": "Layout",
+        "requested_label": "Requested label",
+        "requested_qr": "Requested QR",
+        "effective_print_width": "Effective print width on ZT420/ZT421 @ 203 dpi",
+        "layout_note": "Field 1 is always printed in human-readable form. Fields 2, 3, weight, and the footer can be turned on or off in the UI for each label. Sign-off prints whenever it is filled in. When field 3 and weight are both enabled, the weight is appended to field 3 with <code> - </code> before <code>kg</code>. When the footer is enabled, today's date is appended automatically at the end. The QR code follows the configured template above.",
+        "on": "on",
+        "off": "off",
+        "none": "(none)",
+        "configuration_error": "Configuration error: {error}",
+        "unknown_error": "Unknown error",
+        "sent_labels_message": "Sent {copies} label(s) to {host}:{port}. QR payload: {qr_payload}",
+        "print_failed_message": "Print failed: {error}",
+        "preview_failed_message": "Preview failed: {error}",
+        "field_required": "{field} is required.",
+        "field_numbers_only": "{field} must contain numbers only.",
+    },
+    "de": {
+        "lang": "de",
+        "page_title": "Inventaretikett",
+        "intro_text": "Druckt ein großes QR-Code-Etikett auf einen Zebra-Netzwerkdrucker per rohem ZPL über TCP. {field1_label} akzeptiert nur Ziffern, und {weight_label} akzeptiert nur Ziffern, wenn das Feld aktiviert ist.",
+        "print_field": "Drucken",
+        "copies": "Exemplare",
+        "configured_printer": "Konfigurierter Drucker",
+        "print_label_button": "Etikett drucken",
+        "preview_zpl": "ZPL-Vorschau",
+        "open_png_preview": "PNG-Vorschau öffnen",
+        "preview_heading": "Vorschau",
+        "preview_alt": "Etikettenvorschau",
+        "preview_meta": "Das PNG wird aus denselben Layout-Koordinaten wie der Druck erzeugt und mit 203 dpi exportiert. Die rote Umrandung zeigt den gesamten QR-Bereich einschließlich der konfigurierten Ruhezone. Die tatsächliche Bildschirmgröße kann durch Browser-Zoom und Anzeige-Skalierung abweichen.",
+        "configured_label_mapping": "Konfigurierte Etikettenzuordnung",
+        "field1_label_meta": "Feld-1-Bezeichnung",
+        "field2_label_meta": "Feld-2-Bezeichnung",
+        "field3_label_meta": "Feld-3-Bezeichnung",
+        "sign_off_label_meta": "Signatur-Bezeichnung",
+        "configured_sign_off_names": "Konfigurierte Signatur-Namen",
+        "weight_label_meta": "Gewichtsbezeichnung",
+        "footer_label_meta": "Fußzeilen-Bezeichnung",
+        "default_word": "Standard",
+        "style_word": "Stil",
+        "printed_as": "gedruckt als",
+        "qr_template": "QR-Vorlage",
+        "qr_quiet_zone": "QR-Ruhezone",
+        "module_word": "Modul(e)",
+        "qr_error_correction": "QR-Fehlerkorrektur",
+        "footer_bottom_margin": "Fußzeilen-Abstand unten",
+        "current_qr_payload": "Aktueller QR-Inhalt",
+        "current_print_selection": "Aktuelle Druckauswahl",
+        "layout_heading": "Layout",
+        "requested_label": "Angefordertes Etikett",
+        "requested_qr": "Angeforderter QR-Code",
+        "effective_print_width": "Effektive Druckbreite auf dem ZT420/ZT421 bei 203 dpi",
+        "layout_note": "Feld 1 wird immer in Klarschrift gedruckt. Feld 2, Feld 3, Gewicht und die Fußzeile können pro Etikett in der Oberfläche ein- oder ausgeschaltet werden. Die Signatur wird gedruckt, sobald ein Wert eingetragen ist. Wenn Feld 3 und Gewicht beide aktiviert sind, wird das Gewicht mit <code> - </code> vor <code>kg</code> an Feld 3 angehängt. Wenn die Fußzeile aktiviert ist, wird das heutige Datum automatisch am Ende ergänzt. Der QR-Code folgt der oben konfigurierten Vorlage.",
+        "on": "an",
+        "off": "aus",
+        "none": "(keine)",
+        "configuration_error": "Konfigurationsfehler: {error}",
+        "unknown_error": "Unbekannter Fehler",
+        "sent_labels_message": "{copies} Etikett(en) an {host}:{port} gesendet. QR-Inhalt: {qr_payload}",
+        "print_failed_message": "Drucken fehlgeschlagen: {error}",
+        "preview_failed_message": "Vorschau fehlgeschlagen: {error}",
+        "field_required": "{field} ist erforderlich.",
+        "field_numbers_only": "{field} darf nur Ziffern enthalten.",
+    },
+}
+
 DEFAULT_FORM = {
     "copies": "1",
     "print_text2": "1",
@@ -195,11 +294,11 @@ DEFAULT_FORM = {
 
 HTML = """
 <!doctype html>
-<html lang="en">
+<html lang="{{ ui.lang }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Inventory Label</title>
+  <title>{{ ui.page_title }}</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -350,8 +449,8 @@ HTML = """
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>Inventory Label</h1>
-      <p class="muted">Prints one large QR code label to a networked Zebra printer using raw ZPL over TCP. {{ field1_label }} accepts digits only, and {{ weight_label }} accepts digits only when enabled.</p>
+      <h1>{{ ui.page_title }}</h1>
+      <p class="muted">{{ intro_text }}</p>
       {% if result %}
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
       {% endif %}
@@ -361,11 +460,11 @@ HTML = """
 
         <label for="text2">{{ field2_label }}</label>
         <input id="text2" name="text2" value="{{ form.text2 }}">
-        <label class="checkbox-row"><input id="print_text2" name="print_text2" type="checkbox" value="1" {% if form.print_text2 == '1' %}checked{% endif %}> Print {{ field2_label }}</label>
+        <label class="checkbox-row"><input id="print_text2" name="print_text2" type="checkbox" value="1" {% if form.print_text2 == '1' %}checked{% endif %}> {{ ui.print_field }} {{ field2_label }}</label>
 
         <label for="text3">{{ field3_label }}</label>
         <input id="text3" name="text3" value="{{ form.text3 }}">
-        <label class="checkbox-row"><input id="print_text3" name="print_text3" type="checkbox" value="1" {% if form.print_text3 == '1' %}checked{% endif %}> Print {{ field3_label }}</label>
+        <label class="checkbox-row"><input id="print_text3" name="print_text3" type="checkbox" value="1" {% if form.print_text3 == '1' %}checked{% endif %}> {{ ui.print_field }} {{ field3_label }}</label>
 
         <label for="sign_off">{{ sign_off_label }}</label>
         <input id="sign_off" name="sign_off" list="signoff-options" value="{{ form.sign_off }}" autocomplete="off">
@@ -377,79 +476,77 @@ HTML = """
 
         <label for="weight">{{ weight_label }}</label>
         <input id="weight" name="weight" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="{{ form.weight }}">
-        <label class="checkbox-row"><input id="print_weight" name="print_weight" type="checkbox" value="1" {% if form.print_weight == '1' %}checked{% endif %}> Print {{ weight_label }}</label>
+        <label class="checkbox-row"><input id="print_weight" name="print_weight" type="checkbox" value="1" {% if form.print_weight == '1' %}checked{% endif %}> {{ ui.print_field }} {{ weight_label }}</label>
 
         <label for="footer">{{ footer_label }}</label>
         <input id="footer" name="footer" value="{{ form.footer }}">
-        <label class="checkbox-row"><input id="print_footer" name="print_footer" type="checkbox" value="1" {% if form.print_footer == '1' %}checked{% endif %}> Print {{ footer_label }}</label>
+        <label class="checkbox-row"><input id="print_footer" name="print_footer" type="checkbox" value="1" {% if form.print_footer == '1' %}checked{% endif %}> {{ ui.print_field }} {{ footer_label }}</label>
 
         <div class="row">
           <div>
-            <label for="copies">Copies</label>
+            <label for="copies">{{ ui.copies }}</label>
             <input id="copies" name="copies" type="number" min="1" max="50" value="{{ form.copies }}" required>
           </div>
           <div>
-            <label>Configured printer</label>
+            <label>{{ ui.configured_printer }}</label>
             <input value="{{ printer_host }}:{{ printer_port }}" disabled>
           </div>
         </div>
 
         <div class="btns">
-          <button type="submit">Print label</button>
-          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}">Preview ZPL</a>
-          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}" target="_blank" rel="noopener">Open PNG preview</a>
+          <button type="submit">{{ ui.print_label_button }}</button>
+          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}">{{ ui.preview_zpl }}</a>
+          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
         </div>
       </form>
     </div>
 
     <div class="card">
-      <h2>Preview</h2>
+      <h2>{{ ui.preview_heading }}</h2>
       <div class="preview-wrap">
         <div class="preview-stage">
           <div class="preview-frame">
-            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}" alt="Label preview">
+            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}" alt="{{ ui.preview_alt }}">
           </div>
         </div>
       </div>
       <div class="preview-meta">
-        PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi.
-        The red outline shows the full QR footprint including the configured quiet zone.
-        Screen size can still vary with browser zoom and display scaling.
+        {{ ui.preview_meta }}
       </div>
     </div>
 
     <div class="card">
-      <h2>Configured label mapping</h2>
+      <h2>{{ ui.configured_label_mapping }}</h2>
       <ul class="config-list">
-        <li><strong>Field 1 label:</strong> <code>{{ field1_label }}</code> · <strong>default:</strong> <code>{{ field1_default_value }}</code> · <strong>style:</strong> <code>{{ field1_style_summary }}</code></li>
-        <li><strong>Field 2 label:</strong> <code>{{ field2_label }}</code> · <strong>default:</strong> <code>{{ field2_default_value }}</code> · <strong>style:</strong> <code>{{ field2_style_summary }}</code></li>
-        <li><strong>Field 3 label:</strong> <code>{{ field3_label }}</code> · <strong>default:</strong> <code>{{ field3_default_value }}</code> · <strong>style:</strong> <code>{{ field3_style_summary }}</code></li>
-        <li><strong>Sign-off label:</strong> <code>{{ sign_off_label }}</code> · <strong>default:</strong> <code>{{ sign_off_default_value }}</code> · <strong>style:</strong> <code>{{ sign_off_style_summary }}</code></li>
-        <li><strong>Configured sign-off names:</strong> <code>{{ sign_off_options_display }}</code></li>
-        <li><strong>Weight label:</strong> <code>{{ weight_label }}</code> · <strong>default:</strong> <code>{{ weight_default_value }}</code> · <strong>style:</strong> <code>{{ weight_style_summary }}</code></li>
-        <li><strong>Footer label:</strong> <code>{{ footer_label }}</code> · <strong>default:</strong> <code>{{ footer_default_value }}</code> · <strong>printed as:</strong> <code>{{ footer_preview_text }}</code> · <strong>style:</strong> <code>{{ footer_style_summary }}</code></li>
-        <li><strong>QR template:</strong> <code>{{ qr_value_template }}</code></li>
-        <li><strong>QR quiet zone:</strong> <code>{{ qr_quiet_zone_modules }} module(s)</code></li>
-        <li><strong>QR error correction:</strong> <code>{{ qr_error_correction }}</code></li>
-        <li><strong>Footer bottom margin:</strong> <code>{{ footer_bottom_margin_mm }} mm</code></li>
-        <li><strong>Current QR payload:</strong> <code>{{ qr_preview }}</code></li>
-        <li><strong>Current print selection:</strong> <code>field1=on, field2={{ "on" if form.print_text2 == "1" else "off" }}, field3={{ "on" if form.print_text3 == "1" else "off" }}, sign-off={{ "on" if form.sign_off else "off" }}, weight={{ "on" if form.print_weight == "1" else "off" }}, footer={{ "on" if form.print_footer == "1" else "off" }}</code></li>
+        <li><strong>{{ ui.field1_label_meta }}:</strong> <code>{{ field1_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ field1_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ field1_style_summary }}</code></li>
+        <li><strong>{{ ui.field2_label_meta }}:</strong> <code>{{ field2_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ field2_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ field2_style_summary }}</code></li>
+        <li><strong>{{ ui.field3_label_meta }}:</strong> <code>{{ field3_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ field3_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ field3_style_summary }}</code></li>
+        <li><strong>{{ ui.sign_off_label_meta }}:</strong> <code>{{ sign_off_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ sign_off_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ sign_off_style_summary }}</code></li>
+        <li><strong>{{ ui.configured_sign_off_names }}:</strong> <code>{{ sign_off_options_display }}</code></li>
+        <li><strong>{{ ui.weight_label_meta }}:</strong> <code>{{ weight_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ weight_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ weight_style_summary }}</code></li>
+        <li><strong>{{ ui.footer_label_meta }}:</strong> <code>{{ footer_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ footer_default_value }}</code> · <strong>{{ ui.printed_as }}:</strong> <code>{{ footer_preview_text }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ footer_style_summary }}</code></li>
+        <li><strong>{{ ui.qr_template }}:</strong> <code>{{ qr_value_template }}</code></li>
+        <li><strong>{{ ui.qr_quiet_zone }}:</strong> <code>{{ qr_quiet_zone_modules }} {{ ui.module_word }}</code></li>
+        <li><strong>{{ ui.qr_error_correction }}:</strong> <code>{{ qr_error_correction }}</code></li>
+        <li><strong>{{ ui.footer_bottom_margin }}:</strong> <code>{{ footer_bottom_margin_mm }} mm</code></li>
+        <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview }}</code></li>
+        <li><strong>{{ ui.current_print_selection }}:</strong> <code>field1={{ ui.on }}, field2={{ ui.on if form.print_text2 == "1" else ui.off }}, field3={{ ui.on if form.print_text3 == "1" else ui.off }}, sign-off={{ ui.on if form.sign_off else ui.off }}, weight={{ ui.on if form.print_weight == "1" else ui.off }}, footer={{ ui.on if form.print_footer == "1" else ui.off }}</code></li>
       </ul>
     </div>
 
     <div class="card">
-      <h2>Layout</h2>
+      <h2>{{ ui.layout_heading }}</h2>
       <p class="muted">
-        Requested label: {{ requested_width_mm }} × {{ requested_height_mm }} mm<br>
-        Requested QR: {{ requested_qr_mm }} × {{ requested_qr_mm }} mm<br>
+        {{ ui.requested_label }}: {{ requested_width_mm }} × {{ requested_height_mm }} mm<br>
+        {{ ui.requested_qr }}: {{ requested_qr_mm }} × {{ requested_qr_mm }} mm<br>
         QR quiet zone: {{ qr_quiet_zone_modules }} module(s), error correction: {{ qr_error_correction }}<br>
         Footer bottom margin: {{ footer_bottom_margin_mm }} mm<br>
-        Effective print width on ZT420/ZT421 @ 203 dpi: {{ effective_width_mm }} mm ({{ effective_width_dots }} dots)
+        {{ ui.effective_print_width }}: {{ effective_width_mm }} mm ({{ effective_width_dots }} dots)
       </p>
       {% if width_warning %}
       <p class="warn">{{ width_warning }}</p>
       {% endif %}
-      <p class="muted">Field 1 is always printed in human-readable form. Fields 2, 3, weight, and the footer can be turned on or off in the UI for each label. Sign-off prints whenever it is filled in. When field 3 and weight are both enabled, the weight is appended to field 3 with <code> - </code> before <code>kg</code>. When the footer is enabled, today's date is appended automatically at the end. The QR code follows the configured template above.</p>
+      <p class="muted">{{ ui.layout_note|safe }}</p>
     </div>
   </div>
   <script>
@@ -625,6 +722,27 @@ def normalize_font_family(value: object, default: str) -> str:
     return family if family in FONT_FAMILIES else default
 
 
+def normalize_ui_language(value: object, default: str) -> str:
+    language = str(value if value is not None else default).strip().lower()
+    return language if language in SUPPORTED_UI_LANGUAGES else default
+
+
+def get_ui_strings(language: object) -> Dict[str, str]:
+    lang = normalize_ui_language(language, DEFAULT_OPTIONS["ui_language"])
+    ui = dict(UI_STRINGS["en"])
+    ui.update(UI_STRINGS.get(lang, {}))
+    return ui
+
+
+def ui_text(language_or_options: object, key: str, **kwargs) -> str:
+    if isinstance(language_or_options, dict):
+        language = language_or_options.get("ui_language", DEFAULT_OPTIONS["ui_language"])
+    else:
+        language = language_or_options
+    template = get_ui_strings(language).get(key, UI_STRINGS["en"].get(key, key))
+    return template.format(**kwargs)
+
+
 def load_options() -> Dict:
     options = dict(DEFAULT_OPTIONS)
     if os.path.exists(OPTIONS_PATH):
@@ -636,6 +754,7 @@ def load_options() -> Dict:
         except Exception as exc:
             LOGGER.warning("Failed to load %s: %s", OPTIONS_PATH, exc)
 
+    options["ui_language"] = normalize_ui_language(options.get("ui_language"), DEFAULT_OPTIONS["ui_language"])
     options["printer_host"] = normalize_string(options.get("printer_host"), DEFAULT_OPTIONS["printer_host"])
     options["printer_port"] = normalize_int(options.get("printer_port"), DEFAULT_OPTIONS["printer_port"], 1, 65535)
     options["label_width_mm"] = normalize_float(options.get("label_width_mm"), DEFAULT_OPTIONS["label_width_mm"], 50.0, 500.0)
@@ -729,21 +848,21 @@ def digits_only(value: object, fallback: str = "") -> str:
     return re.sub(r"\D+", "", text)
 
 
-def validate_text1_numeric(value: object, field1_label: str) -> str:
+def validate_text1_numeric(value: object, field1_label: str, language: str = "en") -> str:
     text = str(value if value is not None else "").strip()
     if not text:
-        raise ValueError(f"{field1_label} is required.")
+        raise ValueError(ui_text(language, "field_required", field=field1_label))
     if not text.isdigit():
-        raise ValueError(f"{field1_label} must contain numbers only.")
+        raise ValueError(ui_text(language, "field_numbers_only", field=field1_label))
     return text
 
 
-def validate_optional_numeric(value: object, label: str) -> str:
+def validate_optional_numeric(value: object, label: str, language: str = "en") -> str:
     text = str(value if value is not None else "").strip()
     if not text:
         return ""
     if not text.isdigit():
-        raise ValueError(f"{label} must contain numbers only.")
+        raise ValueError(ui_text(language, "field_numbers_only", field=label))
     return text
 
 
@@ -1238,13 +1357,15 @@ def send_to_printer(host: str, port: int, payload: str) -> None:
 def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) -> str:
     layout = effective_layout(opts)
     sign_off_names = parse_sign_off_options(opts)
+    ui = get_ui_strings(opts.get("ui_language"))
     try:
         qr_preview = build_qr_payload(form.get("text1", ""), form.get("text2", ""), form.get("text3", ""), opts)
     except Exception as exc:
-        qr_preview = f"Configuration error: {exc}"
+        qr_preview = ui_text(opts, "configuration_error", error=exc)
 
     return render_template_string(
         HTML,
+        ui=ui,
         form=form,
         result=result,
         printer_host=opts["printer_host"],
@@ -1261,7 +1382,8 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
         sign_off_label=opts["sign_off_label"],
         sign_off_default_value=opts["sign_off_default_value"],
         sign_off_options=sign_off_names,
-        sign_off_options_display=", ".join(sign_off_names) if sign_off_names else "(none)",
+        sign_off_options_display=", ".join(sign_off_names) if sign_off_names else ui["none"],
+        intro_text=ui_text(opts, "intro_text", field1_label=opts["field1_label"], weight_label=opts["weight_label"]),
         sign_off_style_summary=option_style_summary(opts, "sign_off"),
         weight_label=opts["weight_label"],
         weight_default_value=opts["weight_default_value"],
@@ -1321,15 +1443,15 @@ def print_label():
         "print_footer": normalize_form_checkbox(request.form.get("print_footer"), defaults["print_footer"]),
     }
 
-    result = {"success": False, "message": "Unknown error"}
+    result = {"success": False, "message": ui_text(opts, "unknown_error")}
     try:
         raw_text1 = request.form.get("text1", defaults["text1"])
-        text1 = validate_text1_numeric(raw_text1, opts["field1_label"])
+        text1 = validate_text1_numeric(raw_text1, opts["field1_label"], opts["ui_language"])
         form["text1"] = text1
         text2 = form["text2"]
         text3 = form["text3"]
         sign_off = form["sign_off"]
-        weight = validate_optional_numeric(form["weight"], opts["weight_label"])
+        weight = validate_optional_numeric(form["weight"], opts["weight_label"], opts["ui_language"])
         form["weight"] = weight
         footer = form["footer"]
         copies = max(1, min(50, int(form["copies"])))
@@ -1350,11 +1472,11 @@ def print_label():
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
         result = {
             "success": True,
-            "message": f"Sent {copies} label(s) to {opts['printer_host']}:{opts['printer_port']}. QR payload: {qr_payload}",
+            "message": ui_text(opts, "sent_labels_message", copies=copies, host=opts["printer_host"], port=opts["printer_port"], qr_payload=qr_payload),
         }
     except Exception as exc:
         LOGGER.exception("Print failed")
-        result = {"success": False, "message": f"Print failed: {exc}"}
+        result = {"success": False, "message": ui_text(opts, "print_failed_message", error=exc)}
 
     return render_page(form, opts, result=result)
 
@@ -1370,7 +1492,7 @@ def preview():
     weight = request.args.get("weight", defaults["weight"])
     footer = request.args.get("footer", defaults["footer"])
     try:
-        text1 = validate_text1_numeric(raw_text1, opts["field1_label"])
+        text1 = validate_text1_numeric(raw_text1, opts["field1_label"], opts["ui_language"])
         copies = max(1, min(50, int(request.args.get("copies", DEFAULT_FORM["copies"]))))
         print_toggles = parse_print_toggles({
             "print_text2": request.args.get("print_text2", defaults["print_text2"]),
@@ -1378,13 +1500,13 @@ def preview():
             "print_weight": request.args.get("print_weight", defaults["print_weight"]),
             "print_footer": request.args.get("print_footer", defaults["print_footer"]),
         })
-        weight = validate_optional_numeric(weight, opts["weight_label"])
+        weight = validate_optional_numeric(weight, opts["weight_label"], opts["ui_language"])
         zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, copies, opts, print_toggles=print_toggles)
         LOGGER.info("Generated ZPL preview for copies=%s with toggles=%s", copies, print_toggles)
         return Response(zpl, mimetype="text/plain; charset=utf-8")
     except Exception as exc:
         LOGGER.exception("ZPL preview failed")
-        return Response(f"Preview failed: {exc}", status=400, mimetype="text/plain; charset=utf-8")
+        return Response(ui_text(opts, "preview_failed_message", error=exc), status=400, mimetype="text/plain; charset=utf-8")
 
 
 @APP.route("/preview.png", methods=["GET"])
@@ -1398,14 +1520,14 @@ def preview_png():
     weight = request.args.get("weight", defaults["weight"])
     footer = request.args.get("footer", defaults["footer"])
     try:
-        text1 = validate_text1_numeric(raw_text1, opts["field1_label"])
+        text1 = validate_text1_numeric(raw_text1, opts["field1_label"], opts["ui_language"])
         print_toggles = parse_print_toggles({
             "print_text2": request.args.get("print_text2", defaults["print_text2"]),
             "print_text3": request.args.get("print_text3", defaults["print_text3"]),
             "print_weight": request.args.get("print_weight", defaults["print_weight"]),
             "print_footer": request.args.get("print_footer", defaults["print_footer"]),
         })
-        weight = validate_optional_numeric(weight, opts["weight_label"])
+        weight = validate_optional_numeric(weight, opts["weight_label"], opts["ui_language"])
         LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r sign_off=%r weight=%r footer=%r toggles=%s", text1, text2, text3, sign_off, weight, footer, print_toggles)
         img = render_label_image(text1, text2, text3, sign_off, weight, footer, opts, preview=True, print_toggles=print_toggles)
         bio = BytesIO()
@@ -1414,7 +1536,7 @@ def preview_png():
         return send_file(bio, mimetype="image/png", download_name="label-preview.png")
     except Exception as exc:
         LOGGER.exception("PNG preview failed")
-        return Response(f"Preview failed: {exc}", status=400, mimetype="text/plain; charset=utf-8")
+        return Response(ui_text(opts, "preview_failed_message", error=exc), status=400, mimetype="text/plain; charset=utf-8")
 
 
 @APP.route("/api/print", methods=["POST"])
@@ -1436,8 +1558,8 @@ def api_print():
         "print_footer": normalize_form_checkbox(payload.get("print_footer"), "1"),
     })
     try:
-        text1 = validate_text1_numeric(raw_text1, opts["field1_label"])
-        weight = validate_optional_numeric(weight, opts["weight_label"])
+        text1 = validate_text1_numeric(raw_text1, opts["field1_label"], opts["ui_language"])
+        weight = validate_optional_numeric(weight, opts["weight_label"], opts["ui_language"])
         zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, copies, opts, print_toggles=print_toggles)
         LOGGER.info("API print request received: copies=%s sign_off=%r weight=%r footer=%r toggles=%s", copies, sign_off, weight, footer, print_toggles)
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
@@ -1447,13 +1569,14 @@ def api_print():
             "copies": copies,
             "qr_payload": build_qr_payload(text1, text2, text3, opts),
             "print_toggles": print_toggles,
+            "language": opts["ui_language"],
         })
     except ValueError as exc:
         LOGGER.info("API print rejected: %s", exc)
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": False, "error": str(exc), "language": opts["ui_language"]}), 400
     except Exception as exc:
         LOGGER.exception("API print failed")
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": str(exc), "language": opts["ui_language"]}), 500
 
 
 if __name__ == "__main__":
