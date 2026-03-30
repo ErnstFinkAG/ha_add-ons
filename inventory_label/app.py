@@ -202,7 +202,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi. The red outline shows the full QR footprint including the configured quiet zone. Screen size can still vary with browser zoom and display scaling.",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi. When print rotation is enabled, the preview image is rotated for easier on-screen reading. The red outline shows the full QR footprint including the configured quiet zone. Screen size can still vary with browser zoom and display scaling.",
         "configured_label_mapping": "Configured label mapping",
         "field1_label_meta": "Field 1 label",
         "field2_label_meta": "Field 2 label",
@@ -250,7 +250,7 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Das PNG wird aus denselben Layout-Koordinaten wie der Druck erzeugt und mit 203 dpi exportiert. Die rote Umrandung zeigt den gesamten QR-Bereich einschließlich der konfigurierten Ruhezone. Die tatsächliche Bildschirmgröße kann durch Browser-Zoom und Anzeige-Skalierung abweichen.",
+        "preview_meta": "Das PNG wird aus denselben Layout-Koordinaten wie der Druck erzeugt und mit 203 dpi exportiert. Wenn eine Druckdrehung aktiviert ist, wird auch die Vorschau für die bessere Lesbarkeit am Bildschirm gedreht. Die rote Umrandung zeigt den gesamten QR-Bereich einschließlich der konfigurierten Ruhezone. Die tatsächliche Bildschirmgröße kann durch Browser-Zoom und Anzeige-Skalierung abweichen.",
         "configured_label_mapping": "Konfigurierte Etikettenzuordnung",
         "field1_label_meta": "Feld-1-Bezeichnung",
         "field2_label_meta": "Feld-2-Bezeichnung",
@@ -1469,6 +1469,14 @@ def render_rotated_content(printable_w: int, canvas_h: int, text1: str, text2: s
     return landscape.transpose(Image.Transpose.ROTATE_90)
 
 
+def orient_preview_for_display(img: Image.Image, rotation_degrees: int) -> Image.Image:
+    if rotation_degrees == 90:
+        return img.transpose(Image.Transpose.ROTATE_90)
+    if rotation_degrees == 270:
+        return img.transpose(Image.Transpose.ROTATE_270)
+    return img
+
+
 def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, opts: Dict, preview: bool, print_toggles: Dict[str, bool] | None = None) -> Image.Image:
     layout = effective_layout(opts)
     requested_w = layout["requested_width_dots"]
@@ -1487,13 +1495,13 @@ def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight
         return printable_image
 
     if requested_w <= printable_w:
-        return printable_image
+        return orient_preview_for_display(printable_image, rotation_degrees)
 
     canvas = Image.new("RGB", (requested_w, requested_h), color=(255, 255, 255))
     printable_left = max((requested_w - printable_w) // 2, 0)
     draw_background_for_preview(canvas, requested_w, requested_h, printable_left, printable_w)
     canvas.paste(printable_image, (printable_left, 0))
-    return canvas
+    return orient_preview_for_display(canvas, rotation_degrees)
 
 
 def build_zpl(text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, copies: int, opts: Dict, print_toggles: Dict[str, bool] | None = None) -> str:
