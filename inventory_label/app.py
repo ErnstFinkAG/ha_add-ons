@@ -202,7 +202,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi. When print rotation is enabled, the preview image is rotated for easier on-screen reading. The red outline shows the full QR footprint including the configured quiet zone. Screen size can still vary with browser zoom and display scaling.",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi. When print rotation is enabled, the preview keeps the same rotated aspect ratio as the printed label. The red outline shows the full QR footprint including the configured quiet zone. Screen size can still vary with browser zoom and display scaling.",
         "configured_label_mapping": "Configured label mapping",
         "field1_label_meta": "Field 1 label",
         "field2_label_meta": "Field 2 label",
@@ -412,7 +412,7 @@ HTML = """
     .preview-frame {
       width: min(100%, 420px);
       max-width: 100%;
-      aspect-ratio: {{ requested_width_mm }} / {{ requested_height_mm }};
+      aspect-ratio: {{ preview_display_width_mm }} / {{ preview_display_height_mm }};
       background: var(--label-bg);
       border: 1px solid var(--label-edge);
       box-shadow: 0 10px 30px rgba(0,0,0,0.28);
@@ -1537,6 +1537,11 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
     except Exception as exc:
         qr_preview = ui_text(opts, "configuration_error", error=exc)
 
+    preview_display_width_mm = opts["label_width_mm"]
+    preview_display_height_mm = opts["label_height_mm"]
+    if normalize_rotation_degrees(opts.get("print_rotation_degrees"), DEFAULT_OPTIONS["print_rotation_degrees"]) in (90, 270):
+        preview_display_width_mm, preview_display_height_mm = preview_display_height_mm, preview_display_width_mm
+
     return render_template_string(
         HTML,
         ui=ui,
@@ -1572,6 +1577,8 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
         qr_preview=qr_preview,
         requested_width_mm=opts["label_width_mm"],
         requested_height_mm=opts["label_height_mm"],
+        preview_display_width_mm=preview_display_width_mm,
+        preview_display_height_mm=preview_display_height_mm,
         requested_qr_mm=opts["qr_size_mm"],
         effective_width_mm=dots_to_mm(layout["effective_width_dots"]),
         effective_width_dots=layout["effective_width_dots"],
