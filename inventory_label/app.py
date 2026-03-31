@@ -554,7 +554,6 @@ HTML = """
                     <label class="logo-option-card">
                       <input type="checkbox" name="field_{{ field.id }}" value="{{ option.id }}" {% if option.selected %}checked{% endif %}>
                       <img src="{{ option.asset_url }}" alt="{{ option.name }}">
-                      <span class="muted small">{{ option.name }}{% if option.sort_order %} · #{{ option.sort_order }}{% endif %}</span>
                     </label>
                     {% else %}
                     <div class="muted small">{{ ui.no_logos_uploaded }}</div>
@@ -595,6 +594,9 @@ HTML = """
               </div>
             </div>
             <div class="preview-meta">{{ ui.preview_meta }}</div>
+            <div class="btns" style="margin-top: 14px;">
+              <button type="submit">{{ ui.print_label_button }}</button>
+            </div>
           </div>
         </div>
 
@@ -652,7 +654,6 @@ HTML = """
           {% endif %}
 
           <div class="btns">
-            <button type="submit">{{ ui.print_label_button }}</button>
             <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?{{ preview_query }}">{{ ui.preview_zpl }}</a>
             <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?{{ preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
           </div>
