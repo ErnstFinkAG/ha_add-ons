@@ -487,7 +487,18 @@ HTML = """
     .logo-manager { display: grid; gap: 10px; }
     .logo-manager-item { display: grid; grid-template-columns: 90px 1fr 120px auto; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #111827; }
     .logo-order-input { margin: 0; }
-    .two-col { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(360px, 0.9fr); gap: 20px; }
+    .top-layout { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(340px, 0.95fr); gap: 20px; align-items: start; }
+    .top-panel { background: #111827; border: 1px solid var(--border); border-radius: 16px; padding: 18px; }
+    .top-panel > :last-child { margin-bottom: 0; }
+    .fields-section { margin-top: 18px; }
+    .value-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .value-field-grid .field-card { padding: 12px; }
+    .value-field-grid .field-card h3 { margin-bottom: 8px; }
+    .value-field-grid .field-meta { margin-bottom: 10px; gap: 10px; }
+    .value-field-grid .checkline { margin-bottom: 10px; }
+    .value-field-grid .field-card input[type="text"] { margin-bottom: 0; }
+    .value-field-grid .field-card .logo-option-grid { margin-top: 8px; }
+    .compact-section-title { margin-bottom: 10px; }
     .editor { background: #111827; border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
     .editor .btns { margin-top: 4px; }
     .tag-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
@@ -502,19 +513,13 @@ HTML = """
     .selector-text strong, .selector-text span { word-break: break-word; }
     code { word-break: break-word; }
     @media (max-width: 980px) {
-      .two-col { grid-template-columns: 1fr; }
+      .top-layout, .value-field-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
-      <div class="headline-row">
-        <div>
-          <h1>{{ ui.page_title }}</h1>
-          <p class="muted">{{ ui.intro_text }}</p>
-        </div>
-      </div>
       {% if result %}
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
       {% endif %}
@@ -522,15 +527,41 @@ HTML = """
         <div class="flash {{ 'ok' if field_result.success else 'error' }}">{{ field_result.message }}</div>
       {% endif %}
       <form id="label-form" method="post" action="{{ ingress_base }}/print">
-        <label for="profile_id">{{ ui.profile_select }}</label>
-        <select id="profile_id" name="profile_id">
-          {% for profile in label_profiles %}
-            <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
-          {% endfor %}
-        </select>
+        <div class="top-layout">
+          <div class="top-panel">
+            <div class="headline-row">
+              <div>
+                <h1>{{ ui.page_title }}</h1>
+                <p class="muted">{{ ui.intro_text }}</p>
+              </div>
+            </div>
 
-        <div class="row">
-          <div>
+            <div class="row-compact">
+              <div>
+                <label for="profile_id">{{ ui.profile_select }}</label>
+                <select id="profile_id" name="profile_id">
+                  {% for profile in label_profiles %}
+                    <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div>
+                <label for="copies">{{ ui.copies }}</label>
+                <input id="copies" name="copies" type="number" min="1" max="50" value="{{ form.copies }}" required>
+              </div>
+            </div>
+
+            <div class="row-compact">
+              <div>
+                <label>{{ ui.configured_printer }}</label>
+                <input value="{{ printer_target }}" disabled>
+              </div>
+              <div>
+                <label>{{ ui.profile_settings_source }}</label>
+                <input value="{{ active_profile_name or ui.profile_none }}" disabled>
+              </div>
+            </div>
+
             <label>{{ ui.qr_value_label }}</label>
             <div class="selector-grid">
               {% for field in qr_field_options %}
@@ -549,112 +580,95 @@ HTML = """
             {% if not qr_selected_ids %}
             <p class="muted small">{{ ui.qr_field_empty }}</p>
             {% endif %}
+
+            <div class="btns">
+              <button type="submit">{{ ui.print_label_button }}</button>
+              <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?{{ preview_query }}">{{ ui.preview_zpl }}</a>
+              <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?{{ preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
+            </div>
+
+            <h2 class="compact-section-title">{{ ui.configured_label_mapping }}</h2>
+            <ul class="config-list">
+              <li><strong>{{ ui.profile_active }}:</strong> <code>{{ active_profile_name or ui.profile_none }}</code></li>
+              <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview or ui.none }}</code></li>
+              <li><strong>{{ ui.requested_label }}:</strong> <code>{{ requested_width_mm }} × {{ requested_height_mm }} mm</code></li>
+              <li><strong>{{ ui.requested_qr }}:</strong> <code>{{ requested_qr_mm }} × {{ requested_qr_mm }} mm</code></li>
+              <li><strong>QR:</strong> <code>quiet zone {{ qr_quiet_zone_modules }}, ECC {{ qr_error_correction }}</code></li>
+              <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
+              <li><strong>{{ ui.effective_print_width }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
+              <li><strong>{{ ui.language_label }}:</strong> <code>{{ ui.lang }}</code></li>
+            </ul>
+            {% if width_warning %}
+            <p class="muted">{{ ui.width_warning }}</p>
+            {% endif %}
           </div>
-          <div>
-            <label for="copies">{{ ui.copies }}</label>
-            <input id="copies" name="copies" type="number" min="1" max="50" value="{{ form.copies }}" required>
+
+          <div class="top-panel">
+            <h2>{{ ui.preview_heading }}</h2>
+            <div class="preview-wrap">
+              <div class="preview-stage">
+                <div class="preview-frame">
+                  <img id="preview-image" src="{{ ingress_base }}/preview.png?{{ preview_query }}" alt="{{ ui.preview_alt }}">
+                </div>
+              </div>
+            </div>
+            <div class="preview-meta">{{ ui.preview_meta }}</div>
           </div>
         </div>
 
-        <h2>{{ ui.fields_heading }}</h2>
-        <div class="field-grid">
-          {% for field in field_forms %}
-          <div class="field-card">
-            <h3>{{ field.name }}</h3>
-            <div class="field-meta">
-              <span>{{ ui.position }}: {{ ui.position_footer if field.position == 'footer' else ui.position_body }}</span>
-              {% if field.required %}<span>{{ ui.required }}</span>{% endif %}
-              {% if field.number_only %}<span>{{ ui.numeric_only }}</span>{% endif %}
-              {% if field.supports_logos %}<span>{{ ui.logo_field_label }}</span>{% endif %}
-            </div>
-            <div class="checkline">
-              <input id="print_{{ field.id }}" name="print_{{ field.id }}" type="checkbox" value="1" data-field-id="{{ field.id }}" {% if field.print_enabled %}checked{% endif %}>
-              <label for="print_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.print_field }}</label>
-            </div>
-            {% if field.supports_logos %}
-            <input type="hidden" name="field_{{ field.id }}__present" value="1">
-            <div class="logo-option-grid">
-              {% for option in field.logo_options %}
-              <label class="logo-option-card">
-                <input type="checkbox" name="field_{{ field.id }}" value="{{ option.id }}" {% if option.selected %}checked{% endif %}>
-                <img src="{{ option.asset_url }}" alt="{{ option.name }}">
-                <span class="muted small">{{ option.name }}{% if option.sort_order %} · #{{ option.sort_order }}{% endif %}</span>
-              </label>
+        <div class="fields-section">
+          <h2>{{ ui.fields_heading }}</h2>
+          <div class="value-field-grid">
+            {% for field in field_forms %}
+            <div class="field-card">
+              <h3>{{ field.name }}</h3>
+              <div class="field-meta">
+                <span>{{ ui.position }}: {{ ui.position_footer if field.position == 'footer' else ui.position_body }}</span>
+                {% if field.required %}<span>{{ ui.required }}</span>{% endif %}
+                {% if field.number_only %}<span>{{ ui.numeric_only }}</span>{% endif %}
+                {% if field.supports_logos %}<span>{{ ui.logo_field_label }}</span>{% endif %}
+              </div>
+              <div class="checkline">
+                <input id="print_{{ field.id }}" name="print_{{ field.id }}" type="checkbox" value="1" data-field-id="{{ field.id }}" {% if field.print_enabled %}checked{% endif %}>
+                <label for="print_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.print_field }}</label>
+              </div>
+              {% if field.supports_logos %}
+              <input type="hidden" name="field_{{ field.id }}__present" value="1">
+              <div class="logo-option-grid">
+                {% for option in field.logo_options %}
+                <label class="logo-option-card">
+                  <input type="checkbox" name="field_{{ field.id }}" value="{{ option.id }}" {% if option.selected %}checked{% endif %}>
+                  <img src="{{ option.asset_url }}" alt="{{ option.name }}">
+                  <span class="muted small">{{ option.name }}{% if option.sort_order %} · #{{ option.sort_order }}{% endif %}</span>
+                </label>
+                {% else %}
+                <div class="muted small">{{ ui.no_logos_uploaded }}</div>
+                {% endfor %}
+              </div>
               {% else %}
-              <div class="muted small">{{ ui.no_logos_uploaded }}</div>
-              {% endfor %}
+              <input
+                id="field_{{ field.id }}"
+                name="field_{{ field.id }}"
+                type="text"
+                value="{{ field.value }}"
+                {% if field.value_options %}list="field_options_{{ field.id }}"{% endif %}
+                {% if field.number_only %}inputmode="numeric" pattern="[0-9]*" data-number-only="1"{% endif %}
+              >
+              {% if field.value_options %}
+              <datalist id="field_options_{{ field.id }}">
+                {% for option in field.value_options %}
+                <option value="{{ option }}"></option>
+                {% endfor %}
+              </datalist>
+              {% endif %}
+              {% endif %}
             </div>
             {% else %}
-            <input
-              id="field_{{ field.id }}"
-              name="field_{{ field.id }}"
-              type="text"
-              value="{{ field.value }}"
-              {% if field.value_options %}list="field_options_{{ field.id }}"{% endif %}
-              {% if field.number_only %}inputmode="numeric" pattern="[0-9]*" data-number-only="1"{% endif %}
-            >
-            {% if field.value_options %}
-            <datalist id="field_options_{{ field.id }}">
-              {% for option in field.value_options %}
-              <option value="{{ option }}"></option>
-              {% endfor %}
-            </datalist>
-            {% endif %}
-            {% endif %}
+            <div class="field-card muted">{{ ui.no_fields_configured }}</div>
+            {% endfor %}
           </div>
-          {% else %}
-          <div class="field-card muted">{{ ui.no_fields_configured }}</div>
-          {% endfor %}
-        </div>
-
-        <div class="row">
-          <div>
-            <label>{{ ui.configured_printer }}</label>
-            <input value="{{ printer_target }}" disabled>
-          </div>
-          <div>
-            <label>{{ ui.profile_settings_source }}</label>
-            <input value="{{ active_profile_name or ui.profile_none }}" disabled>
-          </div>
-        </div>
-
-        <div class="btns">
-          <button type="submit">{{ ui.print_label_button }}</button>
-          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?{{ preview_query }}">{{ ui.preview_zpl }}</a>
-          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?{{ preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
         </div>
       </form>
-    </div>
-
-    <div class="two-col">
-      <div class="card">
-        <h2>{{ ui.preview_heading }}</h2>
-        <div class="preview-wrap">
-          <div class="preview-stage">
-            <div class="preview-frame">
-              <img id="preview-image" src="{{ ingress_base }}/preview.png?{{ preview_query }}" alt="{{ ui.preview_alt }}">
-            </div>
-          </div>
-        </div>
-        <div class="preview-meta">{{ ui.preview_meta }}</div>
-      </div>
-
-      <div class="card">
-        <h2>{{ ui.configured_label_mapping }}</h2>
-        <ul class="config-list">
-          <li><strong>{{ ui.profile_active }}:</strong> <code>{{ active_profile_name or ui.profile_none }}</code></li>
-          <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview or ui.none }}</code></li>
-          <li><strong>{{ ui.requested_label }}:</strong> <code>{{ requested_width_mm }} × {{ requested_height_mm }} mm</code></li>
-          <li><strong>{{ ui.requested_qr }}:</strong> <code>{{ requested_qr_mm }} × {{ requested_qr_mm }} mm</code></li>
-          <li><strong>QR:</strong> <code>quiet zone {{ qr_quiet_zone_modules }}, ECC {{ qr_error_correction }}</code></li>
-          <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
-          <li><strong>{{ ui.effective_print_width }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
-          <li><strong>{{ ui.language_label }}:</strong> <code>{{ ui.lang }}</code></li>
-        </ul>
-        {% if width_warning %}
-        <p class="muted">{{ ui.width_warning }}</p>
-        {% endif %}
-      </div>
     </div>
 
     <div class="card">
