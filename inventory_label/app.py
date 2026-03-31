@@ -2164,11 +2164,13 @@ def blank_editor_form() -> Dict:
 def editor_form_from_field(field: Dict | None) -> Dict:
     if not field:
         return blank_editor_form()
+    supports_logos = field_supports_logos(field)
+    default_logo_ids = normalize_multi_value_ids(field.get("default_value", [])) if supports_logos else []
     return {
         "original_field_id": field.get("id", ""),
         "id": field.get("id", ""),
         "name": field.get("name", ""),
-        "default_value": "" if normalize_bool(field.get("logo_field"), False) else field.get("default_value", ""),
+        "default_value": "" if supports_logos else field.get("default_value", ""),
         "alignment": field.get("alignment", "center"),
         "font_family": field.get("font_family", "sans"),
         "font_size_mm": field.get("font_size_mm", 7.0),
@@ -2186,11 +2188,11 @@ def editor_form_from_field(field: Dict | None) -> Dict:
         "always_use_for_qr": field.get("always_use_for_qr", False),
         "value_options": normalize_value_options(field.get("value_options", [])),
         "value_options_text": value_options_text(field.get("value_options", [])),
-        "default_logo_ids": normalize_multi_value_ids(field.get("default_value", [])) if supports_logos else [],
+        "default_logo_ids": default_logo_ids,
         "logo_field": supports_logos,
         "logo_height_mm": field.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
-        "logo_options": [{**option, "asset_url": logo_asset_url(option.get("storage_name")), "selected_default": option.get("id") in set(normalize_multi_value_ids(field.get("default_value", [])))} for option in normalize_logo_options(field.get("logo_options", []))],
-        "supports_logos": field_supports_logos(field),
+        "logo_options": [{**option, "asset_url": logo_asset_url(option.get("storage_name")), "selected_default": option.get("id") in set(default_logo_ids)} for option in normalize_logo_options(field.get("logo_options", []))],
+        "supports_logos": supports_logos,
         "max_lines": field.get("max_lines", 3),
     }
 
