@@ -1,8 +1,8 @@
 name: "Inventory Label"
-version: "0.1.33"
+version: "0.1.34"
 slug: "inventory_label"
 description: >-
-  Print large QR-code project or inventory labels to a Zebra ZT420/ZT421 with live PNG preview, English/German UI, optional 90°/270° rotated layout, sign-off suggestions, optional separate weight, per-field styling, config-defined label profiles selectable in the UI, on-screen custom text blocks with per-block styling, optional footer with automatic current date, and TCP 9100 printing
+  Print large QR-code project or inventory labels to a Zebra ZT420/ZT421 with live PNG preview, English/German UI, optional 90°/270° rotated layout, sign-off suggestions, optional separate weight, per-field styling, config-tab label profiles selectable in the UI, on-screen custom text blocks with per-block styling, optional footer with automatic current date, and TCP 9100 printing
 url: "https://github.com/ErnstFinkAG/ha_add-ons/tree/main/inventory_label"
 startup: services
 boot: auto
@@ -78,7 +78,7 @@ options:
   qr_value_template: "{text1 - text2}"
   qr_quiet_zone_modules: 3
   qr_error_correction: "M"
-  label_profiles_yaml: ""
+  label_profiles: []
 schema:
   ui_language: str
   printer_host: str
@@ -141,4 +141,68 @@ schema:
   qr_value_template: str
   qr_quiet_zone_modules: int
   qr_error_correction: str
-  label_profiles_yaml: str?
+  label_profiles:
+    - id: str
+      name: str
+      label_width_mm: float?
+      label_height_mm: float?
+      qr_size_mm: float?
+      top_margin_mm: float?
+      field1_label: str?
+      field2_label: str?
+      field3_label: str?
+      sign_off_label: str?
+      weight_label: str?
+      footer_label: str?
+      field1_default_value: str?
+      field2_default_value: str?
+      field3_default_value: str?
+      sign_off_default_value: str?
+      sign_off_options: str?
+      weight_default_value: str?
+      footer_default_value: str?
+      field1_alignment: str?
+      field2_alignment: str?
+      field3_alignment: str?
+      sign_off_alignment: str?
+      weight_alignment: str?
+      footer_alignment: str?
+      field1_font_family: str?
+      field2_font_family: str?
+      field3_font_family: str?
+      sign_off_font_family: str?
+      weight_font_family: str?
+      footer_font_family: str?
+      field1_font_size_mm: float?
+      field2_font_size_mm: float?
+      field3_font_size_mm: float?
+      sign_off_font_size_mm: float?
+      weight_font_size_mm: float?
+      footer_font_size_mm: float?
+      footer_bottom_margin_mm: float?
+      field1_bold: bool?
+      field2_bold: bool?
+      field3_bold: bool?
+      sign_off_bold: bool?
+      weight_bold: bool?
+      footer_bold: bool?
+      field1_italic: bool?
+      field2_italic: bool?
+      field3_italic: bool?
+      sign_off_italic: bool?
+      weight_italic: bool?
+      footer_italic: bool?
+      field1_underline: bool?
+      field2_underline: bool?
+      field3_underline: bool?
+      sign_off_underline: bool?
+      weight_underline: bool?
+      footer_underline: bool?
+      qr_value_template: str?
+      qr_quiet_zone_modules: int?
+      qr_error_correction: str?
+      print_rotation_degrees: int?
+      default_print_text2: bool?
+      default_print_text3: bool?
+      default_print_weight: bool?
+      default_print_footer: bool?

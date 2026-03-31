@@ -186,6 +186,7 @@ DEFAULT_OPTIONS = {
     "qr_error_correction": "M",
     "print_rotation_degrees": 0,
     "label_profiles_yaml": "",
+    "label_profiles": [],
 }
 
 QR_ERROR_CORRECTION_MAP = {
@@ -194,6 +195,8 @@ QR_ERROR_CORRECTION_MAP = {
     "Q": qrcode.constants.ERROR_CORRECT_Q,
     "H": qrcode.constants.ERROR_CORRECT_H,
 }
+
+PROFILE_ALLOWED_OPTIONS = (set(DEFAULT_OPTIONS) | {"default_print_text2", "default_print_text3", "default_print_weight", "default_print_footer"}) - {"ui_language", "printer_host", "printer_port", "label_profiles_yaml", "label_profiles"}
 
 UI_STRINGS = {
     "en": {
@@ -268,8 +271,8 @@ UI_STRINGS = {
         "profile_select": "Label profile",
         "profile_active": "Active profile",
         "profile_none": "Default settings",
-        "profile_yaml_label": "Config-side label profiles",
-        "profile_yaml_note": "Because the add-on config tab does not provide a dynamic repeatable settings-group editor here, multiple full label templates are defined in one YAML field and selected in the web UI.",
+        "profile_yaml_label": "Configured label profiles",
+        "profile_yaml_note": "Profiles come from the add-on Configuration tab. Each profile contains its own label settings group and can be selected here.",
     },
     "de": {
         "lang": "de",
@@ -343,8 +346,8 @@ UI_STRINGS = {
         "profile_select": "Etikettenprofil",
         "profile_active": "Aktives Profil",
         "profile_none": "Standardkonfiguration",
-        "profile_yaml_label": "Etikettenprofile aus der Konfiguration",
-        "profile_yaml_note": "Da die Add-on-Konfigurationsoberfläche hier keine dynamischen wiederholbaren Einstellungsgruppen bereitstellt, werden mehrere vollständige Etikettenvorlagen in einem YAML-Feld definiert und in der Weboberfläche ausgewählt.",
+        "profile_yaml_label": "Konfigurierte Etikettenprofile",
+        "profile_yaml_note": "Die Profile kommen aus dem Add-on-Konfigurationstab. Jedes Profil enthält seine eigene Einstellungsgruppe und kann hier ausgewählt werden.",
     },
 }
 
@@ -1206,20 +1209,23 @@ def load_options() -> Dict:
     options["weight_italic"] = normalize_bool(options.get("weight_italic"), DEFAULT_OPTIONS["weight_italic"])
     options["weight_underline"] = normalize_bool(options.get("weight_underline"), DEFAULT_OPTIONS["weight_underline"])
     options["label_profiles_yaml"] = str(options.get("label_profiles_yaml") or DEFAULT_OPTIONS.get("label_profiles_yaml", ""))
+    options["label_profiles"] = options.get("label_profiles") if isinstance(options.get("label_profiles"), list) else []
     return options
 
 
 
 
 def parse_label_profiles(raw: object) -> List[Dict]:
-    source = str(raw or "").strip()
-    if not source:
-        return []
-    try:
-        data = yaml.safe_load(source)
-    except Exception as exc:
-        LOGGER.warning("Failed to parse label_profiles_yaml: %s", exc)
-        return []
+    data = raw
+    if isinstance(raw, str):
+        source = raw.strip()
+        if not source:
+            return []
+        try:
+            data = yaml.safe_load(source)
+        except Exception as exc:
+            LOGGER.warning("Failed to parse label profiles: %s", exc)
+            return []
     if isinstance(data, dict):
         for key in ("labels", "label_profiles", "profiles"):
             if isinstance(data.get(key), list):
@@ -1229,7 +1235,6 @@ def parse_label_profiles(raw: object) -> List[Dict]:
             data = [data]
     if not isinstance(data, list):
         return []
-    allowed = set(DEFAULT_OPTIONS) | {"default_print_text2", "default_print_text3", "default_print_weight", "default_print_footer"}
     profiles: List[Dict] = []
     for idx, item in enumerate(data, start=1):
         if not isinstance(item, dict):
@@ -1237,7 +1242,7 @@ def parse_label_profiles(raw: object) -> List[Dict]:
         name = str(item.get("name") or item.get("label") or f"Label {idx}").strip() or f"Label {idx}"
         raw_id = str(item.get("id") or name).strip().lower()
         profile_id = re.sub(r"[^a-z0-9_-]+", "-", raw_id).strip("-") or f"label-{idx}"
-        overrides = {key: value for key, value in item.items() if key in allowed}
+        overrides = {key: value for key, value in item.items() if key in PROFILE_ALLOWED_OPTIONS}
         profiles.append({"id": profile_id, "name": name, "options": overrides})
     return profiles
 
@@ -1257,7 +1262,9 @@ def apply_profile_overrides(opts: Dict, profile: Dict | None) -> Dict:
 
 def load_runtime_options(profile_id: str | None = None) -> Dict:
     base_opts = load_options()
-    profiles = parse_label_profiles(base_opts.get("label_profiles_yaml", ""))
+    profiles = parse_label_profiles(base_opts.get("label_profiles"))
+    if not profiles:
+        profiles = parse_label_profiles(base_opts.get("label_profiles_yaml", ""))
     selected_id = profile_id
     if selected_id is None:
         selected_id = request.values.get("profile_id") or request.args.get("profile_id") or request.form.get("profile_id")
