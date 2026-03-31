@@ -88,7 +88,7 @@ Field settings supported in the UI:
 
 ## Web UI
 
-Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, field inputs can offer suggested values while still accepting free text, and fields can be marked as footer text so their values stay anchored at the bottom of the label. Footer fields can also have their own additional bottom margin in mm. Fields can now also be configured as logo fields with uploaded PNG choices that are shown as selectable checkboxes in the label form. Multiple logos can be selected and rendered on one label.
+Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, field inputs can offer suggested values while still accepting free text, and fields can be marked as footer text so their values stay anchored at the bottom of the label. Footer fields can also have their own additional bottom margin in mm. Fields can now also be configured as logo fields with uploaded PNG choices that are shown as selectable checkboxes in the label form. Multiple logos can be selected and rendered on one label. In the field editor, each uploaded logo can also be marked as selected by default so it appears in preview immediately.
 
 In the add-on web UI you can:
 

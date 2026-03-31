@@ -308,6 +308,7 @@ UI_STRINGS = {
         "logo_options_summary": "Logos",
         "existing_logos_label": "Existing logos",
         "no_logos_uploaded": "No logos uploaded for this field yet.",
+        "default_logo_label": "Selected by default",
         "remove_logo_label": "Remove",
         "logo_png_only": "Only PNG logo files are supported.",
         "logo_upload_invalid": "Logo upload failed: {error}",
@@ -404,6 +405,7 @@ UI_STRINGS = {
         "logo_options_summary": "Logos",
         "existing_logos_label": "Vorhandene Logos",
         "no_logos_uploaded": "Für dieses Feld sind noch keine Logos hochgeladen.",
+        "default_logo_label": "Standardmäßig ausgewählt",
         "remove_logo_label": "Entfernen",
         "logo_png_only": "Es werden nur PNG-Logodateien unterstützt.",
         "logo_upload_invalid": "Logo-Upload fehlgeschlagen: {error}",
@@ -760,7 +762,10 @@ HTML = """
                 {% for option in editor_form.logo_options %}
                 <label class="logo-manager-item">
                   <img class="logo-thumb" src="{{ option.asset_url }}" alt="{{ option.name }}">
-                  <span>{{ option.name }}</span>
+                  <span>
+                    <strong>{{ option.name }}</strong><br>
+                    <span class="checkline"><input type="checkbox" name="default_logo_ids" value="{{ option.id }}" {% if option.selected_default %}checked{% endif %}> {{ ui.default_logo_label }}</span>
+                  </span>
                   <span class="checkline"><input type="checkbox" name="remove_logo_ids" value="{{ option.id }}"> {{ ui.remove_logo_label }}</span>
                 </label>
                 {% endfor %}
@@ -850,6 +855,7 @@ HTML = """
       const portraitWidthMm = {{ preview_display_width_mm|tojson }};
       const portraitHeightMm = {{ preview_display_height_mm|tojson }};
       const noLogosUploadedText = {{ ui.no_logos_uploaded|tojson }};
+      const defaultLogoLabelText = {{ ui.default_logo_label|tojson }};
       const removeLogoLabelText = {{ ui.remove_logo_label|tojson }};
 
       function sanitizeNumericInput(input) {
@@ -952,7 +958,10 @@ HTML = """
         container.innerHTML = items.map((logo) => `
           <label class="logo-manager-item">
             <img class="logo-thumb" src="${logo.asset_url || ''}" alt="${logo.name || ''}">
-            <span>${logo.name || ''}</span>
+            <span>
+              <strong>${logo.name || ''}</strong><br>
+              <span class="checkline"><input type="checkbox" name="default_logo_ids" value="${logo.id || ''}" ${logo.selected_default ? 'checked' : ''}> ${defaultLogoLabelText}</span>
+            </span>
             <span class="checkline"><input type="checkbox" name="remove_logo_ids" value="${logo.id || ''}"> ${removeLogoLabelText}</span>
           </label>
         `).join("");
@@ -1223,10 +1232,11 @@ def normalize_profile_field(raw: object, idx: int) -> Dict:
     logo_field = normalize_bool(data.get("logo_field"), False)
     if footer_text:
         position = "footer"
+    default_value = normalize_multi_value_ids(data.get("default_value", [])) if logo_field else data.get("default_value", "")
     return {
         "id": field_id,
         "name": name,
-        "default_value": data.get("default_value", ""),
+        "default_value": default_value,
         "alignment": normalize_alignment(data.get("alignment"), "center"),
         "font_family": normalize_font_family(data.get("font_family"), "sans"),
         "font_size_mm": normalize_float(data.get("font_size_mm"), 7.0, 2.0, 30.0),
@@ -2104,7 +2114,13 @@ def preview_query_from_form(form: Dict[str, object], field_forms: List[Dict]) ->
     for field_id in normalize_qr_field_ids(form.get("qr_field_ids", [])):
         params.append(("qr_field_ids", field_id))
     for field in field_forms:
-        params.append((field_value_name(field["id"]), str(field.get("value", ""))))
+        value_key = field_value_name(field["id"])
+        if field.get("logo_field"):
+            params.append((f"{value_key}__present", "1"))
+            for logo_id in normalize_multi_value_ids(field.get("value", [])):
+                params.append((value_key, logo_id))
+        else:
+            params.append((value_key, str(field.get("value", ""))))
         if field.get("print_enabled"):
             params.append((field_print_name(field["id"]), "1"))
     return urlencode(params, doseq=True)
@@ -2133,6 +2149,7 @@ def blank_editor_form() -> Dict:
         "always_use_for_qr": False,
         "value_options": [],
         "value_options_text": "",
+        "default_logo_ids": [],
         "logo_field": False,
         "logo_height_mm": DEFAULT_LOGO_HEIGHT_MM,
         "logo_options": [],
@@ -2147,7 +2164,7 @@ def editor_form_from_field(field: Dict | None) -> Dict:
         "original_field_id": field.get("id", ""),
         "id": field.get("id", ""),
         "name": field.get("name", ""),
-        "default_value": field.get("default_value", ""),
+        "default_value": "" if normalize_bool(field.get("logo_field"), False) else field.get("default_value", ""),
         "alignment": field.get("alignment", "center"),
         "font_family": field.get("font_family", "sans"),
         "font_size_mm": field.get("font_size_mm", 7.0),
@@ -2165,9 +2182,10 @@ def editor_form_from_field(field: Dict | None) -> Dict:
         "always_use_for_qr": field.get("always_use_for_qr", False),
         "value_options": normalize_value_options(field.get("value_options", [])),
         "value_options_text": value_options_text(field.get("value_options", [])),
+        "default_logo_ids": normalize_multi_value_ids(field.get("default_value", [])) if normalize_bool(field.get("logo_field"), False) else [],
         "logo_field": normalize_bool(field.get("logo_field"), False),
         "logo_height_mm": field.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
-        "logo_options": [{**option, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))],
+        "logo_options": [{**option, "asset_url": logo_asset_url(option.get("storage_name")), "selected_default": option.get("id") in set(normalize_multi_value_ids(field.get("default_value", [])))} for option in normalize_logo_options(field.get("logo_options", []))],
         "max_lines": field.get("max_lines", 3),
     }
 
@@ -2181,11 +2199,12 @@ def validate_and_normalize_editor_payload(source: Dict, language: str) -> Tuple[
     if not raw_name:
         raise ValueError(ui_text(language, "field_name_required"))
     original_field_id = sanitize_id(str(source.get("original_field_id") or ""), "")
+    logo_field = normalize_bool(source.get("logo_field"), False)
     normalized = normalize_profile_field(
         {
             "id": source.get("id") or raw_name,
             "name": raw_name,
-            "default_value": source.get("default_value", ""),
+            "default_value": source.get("default_logo_ids", []) if logo_field else source.get("default_value", ""),
             "alignment": source.get("alignment", "center"),
             "font_family": source.get("font_family", "sans"),
             "font_size_mm": source.get("font_size_mm", 7.0),
@@ -2486,7 +2505,7 @@ def save_field():
         if not profile:
             raise ValueError(ui_text(opts, "profile_not_found"))
         merged_logo_options, created_logo_options = resolve_logo_options_for_save(profile, request.form, request.files, opts["ui_language"])
-        payload = {**request.form.to_dict(flat=True), "logo_options": merged_logo_options}
+        payload = {**request.form.to_dict(flat=True), "default_logo_ids": request.form.getlist("default_logo_ids"), "logo_options": merged_logo_options}
         original_field_id, normalized_field = validate_and_normalize_editor_payload(payload, opts["ui_language"])
         save_profile_field(profile["id"], original_field_id, normalized_field, profile.get("name", ""), opts["ui_language"])
         opts = load_runtime_options(profile["id"])
@@ -2522,6 +2541,7 @@ def save_field():
             "append_current_date": normalize_bool(request.form.get("append_current_date"), False),
             "always_use_for_qr": normalize_bool(request.form.get("always_use_for_qr"), False),
             "value_options": normalize_value_options(request.form.get("value_options_text", "")),
+            "default_value": request.form.getlist("default_logo_ids") if normalize_bool(request.form.get("logo_field"), False) else request.form.get("default_value", ""),
             "logo_field": normalize_bool(request.form.get("logo_field"), False),
             "logo_height_mm": request.form.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
             "logo_options": merged_logo_options,
