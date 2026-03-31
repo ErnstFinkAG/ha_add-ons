@@ -17,6 +17,7 @@ This repository is intended to be hosted at:
 - 3 configurable main text fields
 - sign-off input with configured suggestions and free-text entry
 - optional numeric-only weight field with per-print checkbox
+- any number of custom text blocks can be added in the web UI with per-block value, print toggle, alignment, font family, font size, bold, italic, and underline
 - optional footer anchored to the physical bottom of the label
 - automatic current date appended to the footer
 - per-field defaults, alignment, font family, font size, bold, italic, and underline
@@ -219,3 +220,20 @@ Allowed values:
 - `H`
 
 Higher levels give more redundancy and lower data capacity.
+
+
+## Web UI custom text blocks
+
+Use **Add custom block** in the add-on web UI to create any number of extra human-readable text blocks for the current label. Each custom block can have its own:
+
+- UI label
+- printed value
+- print on/off toggle
+- alignment
+- font family
+- font size
+- bold
+- italic
+- underline
+
+These custom blocks are previewed live and are included in ZPL preview, PNG preview, normal print, and the JSON API via `custom_blocks` or `custom_blocks_json`. The web UI also keeps the current custom blocks in browser local storage so they survive a normal page reload on the same device/browser.

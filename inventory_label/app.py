@@ -48,6 +48,10 @@ SUPPORTED_ROTATIONS = {0, 90, 270}
 FIELD_GAPS_MM = {1: 8.0, 2: 6.0, 3: 4.0}
 FIELD_MAX_LINES = {1: 4, 2: 3, 3: 3}
 FOOTER_MAX_LINES = 3
+CUSTOM_BLOCK_MAX = 20
+CUSTOM_BLOCK_MAX_LINES = 3
+CUSTOM_BLOCK_DEFAULT_FONT_SIZE_MM = 7.0
+CUSTOM_BLOCK_GAP_MM = 4.0
 
 FONT_PATHS = {
     "sans": {
@@ -237,6 +241,28 @@ UI_STRINGS = {
         "preview_failed_message": "Preview failed: {error}",
         "field_required": "{field} is required.",
         "field_numbers_only": "{field} must contain numbers only.",
+        "custom_blocks_heading": "Custom text blocks",
+        "add_custom_block_button": "Add custom block",
+        "no_custom_blocks": "No custom text blocks added yet.",
+        "custom_block_label": "Block label",
+        "custom_block_value": "Block value",
+        "custom_block_print": "Print this block",
+        "custom_block_font_family": "Font family",
+        "custom_block_font_size": "Font size (mm)",
+        "custom_block_alignment": "Alignment",
+        "custom_block_bold": "Bold",
+        "custom_block_italic": "Italic",
+        "custom_block_underline": "Underline",
+        "custom_block_remove": "Remove",
+        "custom_block_count": "Custom blocks",
+        "custom_block_count_value": "{count} block(s)",
+        "default_custom_block_label": "Custom",
+        "font_family_sans": "Sans",
+        "font_family_serif": "Serif",
+        "font_family_mono": "Mono",
+        "alignment_left": "Left",
+        "alignment_center": "Center",
+        "alignment_right": "Right",
     },
     "de": {
         "lang": "de",
@@ -285,6 +311,28 @@ UI_STRINGS = {
         "preview_failed_message": "Vorschau fehlgeschlagen: {error}",
         "field_required": "{field} ist erforderlich.",
         "field_numbers_only": "{field} darf nur Ziffern enthalten.",
+        "custom_blocks_heading": "Benutzerdefinierte Textblöcke",
+        "add_custom_block_button": "Textblock hinzufügen",
+        "no_custom_blocks": "Noch keine benutzerdefinierten Textblöcke hinzugefügt.",
+        "custom_block_label": "Blockbezeichnung",
+        "custom_block_value": "Blockinhalt",
+        "custom_block_print": "Diesen Block drucken",
+        "custom_block_font_family": "Schriftfamilie",
+        "custom_block_font_size": "Schriftgröße (mm)",
+        "custom_block_alignment": "Ausrichtung",
+        "custom_block_bold": "Fett",
+        "custom_block_italic": "Kursiv",
+        "custom_block_underline": "Unterstrichen",
+        "custom_block_remove": "Entfernen",
+        "custom_block_count": "Benutzerdefinierte Blöcke",
+        "custom_block_count_value": "{count} Block/Blöcke",
+        "default_custom_block_label": "Benutzerdefiniert",
+        "font_family_sans": "Sans",
+        "font_family_serif": "Serif",
+        "font_family_mono": "Mono",
+        "alignment_left": "Links",
+        "alignment_center": "Zentriert",
+        "alignment_right": "Rechts",
     },
 }
 
@@ -342,7 +390,7 @@ HTML = """
       font-weight: 600;
       margin-bottom: 8px;
     }
-    input {
+    input, select {
       width: 100%;
       box-sizing: border-box;
       border-radius: 12px;
@@ -450,6 +498,72 @@ HTML = """
       transform: scale(1.1);
       accent-color: var(--accent);
     }
+    .section-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .small-button {
+      padding: 10px 14px;
+    }
+    .small-muted {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-bottom: 12px;
+    }
+    .custom-blocks {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .custom-block {
+      background: #111827;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .custom-block-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .custom-block-title {
+      font-weight: 700;
+      color: var(--muted);
+    }
+    .custom-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+    }
+    .inline-checks {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 8px;
+    }
+    .inline-checks label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 0;
+      font-weight: 500;
+    }
+    .inline-checks input {
+      width: auto;
+      margin: 0;
+      accent-color: var(--accent);
+    }
+    .block-remove {
+      background: transparent;
+      border: 1px solid var(--danger);
+      color: #fecaca;
+    }
   </style>
 </head>
 <body>
@@ -488,6 +602,14 @@ HTML = """
         <input id="footer" name="footer" value="{{ form.footer }}">
         <label class="checkbox-row"><input id="print_footer" name="print_footer" type="checkbox" value="1" {% if form.print_footer == '1' %}checked{% endif %}> {{ ui.print_field }} {{ footer_label }}</label>
 
+        <input id="custom_blocks_json" name="custom_blocks_json" type="hidden" value="{{ custom_blocks_json|e }}">
+        <div class="section-row">
+          <label>{{ ui.custom_blocks_heading }}</label>
+          <button id="add-custom-block" class="secondary small-button" type="button">{{ ui.add_custom_block_button }}</button>
+        </div>
+        <div id="custom-blocks-empty" class="small-muted">{{ ui.no_custom_blocks }}</div>
+        <div id="custom-blocks-container" class="custom-blocks"></div>
+
         <div class="row">
           <div>
             <label for="copies">{{ ui.copies }}</label>
@@ -501,8 +623,8 @@ HTML = """
 
         <div class="btns">
           <button type="submit">{{ ui.print_label_button }}</button>
-          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}">{{ ui.preview_zpl }}</a>
-          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
+          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}&custom_blocks_json={{ custom_blocks_json|urlencode }}">{{ ui.preview_zpl }}</a>
+          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}&custom_blocks_json={{ custom_blocks_json|urlencode }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
         </div>
       </form>
     </div>
@@ -512,7 +634,7 @@ HTML = """
       <div class="preview-wrap">
         <div class="preview-stage">
           <div class="preview-frame">
-            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}" alt="{{ ui.preview_alt }}">
+            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}&custom_blocks_json={{ custom_blocks_json|urlencode }}" alt="{{ ui.preview_alt }}">
           </div>
         </div>
       </div>
@@ -529,6 +651,7 @@ HTML = """
         <li><strong>{{ ui.field3_label_meta }}:</strong> <code>{{ field3_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ field3_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ field3_style_summary }}</code></li>
         <li><strong>{{ ui.sign_off_label_meta }}:</strong> <code>{{ sign_off_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ sign_off_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ sign_off_style_summary }}</code></li>
         <li><strong>{{ ui.configured_sign_off_names }}:</strong> <code>{{ sign_off_options_display }}</code></li>
+        <li><strong>{{ ui.custom_block_count }}:</strong> <code>{{ custom_block_count_text }}</code></li>
         <li><strong>{{ ui.weight_label_meta }}:</strong> <code>{{ weight_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ weight_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ weight_style_summary }}</code></li>
         <li><strong>{{ ui.footer_label_meta }}:</strong> <code>{{ footer_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ footer_default_value }}</code> · <strong>{{ ui.printed_as }}:</strong> <code>{{ footer_preview_text }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ footer_style_summary }}</code></li>
         <li><strong>{{ ui.qr_template }}:</strong> <code>{{ qr_value_template }}</code></li>
@@ -536,7 +659,7 @@ HTML = """
         <li><strong>{{ ui.qr_error_correction }}:</strong> <code>{{ qr_error_correction }}</code></li>
         <li><strong>{{ ui.footer_bottom_margin }}:</strong> <code>{{ footer_bottom_margin_mm }} mm</code></li>
         <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview }}</code></li>
-        <li><strong>{{ ui.current_print_selection }}:</strong> <code>field1={{ ui.on }}, field2={{ ui.on if form.print_text2 == "1" else ui.off }}, field3={{ ui.on if form.print_text3 == "1" else ui.off }}, sign-off={{ ui.on if form.sign_off else ui.off }}, weight={{ ui.on if form.print_weight == "1" else ui.off }}, footer={{ ui.on if form.print_footer == "1" else ui.off }}</code></li>
+        <li><strong>{{ ui.current_print_selection }}:</strong> <code>field1={{ ui.on }}, field2={{ ui.on if form.print_text2 == "1" else ui.off }}, field3={{ ui.on if form.print_text3 == "1" else ui.off }}, sign-off={{ ui.on if form.sign_off else ui.off }}, weight={{ ui.on if form.print_weight == "1" else ui.off }}, footer={{ ui.on if form.print_footer == "1" else ui.off }}, custom={{ custom_block_count_text }}</code></li>
       </ul>
     </div>
 
@@ -569,6 +692,10 @@ HTML = """
       const printText3 = document.getElementById("print_text3");
       const printWeight = document.getElementById("print_weight");
       const printFooter = document.getElementById("print_footer");
+      const customBlocksJsonInput = document.getElementById("custom_blocks_json");
+      const addCustomBlockButton = document.getElementById("add-custom-block");
+      const customBlocksContainer = document.getElementById("custom-blocks-container");
+      const customBlocksEmpty = document.getElementById("custom-blocks-empty");
       const copies = document.getElementById("copies");
       const previewImage = document.getElementById("preview-image");
       const previewFrame = document.querySelector(".preview-frame");
@@ -576,10 +703,200 @@ HTML = """
       const previewStage = document.querySelector(".preview-stage");
       const previewPngLink = document.getElementById("preview-png-link");
       const previewZplLink = document.getElementById("preview-zpl-link");
-      if (!text1 || !text2 || !text3 || !signOff || !weight || !footer || !printText2 || !printText3 || !printWeight || !printFooter || !copies || !previewImage || !previewFrame || !previewWrap || !previewStage || !previewPngLink || !previewZplLink) return;
+      if (!text1 || !text2 || !text3 || !signOff || !weight || !footer || !printText2 || !printText3 || !printWeight || !printFooter || !customBlocksJsonInput || !addCustomBlockButton || !customBlocksContainer || !customBlocksEmpty || !copies || !previewImage || !previewFrame || !previewWrap || !previewStage || !previewPngLink || !previewZplLink) return;
 
+      const customBlockUi = {{ custom_block_ui|tojson }};
+      const maxCustomBlocks = {{ custom_block_max }};
+      const customBlockStorageKey = "inventory_label_custom_blocks";
       let refreshTimer = null;
       let previewNonce = Date.now();
+      let customBlocks = [];
+
+      function clampCustomBlockFontSize(value) {
+        const parsed = parseFloat(value);
+        if (Number.isNaN(parsed)) return 7;
+        return Math.max(2, Math.min(30, parsed));
+      }
+
+      function normalizeCustomBlock(block, index) {
+        const safe = block && typeof block === "object" ? block : {};
+        const label = String(safe.label || `${customBlockUi.defaultLabel} ${index + 1}`).trim();
+        const alignment = ["left", "center", "right"].includes(String(safe.alignment || "").toLowerCase()) ? String(safe.alignment).toLowerCase() : "center";
+        const fontFamily = ["sans", "serif", "mono"].includes(String(safe.font_family || "").toLowerCase()) ? String(safe.font_family).toLowerCase() : "sans";
+        return {
+          label: label || `${customBlockUi.defaultLabel} ${index + 1}`,
+          value: String(safe.value || ""),
+          print: safe.print !== false,
+          alignment,
+          font_family: fontFamily,
+          font_size_mm: clampCustomBlockFontSize(safe.font_size_mm),
+          bold: Boolean(safe.bold),
+          italic: Boolean(safe.italic),
+          underline: Boolean(safe.underline),
+        };
+      }
+
+      try {
+        const parsed = JSON.parse(customBlocksJsonInput.value || "[]");
+        customBlocks = Array.isArray(parsed) ? parsed.slice(0, maxCustomBlocks).map(normalizeCustomBlock) : [];
+      } catch (error) {
+        customBlocks = [];
+      }
+
+      if (!customBlocks.length) {
+        try {
+          const storedBlocks = window.localStorage.getItem(customBlockStorageKey);
+          if (storedBlocks) {
+            const parsedStored = JSON.parse(storedBlocks);
+            customBlocks = Array.isArray(parsedStored) ? parsedStored.slice(0, maxCustomBlocks).map(normalizeCustomBlock) : [];
+          }
+        } catch (error) {
+          customBlocks = [];
+        }
+      }
+
+      function syncCustomBlocksField() {
+        customBlocks = customBlocks.slice(0, maxCustomBlocks).map(normalizeCustomBlock);
+        customBlocksJsonInput.value = JSON.stringify(customBlocks);
+        try { window.localStorage.setItem(customBlockStorageKey, customBlocksJsonInput.value); } catch (error) {}
+        customBlocksEmpty.style.display = customBlocks.length ? "none" : "block";
+      }
+
+      function makeOption(value, label, selected) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        option.selected = selected;
+        return option;
+      }
+
+      function appendField(wrapper, labelText, control) {
+        const field = document.createElement("div");
+        const label = document.createElement("label");
+        label.textContent = labelText;
+        field.appendChild(label);
+        field.appendChild(control);
+        wrapper.appendChild(field);
+      }
+
+      function renderCustomBlocks() {
+        customBlocks = customBlocks.slice(0, maxCustomBlocks).map(normalizeCustomBlock);
+        customBlocksContainer.innerHTML = "";
+        customBlocks.forEach((block, index) => {
+          const card = document.createElement("div");
+          card.className = "custom-block";
+
+          const header = document.createElement("div");
+          header.className = "custom-block-header";
+          const title = document.createElement("div");
+          title.className = "custom-block-title";
+          title.textContent = block.label || `${customBlockUi.defaultLabel} ${index + 1}`;
+          const removeButton = document.createElement("button");
+          removeButton.type = "button";
+          removeButton.className = "secondary small-button block-remove";
+          removeButton.textContent = customBlockUi.remove;
+          removeButton.addEventListener("click", () => {
+            customBlocks.splice(index, 1);
+            renderCustomBlocks();
+            applyPreviewUpdate();
+          });
+          header.appendChild(title);
+          header.appendChild(removeButton);
+          card.appendChild(header);
+
+          const grid = document.createElement("div");
+          grid.className = "custom-grid";
+
+          const labelInput = document.createElement("input");
+          labelInput.type = "text";
+          labelInput.value = block.label;
+          labelInput.addEventListener("input", () => {
+            block.label = labelInput.value;
+            syncCustomBlocksField();
+            title.textContent = labelInput.value || `${customBlockUi.defaultLabel} ${index + 1}`;
+            schedulePreviewUpdate();
+          });
+          appendField(grid, customBlockUi.label, labelInput);
+
+          const valueInput = document.createElement("input");
+          valueInput.type = "text";
+          valueInput.value = block.value;
+          valueInput.addEventListener("input", () => {
+            block.value = valueInput.value;
+            syncCustomBlocksField();
+            schedulePreviewUpdate();
+          });
+          appendField(grid, customBlockUi.value, valueInput);
+
+          const alignmentSelect = document.createElement("select");
+          alignmentSelect.appendChild(makeOption("left", customBlockUi.alignmentLeft, block.alignment === "left"));
+          alignmentSelect.appendChild(makeOption("center", customBlockUi.alignmentCenter, block.alignment === "center"));
+          alignmentSelect.appendChild(makeOption("right", customBlockUi.alignmentRight, block.alignment === "right"));
+          alignmentSelect.addEventListener("change", () => {
+            block.alignment = alignmentSelect.value;
+            syncCustomBlocksField();
+            applyPreviewUpdate();
+          });
+          appendField(grid, customBlockUi.alignment, alignmentSelect);
+
+          const familySelect = document.createElement("select");
+          familySelect.appendChild(makeOption("sans", customBlockUi.fontSans, block.font_family === "sans"));
+          familySelect.appendChild(makeOption("serif", customBlockUi.fontSerif, block.font_family === "serif"));
+          familySelect.appendChild(makeOption("mono", customBlockUi.fontMono, block.font_family === "mono"));
+          familySelect.addEventListener("change", () => {
+            block.font_family = familySelect.value;
+            syncCustomBlocksField();
+            applyPreviewUpdate();
+          });
+          appendField(grid, customBlockUi.fontFamily, familySelect);
+
+          const sizeInput = document.createElement("input");
+          sizeInput.type = "number";
+          sizeInput.min = "2";
+          sizeInput.max = "30";
+          sizeInput.step = "0.5";
+          sizeInput.value = String(block.font_size_mm);
+          sizeInput.addEventListener("input", () => {
+            block.font_size_mm = clampCustomBlockFontSize(sizeInput.value);
+            syncCustomBlocksField();
+            schedulePreviewUpdate();
+          });
+          sizeInput.addEventListener("change", () => {
+            sizeInput.value = String(clampCustomBlockFontSize(sizeInput.value));
+            block.font_size_mm = clampCustomBlockFontSize(sizeInput.value);
+            syncCustomBlocksField();
+            applyPreviewUpdate();
+          });
+          appendField(grid, customBlockUi.fontSize, sizeInput);
+
+          card.appendChild(grid);
+
+          const checks = document.createElement("div");
+          checks.className = "inline-checks";
+          [
+            ["print", customBlockUi.print],
+            ["bold", customBlockUi.bold],
+            ["italic", customBlockUi.italic],
+            ["underline", customBlockUi.underline],
+          ].forEach(([key, labelText]) => {
+            const label = document.createElement("label");
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.checked = Boolean(block[key]);
+            checkbox.addEventListener("change", () => {
+              block[key] = checkbox.checked;
+              syncCustomBlocksField();
+              applyPreviewUpdate();
+            });
+            label.appendChild(checkbox);
+            label.appendChild(document.createTextNode(labelText));
+            checks.appendChild(label);
+          });
+          card.appendChild(checks);
+          customBlocksContainer.appendChild(card);
+        });
+        syncCustomBlocksField();
+      }
 
       function normalizedCopies() {
         const raw = parseInt(copies.value || "1", 10);
@@ -600,6 +917,7 @@ HTML = """
         params.set("print_text3", printText3.checked ? "1" : "0");
         params.set("print_weight", printWeight.checked ? "1" : "0");
         params.set("print_footer", printFooter.checked ? "1" : "0");
+        params.set("custom_blocks_json", customBlocksJsonInput.value || "[]");
         return params;
       }
 
@@ -678,11 +996,19 @@ HTML = """
         checkbox.addEventListener("click", applyPreviewUpdate);
       });
 
+      addCustomBlockButton.addEventListener("click", () => {
+        if (customBlocks.length >= maxCustomBlocks) return;
+        customBlocks.push(normalizeCustomBlock({ print: true }, customBlocks.length));
+        renderCustomBlocks();
+        applyPreviewUpdate();
+      });
+
       previewImage.addEventListener("load", syncPreviewFrameToImage);
       window.addEventListener("resize", syncPreviewFrameToImage);
 
       sanitizeText1();
       sanitizeWeight();
+      renderCustomBlocks();
       applyPreviewUpdate();
     })();
   </script>
@@ -855,6 +1181,7 @@ def default_form_from_options(opts: Dict) -> Dict[str, str]:
         "sign_off": str(opts.get("sign_off_default_value") or ""),
         "weight": digits_only(opts.get("weight_default_value") or ""),
         "footer": str(opts.get("footer_default_value") or ""),
+        "custom_blocks_json": "[]",
         "copies": DEFAULT_FORM["copies"],
         "print_text2": DEFAULT_FORM["print_text2"],
         "print_text3": DEFAULT_FORM["print_text3"],
@@ -872,6 +1199,7 @@ def form_data_from_request(opts: Dict) -> Dict[str, str]:
         "sign_off": request.values.get("sign_off", defaults["sign_off"]),
         "weight": digits_only(request.values.get("weight", defaults["weight"]), defaults["weight"]),
         "footer": request.values.get("footer", defaults["footer"]),
+        "custom_blocks_json": request.values.get("custom_blocks_json", defaults["custom_blocks_json"]),
         "copies": request.values.get("copies", defaults["copies"]),
         "print_text2": normalize_form_checkbox(request.values.get("print_text2"), defaults["print_text2"]),
         "print_text3": normalize_form_checkbox(request.values.get("print_text3"), defaults["print_text3"]),
@@ -1082,6 +1410,21 @@ def get_optional_block_config(opts: Dict, name: str) -> Dict:
     }
 
 
+def get_custom_block_config(block: Dict) -> Dict:
+    return {
+        "label": str(block.get("label") or ""),
+        "default_value": str(block.get("value") or ""),
+        "alignment": normalize_alignment(block.get("alignment"), "center"),
+        "font_family": normalize_font_family(block.get("font_family"), "sans"),
+        "font_size_mm": normalize_float(block.get("font_size_mm"), CUSTOM_BLOCK_DEFAULT_FONT_SIZE_MM, 2.0, 30.0),
+        "bold": normalize_bool(block.get("bold"), False),
+        "italic": normalize_bool(block.get("italic"), False),
+        "underline": normalize_bool(block.get("underline"), False),
+        "max_lines": CUSTOM_BLOCK_MAX_LINES,
+        "gap_after_dots": mm_to_dots(CUSTOM_BLOCK_GAP_MM),
+    }
+
+
 def parse_sign_off_options(opts: Dict) -> List[str]:
     raw = str(opts.get("sign_off_options") or "")
     parts = [part.strip() for part in re.split(r"\n|,|;", raw)]
@@ -1092,6 +1435,43 @@ def parse_sign_off_options(opts: Dict) -> List[str]:
             seen.add(part.lower())
             names.append(part)
     return names
+
+
+def normalize_custom_block_entry(raw: object, idx: int = 0) -> Dict:
+    data = raw if isinstance(raw, dict) else {}
+    return {
+        "label": str(data.get("label") or f"Custom {idx + 1}").strip() or f"Custom {idx + 1}",
+        "value": str(data.get("value") or ""),
+        "print": normalize_bool(data.get("print"), True),
+        "alignment": normalize_alignment(data.get("alignment"), "center"),
+        "font_family": normalize_font_family(data.get("font_family"), "sans"),
+        "font_size_mm": normalize_float(data.get("font_size_mm"), CUSTOM_BLOCK_DEFAULT_FONT_SIZE_MM, 2.0, 30.0),
+        "bold": normalize_bool(data.get("bold"), False),
+        "italic": normalize_bool(data.get("italic"), False),
+        "underline": normalize_bool(data.get("underline"), False),
+    }
+
+
+def parse_custom_blocks(raw: object) -> List[Dict]:
+    if raw in (None, "", []):
+        return []
+    data = raw
+    if isinstance(raw, str):
+        try:
+            data = json.loads(raw)
+        except Exception:
+            LOGGER.warning("Failed to parse custom block JSON; ignoring value")
+            return []
+    if not isinstance(data, list):
+        return []
+    blocks: List[Dict] = []
+    for idx, item in enumerate(data[:CUSTOM_BLOCK_MAX]):
+        blocks.append(normalize_custom_block_entry(item, idx))
+    return blocks
+
+
+def custom_blocks_json_value(blocks: List[Dict]) -> str:
+    return json.dumps(blocks or [], ensure_ascii=False, separators=(",", ":"))
 
 
 def current_label_date_str() -> str:
@@ -1227,6 +1607,32 @@ def text_block_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont, line
     return (line_count * line_h) + (max(0, line_count - 1) * line_spacing)
 
 
+def render_custom_blocks_sequence(draw: ImageDraw.ImageDraw, current_y: int, box_left: int, box_width: int, custom_blocks: List[Dict]) -> int:
+    for block in custom_blocks or []:
+        if not normalize_bool(block.get("print"), True):
+            continue
+        block_value = str(block.get("value") or "").strip()
+        if not block_value:
+            continue
+        cfg = get_custom_block_config(block)
+        font, lines, resolved_font_size = fit_field_lines(draw, block_value, cfg, box_width)
+        line_spacing = max(4, resolved_font_size // 7)
+        current_y = draw_aligned_text_lines(
+            draw,
+            lines,
+            current_y,
+            box_left,
+            box_width,
+            font,
+            cfg["alignment"],
+            cfg["underline"],
+            fill=(0, 0, 0),
+            line_spacing=line_spacing,
+        )
+        current_y += cfg["gap_after_dots"]
+    return current_y
+
+
 def draw_background_for_preview(img: Image.Image, requested_w: int, requested_h: int, printable_left: int, printable_w: int) -> None:
     draw = ImageDraw.Draw(img)
     content_right = printable_left + printable_w
@@ -1239,7 +1645,7 @@ def draw_background_for_preview(img: Image.Image, requested_w: int, requested_h:
     draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=(205, 205, 205), width=2)
 
 
-def render_portrait_content(printable_w: int, canvas_h: int, text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, opts: Dict, preview: bool, print_toggles: Dict[str, bool]) -> Image.Image:
+def render_portrait_content(printable_w: int, canvas_h: int, text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, custom_blocks: List[Dict], opts: Dict, preview: bool, print_toggles: Dict[str, bool]) -> Image.Image:
     layout = effective_layout(opts)
     qr_payload = build_qr_payload(text1, text2, text3, opts)
     img = Image.new("RGB", (printable_w, canvas_h), color=(255, 255, 255))
@@ -1327,6 +1733,8 @@ def render_portrait_content(printable_w: int, canvas_h: int, text1: str, text2: 
         )
         current_y += weight_cfg["gap_after_dots"]
 
+    current_y = render_custom_blocks_sequence(draw, current_y, margin_x, text_width, custom_blocks)
+
     footer_text = compose_footer_text(footer)
     if footer_text and print_toggles.get("print_footer", True):
         footer_cfg = get_footer_config(opts)
@@ -1359,7 +1767,7 @@ def render_portrait_content(printable_w: int, canvas_h: int, text1: str, text2: 
     return img
 
 
-def render_rotated_content(printable_w: int, canvas_h: int, text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, opts: Dict, preview: bool, print_toggles: Dict[str, bool], rotation_degrees: int) -> Image.Image:
+def render_rotated_content(printable_w: int, canvas_h: int, text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, custom_blocks: List[Dict], opts: Dict, preview: bool, print_toggles: Dict[str, bool], rotation_degrees: int) -> Image.Image:
     layout = effective_layout(opts)
     qr_payload = build_qr_payload(text1, text2, text3, opts)
     logical_w = canvas_h
@@ -1454,6 +1862,8 @@ def render_rotated_content(printable_w: int, canvas_h: int, text1: str, text2: s
         )
         current_y += weight_cfg["gap_after_dots"]
 
+    current_y = render_custom_blocks_sequence(draw, current_y, text_left, text_width, custom_blocks)
+
     footer_text = compose_footer_text(footer)
     if footer_text and print_toggles.get("print_footer", True):
         footer_cfg = get_footer_config(opts)
@@ -1496,7 +1906,7 @@ def orient_preview_for_display(img: Image.Image, rotation_degrees: int) -> Image
     return img
 
 
-def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, opts: Dict, preview: bool, print_toggles: Dict[str, bool] | None = None) -> Image.Image:
+def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, custom_blocks: List[Dict], opts: Dict, preview: bool, print_toggles: Dict[str, bool] | None = None) -> Image.Image:
     layout = effective_layout(opts)
     requested_w = layout["requested_width_dots"]
     requested_h = layout["requested_height_dots"]
@@ -1505,9 +1915,9 @@ def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight
     print_toggles = print_toggles or {"print_text2": True, "print_text3": True, "print_weight": False, "print_footer": True}
 
     printable_image = (
-        render_portrait_content(printable_w, requested_h, text1, text2, text3, sign_off, weight, footer, opts, preview, print_toggles)
+        render_portrait_content(printable_w, requested_h, text1, text2, text3, sign_off, weight, footer, custom_blocks, opts, preview, print_toggles)
         if rotation_degrees == 0
-        else render_rotated_content(printable_w, requested_h, text1, text2, text3, sign_off, weight, footer, opts, preview, print_toggles, rotation_degrees)
+        else render_rotated_content(printable_w, requested_h, text1, text2, text3, sign_off, weight, footer, custom_blocks, opts, preview, print_toggles, rotation_degrees)
     )
 
     if not preview:
@@ -1523,11 +1933,11 @@ def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight
     return orient_preview_for_display(canvas, rotation_degrees)
 
 
-def build_zpl(text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, copies: int, opts: Dict, print_toggles: Dict[str, bool] | None = None) -> str:
+def build_zpl(text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, custom_blocks: List[Dict], copies: int, opts: Dict, print_toggles: Dict[str, bool] | None = None) -> str:
     layout = effective_layout(opts)
     pw = layout["effective_width_dots"]
     ll = layout["requested_height_dots"]
-    label_img = render_label_image(text1, text2, text3, sign_off, weight, footer, opts, preview=False, print_toggles=print_toggles).convert("1")
+    label_img = render_label_image(text1, text2, text3, sign_off, weight, footer, custom_blocks, opts, preview=False, print_toggles=print_toggles).convert("1")
     total_bytes, bytes_per_row, graphic_hex = image_to_gfa(label_img)
     return f"""^XA
 ^CI28
@@ -1550,6 +1960,8 @@ def send_to_printer(host: str, port: int, payload: str) -> None:
 def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) -> str:
     layout = effective_layout(opts)
     sign_off_names = parse_sign_off_options(opts)
+    custom_blocks = parse_custom_blocks(form.get("custom_blocks_json", "[]"))
+    custom_blocks_json = custom_blocks_json_value(custom_blocks)
     ui = get_ui_strings(opts.get("ui_language"))
     try:
         qr_preview = build_qr_payload(form.get("text1", ""), form.get("text2", ""), form.get("text3", ""), opts)
@@ -1581,6 +1993,28 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
         sign_off_default_value=opts["sign_off_default_value"],
         sign_off_options=sign_off_names,
         sign_off_options_display=", ".join(sign_off_names) if sign_off_names else ui["none"],
+        custom_blocks_json=custom_blocks_json,
+        custom_block_count_text=ui_text(opts, "custom_block_count_value", count=len(custom_blocks)),
+        custom_block_ui={
+            "label": ui["custom_block_label"],
+            "value": ui["custom_block_value"],
+            "print": ui["custom_block_print"],
+            "fontFamily": ui["custom_block_font_family"],
+            "fontSize": ui["custom_block_font_size"],
+            "alignment": ui["custom_block_alignment"],
+            "bold": ui["custom_block_bold"],
+            "italic": ui["custom_block_italic"],
+            "underline": ui["custom_block_underline"],
+            "remove": ui["custom_block_remove"],
+            "defaultLabel": ui["default_custom_block_label"],
+            "fontSans": ui["font_family_sans"],
+            "fontSerif": ui["font_family_serif"],
+            "fontMono": ui["font_family_mono"],
+            "alignmentLeft": ui["alignment_left"],
+            "alignmentCenter": ui["alignment_center"],
+            "alignmentRight": ui["alignment_right"],
+        },
+        custom_block_max=CUSTOM_BLOCK_MAX,
         intro_text=ui_text(opts, "intro_text", field1_label=opts["field1_label"], weight_label=opts["weight_label"]),
         sign_off_style_summary=option_style_summary(opts, "sign_off"),
         weight_label=opts["weight_label"],
@@ -1637,6 +2071,7 @@ def print_label():
         "sign_off": request.form.get("sign_off", defaults["sign_off"]).strip(),
         "weight": digits_only(request.form.get("weight", defaults["weight"]), defaults["weight"]),
         "footer": request.form.get("footer", defaults["footer"]).strip(),
+        "custom_blocks_json": request.form.get("custom_blocks_json", defaults["custom_blocks_json"]),
         "copies": request.form.get("copies", DEFAULT_FORM["copies"]).strip() or DEFAULT_FORM["copies"],
         "print_text2": normalize_form_checkbox(request.form.get("print_text2"), defaults["print_text2"]),
         "print_text3": normalize_form_checkbox(request.form.get("print_text3"), defaults["print_text3"]),
@@ -1655,16 +2090,19 @@ def print_label():
         weight = validate_optional_numeric(form["weight"], opts["weight_label"], opts["ui_language"])
         form["weight"] = weight
         footer = form["footer"]
+        custom_blocks = parse_custom_blocks(form.get("custom_blocks_json", "[]"))
+        form["custom_blocks_json"] = custom_blocks_json_value(custom_blocks)
         copies = max(1, min(50, int(form["copies"])))
         print_toggles = parse_print_toggles(form)
-        zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, copies, opts, print_toggles=print_toggles)
+        zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, custom_blocks, copies, opts, print_toggles=print_toggles)
         qr_payload = build_qr_payload(text1, text2, text3, opts)
         LOGGER.info(
-            "Print request received: copies=%s qr_payload=%r sign_off=%r weight=%r print_text2=%s print_text3=%s print_weight=%s print_footer=%s",
+            "Print request received: copies=%s qr_payload=%r sign_off=%r weight=%r custom_blocks=%s print_text2=%s print_text3=%s print_weight=%s print_footer=%s",
             copies,
             qr_payload,
             sign_off,
             weight,
+            len(custom_blocks),
             print_toggles["print_text2"],
             print_toggles["print_text3"],
             print_toggles["print_weight"],
@@ -1692,6 +2130,7 @@ def preview():
     sign_off = request.args.get("sign_off", defaults["sign_off"])
     weight = request.args.get("weight", defaults["weight"])
     footer = request.args.get("footer", defaults["footer"])
+    custom_blocks = parse_custom_blocks(request.args.get("custom_blocks_json", defaults["custom_blocks_json"]))
     try:
         text1 = validate_text1_numeric(raw_text1, opts["field1_label"], opts["ui_language"])
         copies = max(1, min(50, int(request.args.get("copies", DEFAULT_FORM["copies"]))))
@@ -1702,8 +2141,8 @@ def preview():
             "print_footer": request.args.get("print_footer", defaults["print_footer"]),
         })
         weight = validate_optional_numeric(weight, opts["weight_label"], opts["ui_language"])
-        zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, copies, opts, print_toggles=print_toggles)
-        LOGGER.info("Generated ZPL preview for copies=%s with toggles=%s", copies, print_toggles)
+        zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, custom_blocks, copies, opts, print_toggles=print_toggles)
+        LOGGER.info("Generated ZPL preview for copies=%s with toggles=%s and custom_blocks=%s", copies, print_toggles, len(custom_blocks))
         return Response(zpl, mimetype="text/plain; charset=utf-8")
     except Exception as exc:
         LOGGER.exception("ZPL preview failed")
@@ -1720,6 +2159,7 @@ def preview_png():
     sign_off = request.args.get("sign_off", defaults["sign_off"])
     weight = request.args.get("weight", defaults["weight"])
     footer = request.args.get("footer", defaults["footer"])
+    custom_blocks = parse_custom_blocks(request.args.get("custom_blocks_json", defaults["custom_blocks_json"]))
     try:
         text1 = validate_text1_numeric(raw_text1, opts["field1_label"], opts["ui_language"])
         print_toggles = parse_print_toggles({
@@ -1729,8 +2169,8 @@ def preview_png():
             "print_footer": request.args.get("print_footer", defaults["print_footer"]),
         })
         weight = validate_optional_numeric(weight, opts["weight_label"], opts["ui_language"])
-        LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r sign_off=%r weight=%r footer=%r toggles=%s", text1, text2, text3, sign_off, weight, footer, print_toggles)
-        img = render_label_image(text1, text2, text3, sign_off, weight, footer, opts, preview=True, print_toggles=print_toggles)
+        LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r sign_off=%r weight=%r footer=%r custom_blocks=%s toggles=%s", text1, text2, text3, sign_off, weight, footer, len(custom_blocks), print_toggles)
+        img = render_label_image(text1, text2, text3, sign_off, weight, footer, custom_blocks, opts, preview=True, print_toggles=print_toggles)
         bio = BytesIO()
         img.save(bio, format="PNG", dpi=(203, 203), optimize=True)
         bio.seek(0)
@@ -1751,6 +2191,7 @@ def api_print():
     sign_off = str(payload.get("sign_off", defaults["sign_off"])).strip()
     weight = digits_only(payload.get("weight", defaults["weight"]), defaults["weight"])
     footer = str(payload.get("footer", defaults["footer"])).strip()
+    custom_blocks = parse_custom_blocks(payload.get("custom_blocks", payload.get("custom_blocks_json", [])))
     copies = max(1, min(50, int(payload.get("copies", 1))))
     print_toggles = parse_print_toggles({
         "print_text2": normalize_form_checkbox(payload.get("print_text2"), "1"),
@@ -1761,8 +2202,8 @@ def api_print():
     try:
         text1 = validate_text1_numeric(raw_text1, opts["field1_label"], opts["ui_language"])
         weight = validate_optional_numeric(weight, opts["weight_label"], opts["ui_language"])
-        zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, copies, opts, print_toggles=print_toggles)
-        LOGGER.info("API print request received: copies=%s sign_off=%r weight=%r footer=%r toggles=%s", copies, sign_off, weight, footer, print_toggles)
+        zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, custom_blocks, copies, opts, print_toggles=print_toggles)
+        LOGGER.info("API print request received: copies=%s sign_off=%r weight=%r footer=%r custom_blocks=%s toggles=%s", copies, sign_off, weight, footer, len(custom_blocks), print_toggles)
         send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
         return jsonify({
             "ok": True,
@@ -1770,6 +2211,7 @@ def api_print():
             "copies": copies,
             "qr_payload": build_qr_payload(text1, text2, text3, opts),
             "print_toggles": print_toggles,
+            "custom_block_count": len(custom_blocks),
             "language": opts["ui_language"],
         })
     except ValueError as exc:
