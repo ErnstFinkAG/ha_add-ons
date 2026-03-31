@@ -2,11 +2,12 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.48
+## What changed in v0.1.49
 
-- logo-enabled fields now show per-logo checkboxes in the main value UI
-- logo selections now update the PNG preview correctly
-- fields with uploaded logos are treated as logo fields automatically, which also fixes older saved fields that had logo assets but no active logo checkbox state
+- logos from one logo field can now render side by side instead of only stacked
+- each uploaded logo now has an editable order number in the field settings
+- lower order numbers come first and appear further left
+- footer text is now placed underneath footer logos
 
 ## Profile and field management
 

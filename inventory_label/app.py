@@ -44,6 +44,7 @@ ASSET_ROOT_PATH = "/data/field_assets"
 LOGO_ASSET_PATH = os.path.join(ASSET_ROOT_PATH, "logos")
 DEFAULT_TEXT_BLOCK_MARGIN_MM = 8.0
 DEFAULT_LOGO_HEIGHT_MM = 20.0
+DEFAULT_LOGO_GAP_MM = 4.0
 FIELD_GAP_MM = 4.0
 FOOTER_GAP_MM = 3.0
 SUPPORTED_UI_LANGUAGES = {"en", "de"}
@@ -309,6 +310,8 @@ UI_STRINGS = {
         "existing_logos_label": "Existing logos",
         "no_logos_uploaded": "No logos uploaded for this field yet.",
         "default_logo_label": "Selected by default",
+        "logo_order_label": "Order",
+        "logo_order_help": "Lower numbers come first and are placed further left.",
         "remove_logo_label": "Remove",
         "logo_png_only": "Only PNG logo files are supported.",
         "logo_upload_invalid": "Logo upload failed: {error}",
@@ -406,6 +409,8 @@ UI_STRINGS = {
         "existing_logos_label": "Vorhandene Logos",
         "no_logos_uploaded": "Für dieses Feld sind noch keine Logos hochgeladen.",
         "default_logo_label": "Standardmäßig ausgewählt",
+        "logo_order_label": "Reihenfolge",
+        "logo_order_help": "Kleinere Zahlen kommen zuerst und werden weiter links platziert.",
         "remove_logo_label": "Entfernen",
         "logo_png_only": "Es werden nur PNG-Logodateien unterstützt.",
         "logo_upload_invalid": "Logo-Upload fehlgeschlagen: {error}",
@@ -480,7 +485,8 @@ HTML = """
     .logo-option-card { display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #0f172a; }
     .logo-option-card img, .logo-thumb { max-width: 100%; max-height: 70px; object-fit: contain; background: white; border-radius: 8px; padding: 4px; box-sizing: border-box; }
     .logo-manager { display: grid; gap: 10px; }
-    .logo-manager-item { display: grid; grid-template-columns: 90px 1fr auto; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #111827; }
+    .logo-manager-item { display: grid; grid-template-columns: 90px 1fr 120px auto; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #111827; }
+    .logo-order-input { margin: 0; }
     .two-col { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(360px, 0.9fr); gap: 20px; }
     .editor { background: #111827; border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
     .editor .btns { margin-top: 4px; }
@@ -572,7 +578,7 @@ HTML = """
               <label class="logo-option-card">
                 <input type="checkbox" name="field_{{ field.id }}" value="{{ option.id }}" {% if option.selected %}checked{% endif %}>
                 <img src="{{ option.asset_url }}" alt="{{ option.name }}">
-                <span class="muted small">{{ option.name }}</span>
+                <span class="muted small">{{ option.name }}{% if option.sort_order %} · #{{ option.sort_order }}{% endif %}</span>
               </label>
               {% else %}
               <div class="muted small">{{ ui.no_logos_uploaded }}</div>
@@ -683,7 +689,7 @@ HTML = """
             {% for option in field.logo_options %}
             <div class="logo-option-card">
               <img src="{{ option.asset_url }}" alt="{{ option.name }}">
-              <span class="muted small">{{ option.name }}</span>
+              <span class="muted small">{{ option.name }}{% if option.sort_order %} · #{{ option.sort_order }}{% endif %}</span>
             </div>
             {% endfor %}
           </div>
@@ -765,6 +771,10 @@ HTML = """
                   <span>
                     <strong>{{ option.name }}</strong><br>
                     <span class="checkline"><input type="checkbox" name="default_logo_ids" value="{{ option.id }}" {% if option.selected_default %}checked{% endif %}> {{ ui.default_logo_label }}</span>
+                  </span>
+                  <span>
+                    <label for="logo_order_{{ option.id }}">{{ ui.logo_order_label }}</label>
+                    <input class="logo-order-input" id="logo_order_{{ option.id }}" name="logo_order_{{ option.id }}" type="number" min="1" step="1" value="{{ option.sort_order or loop.index }}">
                   </span>
                   <span class="checkline"><input type="checkbox" name="remove_logo_ids" value="{{ option.id }}"> {{ ui.remove_logo_label }}</span>
                 </label>
@@ -856,6 +866,7 @@ HTML = """
       const portraitHeightMm = {{ preview_display_height_mm|tojson }};
       const noLogosUploadedText = {{ ui.no_logos_uploaded|tojson }};
       const defaultLogoLabelText = {{ ui.default_logo_label|tojson }};
+      const logoOrderLabelText = {{ ui.logo_order_label|tojson }};
       const removeLogoLabelText = {{ ui.remove_logo_label|tojson }};
 
       function sanitizeNumericInput(input) {
@@ -955,12 +966,16 @@ HTML = """
           container.innerHTML = `<div class="muted small">${noLogosUploadedText}</div>`;
           return;
         }
-        container.innerHTML = items.map((logo) => `
+        container.innerHTML = items.map((logo, index) => `
           <label class="logo-manager-item">
             <img class="logo-thumb" src="${logo.asset_url || ''}" alt="${logo.name || ''}">
             <span>
               <strong>${logo.name || ''}</strong><br>
               <span class="checkline"><input type="checkbox" name="default_logo_ids" value="${logo.id || ''}" ${logo.selected_default ? 'checked' : ''}> ${defaultLogoLabelText}</span>
+            </span>
+            <span>
+              <label for="logo_order_${logo.id || ''}">${logoOrderLabelText}</label>
+              <input class="logo-order-input" id="logo_order_${logo.id || ''}" name="logo_order_${logo.id || ''}" type="number" min="1" step="1" value="${logo.sort_order || (index + 1)}">
             </span>
             <span class="checkline"><input type="checkbox" name="remove_logo_ids" value="${logo.id || ''}"> ${removeLogoLabelText}</span>
           </label>
@@ -1474,7 +1489,7 @@ def build_field_forms(profile: Dict, source: Dict | None = None) -> List[Dict]:
                 has_submission = isinstance(source, dict) and (f"{value_key}__present" in source or value_key in source)
                 selected_values = normalize_multi_value_ids(source.get(value_key, [])) if has_submission else normalize_multi_value_ids(field.get("default_value", []))
             selected_lookup = set(selected_values)
-            logo_options = [{**option, "selected": option.get("id") in selected_lookup, "asset_url": logo_asset_url(option.get("storage_name"))} for option in field.get("logo_options", [])]
+            logo_options = [{**option, "selected": option.get("id") in selected_lookup, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))]
             forms.append({**field, "supports_logos": True, "value": selected_values, "selected_logo_ids": selected_values, "logo_options": logo_options, "print_enabled": print_enabled})
             continue
 
@@ -1571,11 +1586,14 @@ def normalize_logo_options(value: object) -> List[Dict[str, str]]:
                 option_id = sanitize_id(f"{option_id_base}_{counter}", f"logo_{idx}_{counter}")
                 counter += 1
             seen.add(option_id)
+            sort_order = normalize_int(item.get("sort_order", item.get("order", idx)), idx, 1, 9999)
             result.append({
                 "id": option_id,
                 "name": normalize_string(item.get("name"), os.path.splitext(storage_name)[0]),
                 "storage_name": storage_name,
+                "sort_order": sort_order,
             })
+    result.sort(key=lambda option: (normalize_int(option.get("sort_order"), 9999, 1, 9999), str(option.get("name") or "").lower(), str(option.get("id") or "")))
     return result
 
 
@@ -1695,27 +1713,27 @@ def apply_field_text_transform(field: Dict) -> str:
 
 def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     body: List[Dict] = []
-    footer: List[Dict] = []
+    footer_logo_rows: List[Dict] = []
+    footer_texts: List[Dict] = []
     for field in field_forms:
         if not field.get("print_enabled"):
             continue
         if field_supports_logos(field):
             selected_lookup = set(normalize_multi_value_ids(field.get("value", [])))
-            for option in field.get("logo_options", []):
-                if option.get("id") not in selected_lookup:
-                    continue
-                block = {
-                    "type": "logo",
-                    "alignment": field["alignment"],
-                    "storage_name": option.get("storage_name", ""),
-                    "value": option.get("name", ""),
-                    "logo_height_mm": field.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
-                    "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
-                }
-                if field.get("position") == "footer":
-                    footer.append(block)
-                else:
-                    body.append(block)
+            selected_options = [option for option in normalize_logo_options(field.get("logo_options", [])) if option.get("id") in selected_lookup]
+            if not selected_options:
+                continue
+            block = {
+                "type": "logo_row",
+                "alignment": field["alignment"],
+                "logos": selected_options,
+                "logo_height_mm": field.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
+                "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
+            }
+            if field.get("position") == "footer":
+                footer_logo_rows.append(block)
+            else:
+                body.append(block)
             continue
         text = apply_field_text_transform(field)
         if not text:
@@ -1733,10 +1751,10 @@ def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
             "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
         }
         if field.get("position") == "footer":
-            footer.append(block)
+            footer_texts.append(block)
         else:
             body.append(block)
-    return body, footer
+    return body, (footer_logo_rows + footer_texts)
 
 
 def mm_to_dots(mm_value: float) -> int:
@@ -1933,6 +1951,29 @@ def fit_logo_image(block: Dict, max_width: int) -> Image.Image:
     return logo.resize((width, height), Image.Resampling.LANCZOS)
 
 
+def fit_logo_row_images(block: Dict, max_width: int) -> List[Image.Image]:
+    logos = []
+    for option in normalize_logo_options(block.get("logos", [])):
+        storage_name = option.get("storage_name")
+        if not storage_name:
+            continue
+        logo_block = {"storage_name": storage_name, "logo_height_mm": block.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM)}
+        logos.append(fit_logo_image(logo_block, max_width))
+    if not logos:
+        return []
+    gap = mm_to_dots(DEFAULT_LOGO_GAP_MM)
+    total_width = sum(logo.width for logo in logos) + (gap * max(0, len(logos) - 1))
+    if total_width <= max_width:
+        return logos
+    scale = max_width / max(1, total_width)
+    resized = []
+    for logo in logos:
+        width = max(1, int(round(logo.width * scale)))
+        height = max(1, int(round(logo.height * scale)))
+        resized.append(logo.resize((width, height), Image.Resampling.LANCZOS))
+    return resized
+
+
 def draw_aligned_logo(img: Image.Image, logo: Image.Image, y: int, box_left: int, box_width: int, alignment: str) -> int:
     logo_w, logo_h = logo.size
     if alignment == "left":
@@ -1947,10 +1988,36 @@ def draw_aligned_logo(img: Image.Image, logo: Image.Image, y: int, box_left: int
     return y + logo_h
 
 
+def draw_aligned_logo_row(img: Image.Image, logos: List[Image.Image], y: int, box_left: int, box_width: int, alignment: str) -> int:
+    if not logos:
+        return y
+    gap = mm_to_dots(DEFAULT_LOGO_GAP_MM)
+    total_width = sum(logo.width for logo in logos) + (gap * max(0, len(logos) - 1))
+    max_height = max(logo.height for logo in logos)
+    if alignment == "left":
+        x = box_left
+    elif alignment == "right":
+        x = box_left + box_width - total_width
+    else:
+        x = box_left + (box_width - total_width) / 2
+    current_x = int(round(x))
+    top_y = int(round(y))
+    for idx, logo in enumerate(logos):
+        logo_y = top_y + max_height - logo.height
+        img.alpha_composite(logo, (current_x, int(round(logo_y))))
+        current_x += logo.width
+        if idx < len(logos) - 1:
+            current_x += gap
+    return top_y + max_height
+
+
 def draw_body_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, start_y: int, box_left: int, box_width: int, body_blocks: List[Dict]) -> int:
     current_y = start_y
     for block in body_blocks:
-        if block.get("type") == "logo":
+        if block.get("type") == "logo_row":
+            logos = fit_logo_row_images(block, box_width)
+            current_y = draw_aligned_logo_row(img, logos, current_y, box_left, box_width, block["alignment"])
+        elif block.get("type") == "logo":
             logo = fit_logo_image(block, box_width)
             current_y = draw_aligned_logo(img, logo, current_y, box_left, box_width, block["alignment"])
         else:
@@ -1962,6 +2029,9 @@ def draw_body_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, start_y: int, 
 
 
 def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int) -> Tuple[int, object, object, int]:
+    if block.get("type") == "logo_row":
+        logos = fit_logo_row_images(block, box_width)
+        return (max((logo.height for logo in logos), default=0), logos, None, 0)
     if block.get("type") == "logo":
         logo = fit_logo_image(block, box_width)
         return logo.height, logo, None, 0
@@ -1978,7 +2048,9 @@ def draw_footer_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, bottom_y: in
         current_bottom -= max(0, int(round(float(block.get("footer_bottom_margin_mm", 0.0)) * DOTS_PER_MM)))
         total_h, payload, lines, spacing = block_height(draw, block, box_width)
         top_y = current_bottom - total_h
-        if block.get("type") == "logo":
+        if block.get("type") == "logo_row":
+            draw_aligned_logo_row(img, payload, top_y, box_left, box_width, block["alignment"])
+        elif block.get("type") == "logo":
             draw_aligned_logo(img, payload, top_y, box_left, box_width, block["alignment"])
         else:
             draw_aligned_lines(draw, lines, top_y, box_left, box_width, payload, block["alignment"], block["underline"], spacing)
@@ -2274,6 +2346,7 @@ def save_uploaded_logo_options(files: List[object], language: str) -> Tuple[List
             'id': sanitize_id(os.path.splitext(filename)[0], f'logo_{idx}'),
             'name': os.path.splitext(filename)[0] or f'Logo {idx}',
             'storage_name': storage_name,
+            'sort_order': idx,
         }
         uploaded.append(option)
         created.append(option)
@@ -2285,9 +2358,21 @@ def resolve_logo_options_for_save(profile: Dict, source: object, files: object, 
     existing_field = next((field for field in profile.get('fields', []) if field.get('id') == original_field_id), None)
     existing_logo_options = normalize_logo_options(existing_field.get('logo_options', [])) if existing_field else []
     remove_ids = set(normalize_multi_value_ids(getattr(source, 'getlist', lambda *_: [])('remove_logo_ids')))
-    kept = [option for option in existing_logo_options if option.get('id') not in remove_ids]
+    kept = [dict(option) for option in existing_logo_options if option.get('id') not in remove_ids]
     uploaded, created = save_uploaded_logo_options(getattr(files, 'getlist', lambda *_: [])('logo_files'), language)
-    return normalize_logo_options(kept + uploaded), created
+    max_existing_order = max((normalize_int(option.get('sort_order'), 0, 0, 9999) for option in kept), default=0)
+    normalized_uploaded = []
+    for idx, option in enumerate(uploaded, start=1):
+        normalized_uploaded.append({**option, 'sort_order': max_existing_order + idx})
+    merged = kept + normalized_uploaded
+    for idx, option in enumerate(merged, start=1):
+        option_id = option.get('id')
+        requested_order = getattr(source, 'get', lambda *_: None)(f'logo_order_{option_id}') if option_id else None
+        option['sort_order'] = normalize_int(requested_order, normalize_int(option.get('sort_order'), idx, 1, 9999), 1, 9999)
+    merged = normalize_logo_options(merged)
+    created_ids = {option.get('id') for option in normalized_uploaded}
+    created_with_order = [option for option in merged if option.get('id') in created_ids]
+    return merged, created_with_order
 
 
 def save_profile_field(profile_id: str, original_field_id: str, field: Dict, profile_name: str, language: str) -> None:
@@ -2436,7 +2521,7 @@ def api_field_forms_from_payload(profile: Dict, payload: Dict) -> List[Dict]:
             else:
                 current["value"] = normalize_multi_value_ids(field.get("default_value", []))
             selected_lookup = set(current["value"])
-            current["logo_options"] = [{**option, "selected": option.get("id") in selected_lookup} for option in field.get("logo_options", [])]
+            current["logo_options"] = [{**option, "selected": option.get("id") in selected_lookup} for option in normalize_logo_options(field.get("logo_options", []))]
         else:
             if field["id"] in values:
                 current["value"] = str(values[field["id"]])
