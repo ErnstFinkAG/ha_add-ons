@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from flask import Flask, Response, jsonify, render_template_string, request, send_file
 import qrcode
+import yaml
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -184,6 +185,7 @@ DEFAULT_OPTIONS = {
     "qr_quiet_zone_modules": 3,
     "qr_error_correction": "M",
     "print_rotation_degrees": 0,
+    "label_profiles_yaml": "",
 }
 
 QR_ERROR_CORRECTION_MAP = {
@@ -263,6 +265,11 @@ UI_STRINGS = {
         "alignment_left": "Left",
         "alignment_center": "Center",
         "alignment_right": "Right",
+        "profile_select": "Label profile",
+        "profile_active": "Active profile",
+        "profile_none": "Default settings",
+        "profile_yaml_label": "Config-side label profiles",
+        "profile_yaml_note": "Because the add-on config tab does not provide a dynamic repeatable settings-group editor here, multiple full label templates are defined in one YAML field and selected in the web UI.",
     },
     "de": {
         "lang": "de",
@@ -333,6 +340,11 @@ UI_STRINGS = {
         "alignment_left": "Links",
         "alignment_center": "Zentriert",
         "alignment_right": "Rechts",
+        "profile_select": "Etikettenprofil",
+        "profile_active": "Aktives Profil",
+        "profile_none": "Standardkonfiguration",
+        "profile_yaml_label": "Etikettenprofile aus der Konfiguration",
+        "profile_yaml_note": "Da die Add-on-Konfigurationsoberfläche hier keine dynamischen wiederholbaren Einstellungsgruppen bereitstellt, werden mehrere vollständige Etikettenvorlagen in einem YAML-Feld definiert und in der Weboberfläche ausgewählt.",
     },
 }
 
@@ -575,6 +587,17 @@ HTML = """
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
       {% endif %}
       <form id="label-form" method="post" action="{{ ingress_base }}/print">
+        {% if label_profiles %}
+        <label for="profile_id">{{ ui.profile_select }}</label>
+        <select id="profile_id" name="profile_id">
+          {% for profile in label_profiles %}
+            <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
+          {% endfor %}
+        </select>
+        {% else %}
+        <input id="profile_id" name="profile_id" type="hidden" value="{{ active_profile_id }}">
+        {% endif %}
+
         <label for="text1">{{ field1_label }}</label>
         <input id="text1" name="text1" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" required value="{{ form.text1 }}">
 
@@ -623,8 +646,8 @@ HTML = """
 
         <div class="btns">
           <button type="submit">{{ ui.print_label_button }}</button>
-          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}&custom_blocks_json={{ custom_blocks_json|urlencode }}">{{ ui.preview_zpl }}</a>
-          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}&custom_blocks_json={{ custom_blocks_json|urlencode }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
+          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}&custom_blocks_json={{ custom_blocks_json|urlencode }}&profile_id={{ active_profile_id|urlencode }}">{{ ui.preview_zpl }}</a>
+          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}&custom_blocks_json={{ custom_blocks_json|urlencode }}&profile_id={{ active_profile_id|urlencode }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
         </div>
       </form>
     </div>
@@ -634,7 +657,7 @@ HTML = """
       <div class="preview-wrap">
         <div class="preview-stage">
           <div class="preview-frame">
-            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}&custom_blocks_json={{ custom_blocks_json|urlencode }}" alt="{{ ui.preview_alt }}">
+            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}&custom_blocks_json={{ custom_blocks_json|urlencode }}&profile_id={{ active_profile_id|urlencode }}" alt="{{ ui.preview_alt }}">
           </div>
         </div>
       </div>
@@ -646,6 +669,8 @@ HTML = """
     <div class="card">
       <h2>{{ ui.configured_label_mapping }}</h2>
       <ul class="config-list">
+        <li><strong>{{ ui.profile_active }}:</strong> <code>{{ active_profile_name or ui.profile_none }}</code></li>
+        {% if label_profiles %}<li><strong>{{ ui.profile_yaml_label }}:</strong> <code>{{ label_profiles|length }}</code> · {{ ui.profile_yaml_note }}</li>{% endif %}
         <li><strong>{{ ui.field1_label_meta }}:</strong> <code>{{ field1_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ field1_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ field1_style_summary }}</code></li>
         <li><strong>{{ ui.field2_label_meta }}:</strong> <code>{{ field2_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ field2_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ field2_style_summary }}</code></li>
         <li><strong>{{ ui.field3_label_meta }}:</strong> <code>{{ field3_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ field3_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ field3_style_summary }}</code></li>
@@ -682,6 +707,7 @@ HTML = """
   <script>
     (function () {
       const ingressBase = {{ ingress_base|tojson }};
+      const profileSelect = document.getElementById("profile_id");
       const text1 = document.getElementById("text1");
       const text2 = document.getElementById("text2");
       const text3 = document.getElementById("text3");
@@ -918,6 +944,7 @@ HTML = """
         params.set("print_weight", printWeight.checked ? "1" : "0");
         params.set("print_footer", printFooter.checked ? "1" : "0");
         params.set("custom_blocks_json", customBlocksJsonInput.value || "[]");
+        if (profileSelect && profileSelect.value) params.set("profile_id", profileSelect.value);
         return params;
       }
 
@@ -961,6 +988,14 @@ HTML = """
         const digits = (text1.value || "").replace(/[^0-9]+/g, "");
         if (digits !== text1.value) text1.value = digits;
       };
+
+      if (profileSelect && profileSelect.tagName === "SELECT") {
+        profileSelect.addEventListener("change", () => {
+          const url = new URL(`${ingressBase}/`, window.location.origin);
+          if (profileSelect.value) url.searchParams.set("profile_id", profileSelect.value);
+          window.location.href = url.toString();
+        });
+      }
 
       text1.addEventListener("input", () => {
         sanitizeText1();
@@ -1170,11 +1205,75 @@ def load_options() -> Dict:
     options["weight_bold"] = normalize_bool(options.get("weight_bold"), DEFAULT_OPTIONS["weight_bold"])
     options["weight_italic"] = normalize_bool(options.get("weight_italic"), DEFAULT_OPTIONS["weight_italic"])
     options["weight_underline"] = normalize_bool(options.get("weight_underline"), DEFAULT_OPTIONS["weight_underline"])
+    options["label_profiles_yaml"] = str(options.get("label_profiles_yaml") or DEFAULT_OPTIONS.get("label_profiles_yaml", ""))
     return options
+
+
+
+
+def parse_label_profiles(raw: object) -> List[Dict]:
+    source = str(raw or "").strip()
+    if not source:
+        return []
+    try:
+        data = yaml.safe_load(source)
+    except Exception as exc:
+        LOGGER.warning("Failed to parse label_profiles_yaml: %s", exc)
+        return []
+    if isinstance(data, dict):
+        for key in ("labels", "label_profiles", "profiles"):
+            if isinstance(data.get(key), list):
+                data = data[key]
+                break
+        else:
+            data = [data]
+    if not isinstance(data, list):
+        return []
+    allowed = set(DEFAULT_OPTIONS) | {"default_print_text2", "default_print_text3", "default_print_weight", "default_print_footer"}
+    profiles: List[Dict] = []
+    for idx, item in enumerate(data, start=1):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("label") or f"Label {idx}").strip() or f"Label {idx}"
+        raw_id = str(item.get("id") or name).strip().lower()
+        profile_id = re.sub(r"[^a-z0-9_-]+", "-", raw_id).strip("-") or f"label-{idx}"
+        overrides = {key: value for key, value in item.items() if key in allowed}
+        profiles.append({"id": profile_id, "name": name, "options": overrides})
+    return profiles
+
+
+def apply_profile_overrides(opts: Dict, profile: Dict | None) -> Dict:
+    merged = dict(opts)
+    if not profile:
+        merged["active_profile_id"] = ""
+        merged["active_profile_name"] = ""
+        return merged
+    for key, value in profile.get("options", {}).items():
+        merged[key] = value
+    merged["active_profile_id"] = profile.get("id", "")
+    merged["active_profile_name"] = profile.get("name", "")
+    return merged
+
+
+def load_runtime_options(profile_id: str | None = None) -> Dict:
+    base_opts = load_options()
+    profiles = parse_label_profiles(base_opts.get("label_profiles_yaml", ""))
+    selected_id = profile_id
+    if selected_id is None:
+        selected_id = request.values.get("profile_id") or request.args.get("profile_id") or request.form.get("profile_id")
+    active_profile = None
+    if selected_id:
+        active_profile = next((profile for profile in profiles if profile["id"] == selected_id), None)
+    if active_profile is None and profiles:
+        active_profile = profiles[0]
+    opts = apply_profile_overrides(base_opts, active_profile)
+    opts["label_profiles"] = profiles
+    return opts
 
 
 def default_form_from_options(opts: Dict) -> Dict[str, str]:
     return {
+        "profile_id": str(opts.get("active_profile_id") or ""),
         "text1": digits_only(opts.get("field1_default_value") or ""),
         "text2": str(opts.get("field2_default_value") or ""),
         "text3": str(opts.get("field3_default_value") or ""),
@@ -1183,16 +1282,17 @@ def default_form_from_options(opts: Dict) -> Dict[str, str]:
         "footer": str(opts.get("footer_default_value") or ""),
         "custom_blocks_json": "[]",
         "copies": DEFAULT_FORM["copies"],
-        "print_text2": DEFAULT_FORM["print_text2"],
-        "print_text3": DEFAULT_FORM["print_text3"],
-        "print_weight": DEFAULT_FORM["print_weight"],
-        "print_footer": DEFAULT_FORM["print_footer"],
+        "print_text2": normalize_form_checkbox(opts.get("default_print_text2"), DEFAULT_FORM["print_text2"]),
+        "print_text3": normalize_form_checkbox(opts.get("default_print_text3"), DEFAULT_FORM["print_text3"]),
+        "print_weight": normalize_form_checkbox(opts.get("default_print_weight"), DEFAULT_FORM["print_weight"]),
+        "print_footer": normalize_form_checkbox(opts.get("default_print_footer"), DEFAULT_FORM["print_footer"]),
     }
 
 
 def form_data_from_request(opts: Dict) -> Dict[str, str]:
     defaults = default_form_from_options(opts)
     return {
+        "profile_id": request.values.get("profile_id", defaults["profile_id"]),
         "text1": digits_only(request.values.get("text1", defaults["text1"]), defaults["text1"]),
         "text2": request.values.get("text2", defaults["text2"]),
         "text3": request.values.get("text3", defaults["text3"]),
@@ -2039,6 +2139,9 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
         footer_bottom_margin_mm=opts["footer_bottom_margin_mm"],
         print_rotation_degrees=opts["print_rotation_degrees"],
         ingress_base=ingress_base_path(),
+        label_profiles=opts.get("label_profiles", []),
+        active_profile_id=opts.get("active_profile_id", ""),
+        active_profile_name=opts.get("active_profile_name", ""),
     )
 
 
@@ -2054,7 +2157,7 @@ def restrict_ingress():
 
 @APP.route("/", methods=["GET"])
 def index():
-    opts = load_options()
+    opts = load_runtime_options()
     form = form_data_from_request(opts)
     LOGGER.info("Opened UI for printer %s:%s", opts["printer_host"], opts["printer_port"])
     return render_page(form, opts, result=None)
@@ -2062,9 +2165,10 @@ def index():
 
 @APP.route("/print", methods=["POST"])
 def print_label():
-    opts = load_options()
+    opts = load_runtime_options()
     defaults = default_form_from_options(opts)
     form = {
+        "profile_id": request.form.get("profile_id", defaults["profile_id"]),
         "text1": digits_only(request.form.get("text1", defaults["text1"]), defaults["text1"]),
         "text2": request.form.get("text2", defaults["text2"]).strip(),
         "text3": request.form.get("text3", defaults["text3"]).strip(),
@@ -2122,7 +2226,7 @@ def print_label():
 
 @APP.route("/preview", methods=["GET"])
 def preview():
-    opts = load_options()
+    opts = load_runtime_options()
     defaults = default_form_from_options(opts)
     raw_text1 = request.args.get("text1", defaults["text1"])
     text2 = request.args.get("text2", defaults["text2"])
@@ -2151,7 +2255,7 @@ def preview():
 
 @APP.route("/preview.png", methods=["GET"])
 def preview_png():
-    opts = load_options()
+    opts = load_runtime_options()
     defaults = default_form_from_options(opts)
     raw_text1 = request.args.get("text1", defaults["text1"])
     text2 = request.args.get("text2", defaults["text2"])
@@ -2182,9 +2286,9 @@ def preview_png():
 
 @APP.route("/api/print", methods=["POST"])
 def api_print():
-    opts = load_options()
-    defaults = default_form_from_options(opts)
     payload = request.get_json(force=True, silent=False) or {}
+    opts = load_runtime_options(str(payload.get("profile_id") or "") or None)
+    defaults = default_form_from_options(opts)
     raw_text1 = payload.get("text1", defaults["text1"])
     text2 = str(payload.get("text2", defaults["text2"])).strip()
     text3 = str(payload.get("text3", defaults["text3"])).strip()
@@ -2213,6 +2317,7 @@ def api_print():
             "print_toggles": print_toggles,
             "custom_block_count": len(custom_blocks),
             "language": opts["ui_language"],
+            "profile_id": opts.get("active_profile_id", ""),
         })
     except ValueError as exc:
         LOGGER.info("API print rejected: %s", exc)

@@ -9,7 +9,8 @@ RUN apk add --no-cache \
     flask==3.1.0 \
     waitress==3.0.2 \
     qrcode==8.2 \
-    pillow==11.1.0
+    pillow==11.1.0 \
+    pyyaml==6.0.2
 
 WORKDIR /app
 COPY app.py /app/app.py

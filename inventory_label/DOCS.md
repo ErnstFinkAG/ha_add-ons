@@ -124,7 +124,61 @@ footer_underline: false
 qr_value_template: "{text1 - text2}"
 qr_quiet_zone_modules: 3
 qr_error_correction: M
+label_profiles_yaml: ""
 ```
+
+## Config-defined label profiles
+
+The add-on now supports multiple full label profiles in one config-side YAML field: `label_profiles_yaml`.
+
+Each profile is a self-contained settings group and can override any of the normal flat options, for example:
+
+- labels
+- default values
+- QR template and QR settings
+- rotation
+- font sizes and styles
+- default print toggles for field 2, field 3, weight, and footer
+
+The flat top-level options still act as the base/default profile. When `label_profiles_yaml` is filled, the web UI shows a **Label profile** dropdown. Selecting a profile applies that profile's settings to the current label.
+
+Example:
+
+```yaml
+label_profiles_yaml: |
+  - id: standard
+    name: Standard
+    field1_label: Projektnummer
+    field2_label: Projektname
+    field3_label: Element
+    field1_default_value: "250001"
+    field2_default_value: EFH Huggentobbler Biel
+    field3_default_value: DE1
+    qr_value_template: "{text1 - text2}"
+    print_rotation_degrees: 0
+    default_print_text2: true
+    default_print_text3: true
+    default_print_weight: false
+    default_print_footer: true
+
+  - id: rotated
+    name: Rotated warehouse label
+    field1_label: Projektnummer
+    field2_label: Projektname
+    field3_label: Element
+    weight_label: Gewicht (kg)
+    print_rotation_degrees: 90
+    qr_value_template: "{text1 - text2}"
+    field1_font_size_mm: 16
+    field2_font_size_mm: 11
+    field3_font_size_mm: 16
+    default_print_text2: false
+    default_print_text3: true
+    default_print_weight: true
+    default_print_footer: true
+```
+
+Current limitation: Home Assistant's add-on config tab does not provide a dynamic repeatable settings-group editor in this add-on format, so multiple profiles are stored in a single YAML field instead of separate expandable config-tab groups.
 
 ## Language setting
 
