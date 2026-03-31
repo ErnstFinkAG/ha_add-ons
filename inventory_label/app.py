@@ -474,6 +474,11 @@ HTML = """
     .preview-frame { width: {{ preview_display_width_mm }}mm; height: {{ preview_display_height_mm }}mm; flex: 0 0 auto; max-width: none; background: var(--label-bg); border: 1px solid var(--label-edge); box-shadow: 0 10px 30px rgba(0,0,0,0.28); }
     .preview-frame img { display: block; width: 100%; height: 100%; object-fit: contain; background: white; }
     .preview-meta { margin-top: 12px; font-size: 0.95rem; color: var(--muted); }
+    .preview-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-top: 14px; }
+    .preview-actions .btns { margin: 0; }
+    .copies-inline { width: 120px; }
+    .copies-inline label { margin-bottom: 6px; }
+    .copies-inline input { margin-bottom: 0; }
     .config-list { margin: 0; padding-left: 18px; color: var(--muted); }
     .config-list li + li { margin-top: 8px; }
     .field-grid { display: grid; gap: 14px; }
@@ -594,8 +599,16 @@ HTML = """
               </div>
             </div>
             <div class="preview-meta">{{ ui.preview_meta }}</div>
-            <div class="btns" style="margin-top: 14px;">
-              <button type="submit">{{ ui.print_label_button }}</button>
+            <div class="preview-actions">
+              <div class="copies-inline">
+                <label for="copies">{{ ui.copies }}</label>
+                <input id="copies" name="copies" type="number" min="1" max="50" value="{{ form.copies }}" required>
+              </div>
+              <div class="btns">
+                <button type="submit">{{ ui.print_label_button }}</button>
+                <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?{{ preview_query }}">{{ ui.preview_zpl }}</a>
+                <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?{{ preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
+              </div>
             </div>
           </div>
         </div>
@@ -618,19 +631,8 @@ HTML = """
               </select>
             </div>
             <div>
-              <label for="copies">{{ ui.copies }}</label>
-              <input id="copies" name="copies" type="number" min="1" max="50" value="{{ form.copies }}" required>
-            </div>
-          </div>
-
-          <div class="row-compact">
-            <div>
               <label>{{ ui.configured_printer }}</label>
               <input value="{{ printer_target }}" disabled>
-            </div>
-            <div>
-              <label>{{ ui.profile_settings_source }}</label>
-              <input value="{{ active_profile_name or ui.profile_none }}" disabled>
             </div>
           </div>
 
@@ -653,11 +655,6 @@ HTML = """
           <p class="muted small">{{ ui.qr_field_empty }}</p>
           {% endif %}
 
-          <div class="btns">
-            <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?{{ preview_query }}">{{ ui.preview_zpl }}</a>
-            <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?{{ preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
-          </div>
-
           <h2 class="compact-section-title">{{ ui.configured_label_mapping }}</h2>
           <ul class="config-list">
             <li><strong>{{ ui.profile_active }}:</strong> <code>{{ active_profile_name or ui.profile_none }}</code></li>
@@ -677,8 +674,13 @@ HTML = """
     </div>
 
     <div class="card">
-      <h2>{{ ui.field_manager_heading }}</h2>
-      <p class="muted">{{ ui.field_manager_intro }}</p>
+      <div class="headline-row">
+        <div>
+          <h2>{{ ui.field_manager_heading }}</h2>
+          <p class="muted">{{ ui.field_manager_intro }}</p>
+        </div>
+        <span class="tag">{{ ui.profile_active }}: {{ active_profile_name or ui.profile_none }}</span>
+      </div>
 
       <div class="field-grid">
         {% for field in active_profile_fields %}
@@ -708,7 +710,6 @@ HTML = """
             {% for option in field.logo_options %}
             <div class="logo-option-card">
               <img src="{{ option.asset_url }}" alt="{{ option.name }}">
-              <span class="muted small">{{ option.name }}{% if option.sort_order %} · #{{ option.sort_order }}{% endif %}</span>
             </div>
             {% endfor %}
           </div>
