@@ -289,6 +289,10 @@ UI_STRINGS = {
         "number_only_label": "Numbers only",
         "suffix_label": "Suffix",
         "append_current_date_label": "Append current date",
+        "always_use_for_qr_label": "Always use for QR code",
+        "value_options_label": "Value list",
+        "value_options_help": "Optional suggestions, one value per line. Users can still enter any text.",
+        "value_options_summary": "Choices",
         "max_lines_label": "Max lines",
         "field_summary_default": "Default",
         "field_summary_style": "Style",
@@ -368,6 +372,10 @@ UI_STRINGS = {
         "number_only_label": "Nur Zahlen",
         "suffix_label": "Suffix",
         "append_current_date_label": "Aktuelles Datum anhängen",
+        "always_use_for_qr_label": "Immer für QR-Code verwenden",
+        "value_options_label": "Werteliste",
+        "value_options_help": "Optionale Vorschläge, ein Wert pro Zeile. Freitext bleibt weiterhin möglich.",
+        "value_options_summary": "Auswahlwerte",
         "max_lines_label": "Max. Zeilen",
         "field_summary_default": "Standard",
         "field_summary_style": "Stil",
@@ -409,7 +417,8 @@ HTML = """
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); margin-bottom: 20px; }
     h1, h2, h3 { margin-top: 0; }
     label { display: block; font-weight: 600; margin-bottom: 8px; }
-    input, select { width: 100%; border-radius: 12px; border: 1px solid var(--border); background: #0f172a; color: var(--text); padding: 12px 14px; font: inherit; margin-bottom: 16px; }
+    input, select, textarea { width: 100%; border-radius: 12px; border: 1px solid var(--border); background: #0f172a; color: var(--text); padding: 12px 14px; font: inherit; margin-bottom: 16px; }
+    textarea { min-height: 110px; resize: vertical; }
     input[type="checkbox"] { width: auto; margin: 0; accent-color: var(--accent); }
     .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
     .row-compact { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
@@ -481,7 +490,7 @@ HTML = """
             <div class="selector-grid">
               {% for field in qr_field_options %}
               <label class="selector-option" for="qr_field_{{ field.id }}">
-                <input id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" {% if field.selected %}checked{% endif %}>
+                <input id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" data-field-id="{{ field.id }}" {% if field.selected %}checked{% endif %}>
                 <div class="selector-text">
                   <strong>{{ field.name }}</strong>
                   <span class="muted small">{{ field.value or ui.none }}</span>
@@ -513,7 +522,7 @@ HTML = """
               {% if field.number_only %}<span>{{ ui.numeric_only }}</span>{% endif %}
             </div>
             <div class="checkline">
-              <input id="print_{{ field.id }}" name="print_{{ field.id }}" type="checkbox" value="1" {% if field.print_enabled %}checked{% endif %}>
+              <input id="print_{{ field.id }}" name="print_{{ field.id }}" type="checkbox" value="1" data-field-id="{{ field.id }}" {% if field.print_enabled %}checked{% endif %}>
               <label for="print_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.print_field }}</label>
             </div>
             <input
@@ -521,8 +530,16 @@ HTML = """
               name="field_{{ field.id }}"
               type="text"
               value="{{ field.value }}"
+              {% if field.value_options %}list="field_options_{{ field.id }}"{% endif %}
               {% if field.number_only %}inputmode="numeric" pattern="[0-9]*" data-number-only="1"{% endif %}
             >
+            {% if field.value_options %}
+            <datalist id="field_options_{{ field.id }}">
+              {% for option in field.value_options %}
+              <option value="{{ option }}"></option>
+              {% endfor %}
+            </datalist>
+            {% endif %}
           </div>
           {% else %}
           <div class="field-card muted">{{ ui.no_fields_configured }}</div>
@@ -598,6 +615,8 @@ HTML = """
             {% if field.required %}<span class="tag">{{ ui.required }}</span>{% endif %}
             {% if field.number_only %}<span class="tag">{{ ui.numeric_only }}</span>{% endif %}
             {% if field.suffix %}<span class="tag">{{ field.suffix }}</span>{% endif %}
+            {% if field.always_use_for_qr %}<span class="tag">QR</span>{% endif %}
+            {% if field.value_options %}<span class="tag">{{ ui.value_options_summary }}: {{ field.value_options|length }}</span>{% endif %}
             {% if field.append_current_date %}<span class="tag">Date</span>{% endif %}
           </div>
           <div class="field-actions">
@@ -647,6 +666,12 @@ HTML = """
             </div>
           </div>
 
+          <div>
+            <label for="editor_value_options_text">{{ ui.value_options_label }}</label>
+            <textarea id="editor_value_options_text" name="value_options_text">{{ editor_form.value_options_text }}</textarea>
+            <p class="muted small">{{ ui.value_options_help }}</p>
+          </div>
+
           <div class="row-compact">
             <div>
               <label for="editor_alignment">{{ ui.alignment_label }}</label>
@@ -690,6 +715,7 @@ HTML = """
             <label class="checkline"><input id="editor_required" name="required" type="checkbox" value="1" {% if editor_form.required %}checked{% endif %}> {{ ui.required_label }}</label>
             <label class="checkline"><input id="editor_number_only" name="number_only" type="checkbox" value="1" {% if editor_form.number_only %}checked{% endif %}> {{ ui.number_only_label }}</label>
             <label class="checkline"><input id="editor_append_current_date" name="append_current_date" type="checkbox" value="1" {% if editor_form.append_current_date %}checked{% endif %}> {{ ui.append_current_date_label }}</label>
+            <label class="checkline"><input id="editor_always_use_for_qr" name="always_use_for_qr" type="checkbox" value="1" {% if editor_form.always_use_for_qr %}checked{% endif %}> {{ ui.always_use_for_qr_label }}</label>
           </div>
 
           <div class="btns">
@@ -781,6 +807,25 @@ HTML = """
         refreshTimer = window.setTimeout(applyPreviewUpdate, 180);
       }
 
+      function persistFieldCheckbox(fieldId, settingKey, checked) {
+        if (!fieldId || !settingKey) return;
+        const body = new URLSearchParams();
+        body.set("profile_id", profileSelect ? (profileSelect.value || "") : "");
+        body.set("field_id", fieldId);
+        body.set("setting", settingKey);
+        body.set("value", checked ? "1" : "0");
+        fetch(`${ingressBase}/fields/quick-update`, {
+          method: "POST",
+          headers: {"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"},
+          body: body.toString(),
+        }).then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          if (fieldData[fieldId]) fieldData[fieldId][settingKey] = !!checked;
+        }).catch((error) => {
+          console.warn("Failed to persist field checkbox", fieldId, settingKey, error);
+        });
+      }
+
       function setCheckbox(id, value) {
         const el = document.getElementById(id);
         if (el) el.checked = !!value;
@@ -803,6 +848,7 @@ HTML = """
         setValue("editor_font_size_mm", "7.0");
         setValue("editor_position", "body");
         setValue("editor_max_lines", "3");
+        setValue("editor_value_options_text", "");
         setCheckbox("editor_bold", false);
         setCheckbox("editor_italic", false);
         setCheckbox("editor_underline", false);
@@ -825,6 +871,7 @@ HTML = """
         setValue("editor_font_size_mm", data.font_size_mm || "7.0");
         setValue("editor_position", data.position || "body");
         setValue("editor_max_lines", data.max_lines || "3");
+        setValue("editor_value_options_text", data.value_options_text || "");
         setCheckbox("editor_bold", data.bold);
         setCheckbox("editor_italic", data.italic);
         setCheckbox("editor_underline", data.underline);
@@ -832,6 +879,7 @@ HTML = """
         setCheckbox("editor_required", data.required);
         setCheckbox("editor_number_only", data.number_only);
         setCheckbox("editor_append_current_date", data.append_current_date);
+        setCheckbox("editor_always_use_for_qr", data.always_use_for_qr);
       }
 
       if (profileSelect) {
@@ -849,7 +897,12 @@ HTML = """
           return;
         }
         if (input.type === "checkbox") {
-          input.addEventListener("click", applyPreviewUpdate);
+          input.addEventListener("click", () => {
+            applyPreviewUpdate();
+            const fieldId = input.getAttribute("data-field-id") || "";
+            if (fieldId && input.name === `print_${fieldId}`) persistFieldCheckbox(fieldId, "print_by_default", input.checked);
+            if (fieldId && input.name === "qr_field_ids") persistFieldCheckbox(fieldId, "always_use_for_qr", input.checked);
+          });
         } else {
           input.addEventListener("input", schedulePreviewUpdate);
           input.addEventListener("change", applyPreviewUpdate);
@@ -1010,6 +1063,8 @@ def normalize_profile_field(raw: object, idx: int) -> Dict:
         "suffix": str(data.get("suffix") or "").strip(),
         "position": normalize_position(data.get("position"), "body"),
         "append_current_date": normalize_bool(data.get("append_current_date"), False),
+        "always_use_for_qr": normalize_bool(data.get("always_use_for_qr"), False),
+        "value_options": normalize_value_options(data.get("value_options")),
         "max_lines": normalize_int(data.get("max_lines"), 3, 1, 8),
     }
 
@@ -1263,6 +1318,39 @@ def normalize_qr_value(value: object) -> str:
     return str(value if value is not None else "").strip()
 
 
+def normalize_value_options(value: object) -> List[str]:
+    if value is None:
+        return []
+    items: List[str] = []
+    if isinstance(value, str):
+        normalized_text = value.replace("\r", "\n")
+        split_values = normalized_text.split("\n") if "\n" in normalized_text else normalized_text.split(",")
+        items = [part.strip() for part in split_values]
+    elif isinstance(value, (list, tuple, set)):
+        for item in value:
+            if item is None:
+                continue
+            text_value = str(item).strip()
+            if text_value:
+                items.append(text_value)
+    else:
+        text_value = str(value).strip()
+        if text_value:
+            items.append(text_value)
+    result: List[str] = []
+    seen = set()
+    for item in items:
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def value_options_text(value: object) -> str:
+    return "\n".join(normalize_value_options(value))
+
+
 def normalize_qr_field_ids(values: object) -> List[str]:
     if values is None:
         return []
@@ -1294,6 +1382,8 @@ def selected_qr_field_ids_from_source(profile: Dict, source: object) -> List[str
     elif isinstance(source, dict):
         values = source.get("qr_field_ids", source.get("qr_fields", []))
     selected = normalize_qr_field_ids(values)
+    if not selected:
+        selected = [field.get("id") for field in profile.get("fields", []) if normalize_bool(field.get("always_use_for_qr"), False)]
     valid_ids = {field.get("id") for field in profile.get("fields", [])}
     return [field_id for field_id in selected if field_id in valid_ids]
 
@@ -1741,6 +1831,9 @@ def blank_editor_form() -> Dict:
         "suffix": "",
         "position": "body",
         "append_current_date": False,
+        "always_use_for_qr": False,
+        "value_options": [],
+        "value_options_text": "",
         "max_lines": 3,
     }
 
@@ -1765,6 +1858,9 @@ def editor_form_from_field(field: Dict | None) -> Dict:
         "suffix": field.get("suffix", ""),
         "position": field.get("position", "body"),
         "append_current_date": field.get("append_current_date", False),
+        "always_use_for_qr": field.get("always_use_for_qr", False),
+        "value_options": normalize_value_options(field.get("value_options", [])),
+        "value_options_text": value_options_text(field.get("value_options", [])),
         "max_lines": field.get("max_lines", 3),
     }
 
@@ -1795,6 +1891,8 @@ def validate_and_normalize_editor_payload(source: Dict, language: str) -> Tuple[
             "suffix": source.get("suffix", ""),
             "position": source.get("position", "body"),
             "append_current_date": source.get("append_current_date"),
+            "always_use_for_qr": source.get("always_use_for_qr"),
+            "value_options": normalize_value_options(source.get("value_options_text", source.get("value_options", []))),
             "max_lines": source.get("max_lines", 3),
         },
         1,
@@ -1837,6 +1935,28 @@ def delete_profile_field(profile_id: str, field_id: str, profile_name: str) -> b
     if changed:
         LOGGER.info("Deleted field %s from profile %s (%s)", field_id, profile_id, profile_name)
     return changed
+
+
+ALLOWED_QUICK_FIELD_SETTINGS = {"print_by_default", "always_use_for_qr"}
+
+
+def update_profile_field_setting(profile_id: str, field_id: str, setting: str, value: bool) -> Dict:
+    if setting not in ALLOWED_QUICK_FIELD_SETTINGS:
+        raise ValueError(f"Unsupported field setting: {setting}")
+    opts, _, _ = load_options()
+    profiles = parse_label_profiles(opts.get("label_profiles"))
+    field_store = load_field_store(profiles)
+    fields = list(field_store.get(profile_id, []))
+    for idx, field in enumerate(fields):
+        if field.get("id") != field_id:
+            continue
+        updated = normalize_profile_field({**field, setting: value}, idx + 1)
+        fields[idx] = updated
+        field_store[profile_id] = fields
+        save_field_store(field_store)
+        LOGGER.info("Updated field setting %s=%s for %s in profile %s", setting, value, field_id, profile_id)
+        return updated
+    raise ValueError(f"Unknown field: {field_id}")
 
 
 def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], result: Dict | None = None, field_result: Dict | None = None, editor_form: Dict | None = None) -> str:
@@ -2006,6 +2126,8 @@ def save_field():
             "suffix": request.form.get("suffix", ""),
             "position": request.form.get("position", "body"),
             "append_current_date": normalize_bool(request.form.get("append_current_date"), False),
+            "always_use_for_qr": normalize_bool(request.form.get("always_use_for_qr"), False),
+            "value_options": normalize_value_options(request.form.get("value_options_text", "")),
             "max_lines": request.form.get("max_lines", 3),
         })
         editor_form["original_field_id"] = request.form.get("original_field_id", "")
@@ -2034,6 +2156,23 @@ def delete_field():
         LOGGER.exception("Field delete failed")
         result = {"success": False, "message": ui_text(opts, "field_delete_failed", error=exc)}
     return render_page(form, opts, field_forms, field_result=result)
+
+
+@APP.route("/fields/quick-update", methods=["POST"])
+def quick_update_field_setting():
+    opts = load_runtime_options(request.form.get("profile_id") or None)
+    profile = opts.get("active_profile") or {}
+    try:
+        if not profile:
+            raise ValueError(ui_text(opts, "profile_not_found"))
+        field_id = sanitize_id(str(request.form.get("field_id") or ""), "")
+        setting = normalize_string(request.form.get("setting"), "")
+        value = normalize_bool(request.form.get("value"), False)
+        updated = update_profile_field_setting(profile["id"], field_id, setting, value)
+        return jsonify({"ok": True, "field": updated, "profile_id": profile["id"]})
+    except Exception as exc:
+        LOGGER.exception("Quick field update failed")
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 @APP.route("/preview", methods=["GET"])
