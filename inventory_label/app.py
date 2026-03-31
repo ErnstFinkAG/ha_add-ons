@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import socket
+from copy import deepcopy
 from datetime import datetime
 from functools import lru_cache
 from io import BytesIO
@@ -37,6 +38,7 @@ PRINTER_MAX_WIDTH_DOTS = 1344
 INGRESS_ALLOWED_IP = "172.30.32.2"
 LOCAL_ALLOWED_IPS = {"127.0.0.1", "::1", None}
 OPTIONS_PATH = "/data/options.json"
+FIELD_STORE_PATH = "/data/label_fields.json"
 DEFAULT_TEXT_BLOCK_MARGIN_MM = 8.0
 FIELD_GAP_MM = 4.0
 FOOTER_GAP_MM = 3.0
@@ -46,86 +48,102 @@ ALIGNMENTS = {"left", "center", "right"}
 FONT_FAMILIES = {"sans", "serif", "mono"}
 FIELD_POSITIONS = {"body", "footer"}
 
-DEFAULT_PROFILES_YAML = """\
-- id: standard
-  name: Standard
-  printer_host: 10.50.20.12
-  printer_port: 9100
-  label_width_mm: 170
-  label_height_mm: 305
-  qr_size_mm: 170
-  top_margin_mm: 0
-  footer_bottom_margin_mm: 4
-  print_rotation_degrees: 0
-  qr_default_value: ""
-  qr_quiet_zone_modules: 3
-  qr_error_correction: M
-  fields:
-    - id: project_no
-      name: Projektnummer
-      default_value: "250001"
-      alignment: center
-      font_family: sans
-      font_size_mm: 18
-      bold: true
-      italic: false
-      underline: false
-      print_by_default: true
-      required: true
-      number_only: true
-      position: body
-    - id: project_name
-      name: Projektname
-      default_value: EFH Huggentobbler Biel
-      alignment: center
-      font_family: sans
-      font_size_mm: 13
-      bold: false
-      italic: false
-      underline: false
-      print_by_default: true
-      position: body
-    - id: element
-      name: Element
-      default_value: DE1
-      alignment: center
-      font_family: sans
-      font_size_mm: 18
-      bold: false
-      italic: false
-      underline: false
-      print_by_default: true
-      position: body
-    - id: weight
-      name: Gewicht
-      default_value: ""
-      alignment: center
-      font_family: sans
-      font_size_mm: 7
-      bold: false
-      italic: false
-      underline: false
-      print_by_default: false
-      number_only: true
-      suffix: kg
-      position: body
-    - id: footer
-      name: Footer
-      default_value: Ernst Fink AG, Schorenweg 144, 4585 Biezwil
-      alignment: center
-      font_family: sans
-      font_size_mm: 5
-      bold: false
-      italic: false
-      underline: false
-      print_by_default: true
-      position: footer
-      append_current_date: true
-"""
+DEFAULT_LABEL_PROFILES = [
+    {
+        "id": "standard",
+        "name": "Standard",
+        "printer_host": "10.50.20.12",
+        "printer_port": 9100,
+        "label_width_mm": 170,
+        "label_height_mm": 305,
+        "qr_size_mm": 170,
+        "top_margin_mm": 0,
+        "footer_bottom_margin_mm": 4,
+        "print_rotation_degrees": 0,
+        "qr_default_value": "",
+        "qr_quiet_zone_modules": 3,
+        "qr_error_correction": "M",
+    }
+]
+
+DEFAULT_PROFILE_FIELDS = {
+    "standard": [
+        {
+            "id": "project_no",
+            "name": "Projektnummer",
+            "default_value": "250001",
+            "alignment": "center",
+            "font_family": "sans",
+            "font_size_mm": 18,
+            "bold": True,
+            "italic": False,
+            "underline": False,
+            "print_by_default": True,
+            "required": True,
+            "number_only": True,
+            "position": "body",
+        },
+        {
+            "id": "project_name",
+            "name": "Projektname",
+            "default_value": "EFH Huggentobbler Biel",
+            "alignment": "center",
+            "font_family": "sans",
+            "font_size_mm": 13,
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "print_by_default": True,
+            "position": "body",
+        },
+        {
+            "id": "element",
+            "name": "Element",
+            "default_value": "DE1",
+            "alignment": "center",
+            "font_family": "sans",
+            "font_size_mm": 18,
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "print_by_default": True,
+            "position": "body",
+        },
+        {
+            "id": "weight",
+            "name": "Gewicht",
+            "default_value": "",
+            "alignment": "center",
+            "font_family": "sans",
+            "font_size_mm": 7,
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "print_by_default": False,
+            "number_only": True,
+            "suffix": "kg",
+            "position": "body",
+        },
+        {
+            "id": "footer",
+            "name": "Footer",
+            "default_value": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
+            "alignment": "center",
+            "font_family": "sans",
+            "font_size_mm": 5,
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "print_by_default": True,
+            "position": "footer",
+            "append_current_date": True,
+        },
+    ]
+}
 
 DEFAULT_OPTIONS = {
     "ui_language": "de",
-    "label_profiles_yaml": DEFAULT_PROFILES_YAML,
+    "label_profiles": deepcopy(DEFAULT_LABEL_PROFILES),
 }
 
 QR_ERROR_CORRECTION_MAP = {
@@ -208,7 +226,7 @@ UI_STRINGS = {
     "en": {
         "lang": "en",
         "page_title": "Inventory Label",
-        "intro_text": "Choose a label profile from the add-on configuration, enter the QR value and the configured field values, then preview and print.",
+        "intro_text": "Create label profiles in the add-on configuration. Field definitions are managed here in the web UI for the currently selected label.",
         "profile_select": "Label profile",
         "profile_none": "(none)",
         "qr_value_label": "QR value",
@@ -243,11 +261,47 @@ UI_STRINGS = {
         "configuration_error": "Configuration error: {error}",
         "unknown_error": "Unknown error",
         "none": "(none)",
+        "field_manager_heading": "Field manager",
+        "field_manager_intro": "The active label has its own field submenu here. Add, edit, or delete fields without touching the add-on settings.",
+        "save_field_button": "Save field",
+        "new_field_button": "New field",
+        "delete_field_button": "Delete",
+        "edit_field_button": "Edit",
+        "no_fields_configured": "No fields configured for this label yet.",
+        "field_saved_message": "Field '{field}' saved for profile '{profile}'.",
+        "field_deleted_message": "Field '{field}' deleted from profile '{profile}'.",
+        "field_delete_failed": "Field delete failed: {error}",
+        "field_save_failed": "Field save failed: {error}",
+        "field_id_label": "Field ID",
+        "field_name_label": "Field name",
+        "default_value_label": "Default value",
+        "alignment_label": "Alignment",
+        "font_family_label": "Font family",
+        "font_size_label": "Font size (mm)",
+        "bold_label": "Bold",
+        "italic_label": "Italic",
+        "underline_label": "Underline",
+        "print_by_default_label": "Print by default",
+        "required_label": "Required when printed",
+        "number_only_label": "Numbers only",
+        "suffix_label": "Suffix",
+        "append_current_date_label": "Append current date",
+        "max_lines_label": "Max lines",
+        "field_summary_default": "Default",
+        "field_summary_style": "Style",
+        "field_summary_behavior": "Behavior",
+        "field_editor_hint": "IDs are sanitized automatically and must be unique within the selected label.",
+        "field_duplicate_error": "Field ID '{field_id}' already exists in this profile.",
+        "field_name_required": "Field name is required.",
+        "profile_not_found": "Label profile not found.",
+        "legacy_migrated": "Legacy label_profiles_yaml was detected and migrated. Profiles now live in add-on settings, fields live in the web UI store.",
+        "language_label": "Language",
+        "profile_settings_source": "Profiles are defined in add-on settings",
     },
     "de": {
         "lang": "de",
         "page_title": "Inventory Label",
-        "intro_text": "Wähle ein Etikettenprofil aus der Add-on-Konfiguration, gib den QR-Inhalt und die konfigurierten Feldwerte ein und drucke danach das Etikett.",
+        "intro_text": "Lege die Etikettenprofile in der Add-on-Konfiguration an. Die Felddefinitionen werden hier in der Weboberfläche pro ausgewähltem Label verwaltet.",
         "profile_select": "Etikettenprofil",
         "profile_none": "(keins)",
         "qr_value_label": "QR-Inhalt",
@@ -282,6 +336,42 @@ UI_STRINGS = {
         "configuration_error": "Konfigurationsfehler: {error}",
         "unknown_error": "Unbekannter Fehler",
         "none": "(keins)",
+        "field_manager_heading": "Feldverwaltung",
+        "field_manager_intro": "Das aktive Label hat hier sein eigenes Untermenü. Felder können hinzugefügt, bearbeitet oder gelöscht werden, ohne die Add-on-Einstellungen anzufassen.",
+        "save_field_button": "Feld speichern",
+        "new_field_button": "Neues Feld",
+        "delete_field_button": "Löschen",
+        "edit_field_button": "Bearbeiten",
+        "no_fields_configured": "Für dieses Label sind noch keine Felder konfiguriert.",
+        "field_saved_message": "Feld '{field}' für Profil '{profile}' gespeichert.",
+        "field_deleted_message": "Feld '{field}' aus Profil '{profile}' gelöscht.",
+        "field_delete_failed": "Feld löschen fehlgeschlagen: {error}",
+        "field_save_failed": "Feld speichern fehlgeschlagen: {error}",
+        "field_id_label": "Feld-ID",
+        "field_name_label": "Feldname",
+        "default_value_label": "Standardwert",
+        "alignment_label": "Ausrichtung",
+        "font_family_label": "Schriftfamilie",
+        "font_size_label": "Schriftgröße (mm)",
+        "bold_label": "Fett",
+        "italic_label": "Kursiv",
+        "underline_label": "Unterstrichen",
+        "print_by_default_label": "Standardmäßig drucken",
+        "required_label": "Pflicht wenn gedruckt",
+        "number_only_label": "Nur Zahlen",
+        "suffix_label": "Suffix",
+        "append_current_date_label": "Aktuelles Datum anhängen",
+        "max_lines_label": "Max. Zeilen",
+        "field_summary_default": "Standard",
+        "field_summary_style": "Stil",
+        "field_summary_behavior": "Verhalten",
+        "field_editor_hint": "IDs werden automatisch bereinigt und müssen innerhalb des ausgewählten Labels eindeutig sein.",
+        "field_duplicate_error": "Feld-ID '{field_id}' existiert in diesem Profil bereits.",
+        "field_name_required": "Feldname ist erforderlich.",
+        "profile_not_found": "Etikettenprofil nicht gefunden.",
+        "legacy_migrated": "Altes label_profiles_yaml erkannt und migriert. Profile liegen jetzt in den Add-on-Einstellungen, Felder im Web-UI-Speicher.",
+        "language_label": "Sprache",
+        "profile_settings_source": "Profile werden in den Add-on-Einstellungen definiert",
     },
 }
 
@@ -306,17 +396,20 @@ HTML = """
       --label-bg: #ffffff;
       --label-edge: #d1d5db;
     }
+    * { box-sizing: border-box; }
     body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .wrap { max-width: 1250px; margin: 0 auto; padding: 24px; }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); margin-bottom: 20px; }
     h1, h2, h3 { margin-top: 0; }
     label { display: block; font-weight: 600; margin-bottom: 8px; }
-    input, select { width: 100%; box-sizing: border-box; border-radius: 12px; border: 1px solid var(--border); background: #0f172a; color: var(--text); padding: 12px 14px; font: inherit; margin-bottom: 16px; }
+    input, select { width: 100%; border-radius: 12px; border: 1px solid var(--border); background: #0f172a; color: var(--text); padding: 12px 14px; font: inherit; margin-bottom: 16px; }
     input[type="checkbox"] { width: auto; margin: 0; accent-color: var(--accent); }
     .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+    .row-compact { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
     .btns { display: flex; gap: 12px; flex-wrap: wrap; }
     button, .button-link { border: none; background: var(--accent); color: white; padding: 12px 18px; border-radius: 12px; font: inherit; cursor: pointer; text-decoration: none; display: inline-block; }
-    .secondary { background: transparent; border: 1px solid var(--border); }
+    button.secondary, .button-link.secondary { background: transparent; border: 1px solid var(--border); }
+    button.danger { background: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger); }
     .flash { border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
     .flash.ok { background: rgba(16,185,129,0.14); border: 1px solid var(--ok); }
     .flash.error { background: rgba(239,68,68,0.14); border: 1px solid var(--danger); }
@@ -333,15 +426,34 @@ HTML = """
     .field-card h3 { margin-bottom: 10px; font-size: 1rem; }
     .field-meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 0.92rem; margin-bottom: 12px; }
     .checkline { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .two-col { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(360px, 0.9fr); gap: 20px; }
+    .editor { background: #111827; border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
+    .editor .btns { margin-top: 4px; }
+    .tag-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .tag { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; background: #0f172a; border: 1px solid var(--border); color: var(--muted); font-size: 0.9rem; }
+    .field-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .small { font-size: 0.92rem; }
+    .headline-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+    code { word-break: break-word; }
+    @media (max-width: 980px) {
+      .two-col { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>{{ ui.page_title }}</h1>
-      <p class="muted">{{ ui.intro_text }}</p>
+      <div class="headline-row">
+        <div>
+          <h1>{{ ui.page_title }}</h1>
+          <p class="muted">{{ ui.intro_text }}</p>
+        </div>
+      </div>
       {% if result %}
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
+      {% endif %}
+      {% if field_result %}
+        <div class="flash {{ 'ok' if field_result.success else 'error' }}">{{ field_result.message }}</div>
       {% endif %}
       <form id="label-form" method="post" action="{{ ingress_base }}/print">
         <label for="profile_id">{{ ui.profile_select }}</label>
@@ -351,8 +463,16 @@ HTML = """
           {% endfor %}
         </select>
 
-        <label for="qr_value">{{ ui.qr_value_label }}</label>
-        <input id="qr_value" name="qr_value" type="text" value="{{ form.qr_value }}" required>
+        <div class="row">
+          <div>
+            <label for="qr_value">{{ ui.qr_value_label }}</label>
+            <input id="qr_value" name="qr_value" type="text" value="{{ form.qr_value }}" required>
+          </div>
+          <div>
+            <label for="copies">{{ ui.copies }}</label>
+            <input id="copies" name="copies" type="number" min="1" max="50" value="{{ form.copies }}" required>
+          </div>
+        </div>
 
         <h2>{{ ui.fields_heading }}</h2>
         <div class="field-grid">
@@ -376,17 +496,19 @@ HTML = """
               {% if field.number_only %}inputmode="numeric" pattern="[0-9]*" data-number-only="1"{% endif %}
             >
           </div>
+          {% else %}
+          <div class="field-card muted">{{ ui.no_fields_configured }}</div>
           {% endfor %}
         </div>
 
         <div class="row">
           <div>
-            <label for="copies">{{ ui.copies }}</label>
-            <input id="copies" name="copies" type="number" min="1" max="50" value="{{ form.copies }}" required>
-          </div>
-          <div>
             <label>{{ ui.configured_printer }}</label>
             <input value="{{ printer_host }}:{{ printer_port }}" disabled>
+          </div>
+          <div>
+            <label>{{ ui.profile_settings_source }}</label>
+            <input value="{{ active_profile_name or ui.profile_none }}" disabled>
           </div>
         </div>
 
@@ -398,32 +520,155 @@ HTML = """
       </form>
     </div>
 
-    <div class="card">
-      <h2>{{ ui.preview_heading }}</h2>
-      <div class="preview-wrap">
-        <div class="preview-stage">
-          <div class="preview-frame">
-            <img id="preview-image" src="{{ ingress_base }}/preview.png?{{ preview_query }}" alt="{{ ui.preview_alt }}">
+    <div class="two-col">
+      <div class="card">
+        <h2>{{ ui.preview_heading }}</h2>
+        <div class="preview-wrap">
+          <div class="preview-stage">
+            <div class="preview-frame">
+              <img id="preview-image" src="{{ ingress_base }}/preview.png?{{ preview_query }}" alt="{{ ui.preview_alt }}">
+            </div>
           </div>
         </div>
+        <div class="preview-meta">{{ ui.preview_meta }}</div>
       </div>
-      <div class="preview-meta">{{ ui.preview_meta }}</div>
+
+      <div class="card">
+        <h2>{{ ui.configured_label_mapping }}</h2>
+        <ul class="config-list">
+          <li><strong>{{ ui.profile_active }}:</strong> <code>{{ active_profile_name or ui.profile_none }}</code></li>
+          <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview or ui.none }}</code></li>
+          <li><strong>{{ ui.requested_label }}:</strong> <code>{{ requested_width_mm }} × {{ requested_height_mm }} mm</code></li>
+          <li><strong>{{ ui.requested_qr }}:</strong> <code>{{ requested_qr_mm }} × {{ requested_qr_mm }} mm</code></li>
+          <li><strong>QR:</strong> <code>quiet zone {{ qr_quiet_zone_modules }}, ECC {{ qr_error_correction }}</code></li>
+          <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
+          <li><strong>{{ ui.effective_print_width }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
+          <li><strong>{{ ui.language_label }}:</strong> <code>{{ ui.lang }}</code></li>
+        </ul>
+        {% if width_warning %}
+        <p class="muted">{{ ui.width_warning }}</p>
+        {% endif %}
+      </div>
     </div>
 
     <div class="card">
-      <h2>{{ ui.configured_label_mapping }}</h2>
-      <ul class="config-list">
-        <li><strong>{{ ui.profile_active }}:</strong> <code>{{ active_profile_name or ui.profile_none }}</code></li>
-        <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview or ui.none }}</code></li>
-        <li><strong>{{ ui.requested_label }}:</strong> <code>{{ requested_width_mm }} × {{ requested_height_mm }} mm</code></li>
-        <li><strong>{{ ui.requested_qr }}:</strong> <code>{{ requested_qr_mm }} × {{ requested_qr_mm }} mm</code></li>
-        <li><strong>QR:</strong> <code>quiet zone {{ qr_quiet_zone_modules }}, ECC {{ qr_error_correction }}</code></li>
-        <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
-        <li><strong>{{ ui.effective_print_width }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
-      </ul>
-      {% if width_warning %}
-      <p class="muted">{{ ui.width_warning }}</p>
-      {% endif %}
+      <h2>{{ ui.field_manager_heading }}</h2>
+      <p class="muted">{{ ui.field_manager_intro }}</p>
+
+      <div class="field-grid">
+        {% for field in active_profile_fields %}
+        <div class="field-card">
+          <div class="headline-row">
+            <h3>{{ field.name }}</h3>
+            <code>{{ field.id }}</code>
+          </div>
+          <div class="tag-list">
+            <span class="tag">{{ ui.position }}: {{ ui.position_footer if field.position == 'footer' else ui.position_body }}</span>
+            <span class="tag">{{ ui.field_summary_default }}: {{ field.default_value or ui.none }}</span>
+            <span class="tag">{{ ui.field_summary_style }}: {{ field.font_family }} / {{ field.font_size_mm }} mm / {{ field.alignment }}</span>
+            <span class="tag">{{ ui.field_summary_behavior }}: {% if field.print_by_default %}{{ ui.print_field }}{% else %}{{ ui.none }}{% endif %}</span>
+            {% if field.required %}<span class="tag">{{ ui.required }}</span>{% endif %}
+            {% if field.number_only %}<span class="tag">{{ ui.numeric_only }}</span>{% endif %}
+            {% if field.suffix %}<span class="tag">{{ field.suffix }}</span>{% endif %}
+            {% if field.append_current_date %}<span class="tag">Date</span>{% endif %}
+          </div>
+          <div class="field-actions">
+            <button type="button" class="secondary edit-field-button" data-field-id="{{ field.id }}">{{ ui.edit_field_button }}</button>
+            <form method="post" action="{{ ingress_base }}/fields/delete" style="margin:0;">
+              <input type="hidden" name="profile_id" value="{{ active_profile_id }}">
+              <input type="hidden" name="field_id" value="{{ field.id }}">
+              <button type="submit" class="danger">{{ ui.delete_field_button }}</button>
+            </form>
+          </div>
+        </div>
+        {% else %}
+        <div class="field-card muted">{{ ui.no_fields_configured }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="editor" style="margin-top: 18px;">
+        <form id="field-editor-form" method="post" action="{{ ingress_base }}/fields/save">
+          <input type="hidden" name="profile_id" value="{{ active_profile_id }}">
+          <input type="hidden" id="original_field_id" name="original_field_id" value="{{ editor_form.original_field_id }}">
+
+          <div class="headline-row">
+            <h3>{{ ui.save_field_button }}</h3>
+            <button type="button" id="new-field-button" class="secondary">{{ ui.new_field_button }}</button>
+          </div>
+          <p class="muted small">{{ ui.field_editor_hint }}</p>
+
+          <div class="row">
+            <div>
+              <label for="editor_name">{{ ui.field_name_label }}</label>
+              <input id="editor_name" name="name" type="text" value="{{ editor_form.name }}" required>
+            </div>
+            <div>
+              <label for="editor_id">{{ ui.field_id_label }}</label>
+              <input id="editor_id" name="id" type="text" value="{{ editor_form.id }}">
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label for="editor_default_value">{{ ui.default_value_label }}</label>
+              <input id="editor_default_value" name="default_value" type="text" value="{{ editor_form.default_value }}">
+            </div>
+            <div>
+              <label for="editor_suffix">{{ ui.suffix_label }}</label>
+              <input id="editor_suffix" name="suffix" type="text" value="{{ editor_form.suffix }}">
+            </div>
+          </div>
+
+          <div class="row-compact">
+            <div>
+              <label for="editor_alignment">{{ ui.alignment_label }}</label>
+              <select id="editor_alignment" name="alignment">
+                {% for value in alignments %}
+                <option value="{{ value }}" {% if editor_form.alignment == value %}selected{% endif %}>{{ value }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label for="editor_font_family">{{ ui.font_family_label }}</label>
+              <select id="editor_font_family" name="font_family">
+                {% for value in font_families %}
+                <option value="{{ value }}" {% if editor_form.font_family == value %}selected{% endif %}>{{ value }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label for="editor_font_size_mm">{{ ui.font_size_label }}</label>
+              <input id="editor_font_size_mm" name="font_size_mm" type="number" min="2" max="30" step="0.5" value="{{ editor_form.font_size_mm }}">
+            </div>
+            <div>
+              <label for="editor_position">{{ ui.position }}</label>
+              <select id="editor_position" name="position">
+                {% for value in field_positions %}
+                <option value="{{ value }}" {% if editor_form.position == value %}selected{% endif %}>{{ ui.position_footer if value == 'footer' else ui.position_body }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label for="editor_max_lines">{{ ui.max_lines_label }}</label>
+              <input id="editor_max_lines" name="max_lines" type="number" min="1" max="8" step="1" value="{{ editor_form.max_lines }}">
+            </div>
+          </div>
+
+          <div class="row-compact">
+            <label class="checkline"><input id="editor_bold" name="bold" type="checkbox" value="1" {% if editor_form.bold %}checked{% endif %}> {{ ui.bold_label }}</label>
+            <label class="checkline"><input id="editor_italic" name="italic" type="checkbox" value="1" {% if editor_form.italic %}checked{% endif %}> {{ ui.italic_label }}</label>
+            <label class="checkline"><input id="editor_underline" name="underline" type="checkbox" value="1" {% if editor_form.underline %}checked{% endif %}> {{ ui.underline_label }}</label>
+            <label class="checkline"><input id="editor_print_by_default" name="print_by_default" type="checkbox" value="1" {% if editor_form.print_by_default %}checked{% endif %}> {{ ui.print_by_default_label }}</label>
+            <label class="checkline"><input id="editor_required" name="required" type="checkbox" value="1" {% if editor_form.required %}checked{% endif %}> {{ ui.required_label }}</label>
+            <label class="checkline"><input id="editor_number_only" name="number_only" type="checkbox" value="1" {% if editor_form.number_only %}checked{% endif %}> {{ ui.number_only_label }}</label>
+            <label class="checkline"><input id="editor_append_current_date" name="append_current_date" type="checkbox" value="1" {% if editor_form.append_current_date %}checked{% endif %}> {{ ui.append_current_date_label }}</label>
+          </div>
+
+          <div class="btns">
+            <button type="submit">{{ ui.save_field_button }}</button>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
 
@@ -437,6 +682,9 @@ HTML = """
       const previewStage = document.querySelector(".preview-stage");
       const previewPngLink = document.getElementById("preview-png-link");
       const previewZplLink = document.getElementById("preview-zpl-link");
+      const newFieldButton = document.getElementById("new-field-button");
+      const fieldEditorForm = document.getElementById("field-editor-form");
+      const fieldData = {{ field_editor_json|tojson }};
       if (!form || !previewImage || !previewFrame || !previewWrap || !previewStage || !previewPngLink || !previewZplLink) return;
 
       let refreshTimer = null;
@@ -505,6 +753,59 @@ HTML = """
         refreshTimer = window.setTimeout(applyPreviewUpdate, 180);
       }
 
+      function setCheckbox(id, value) {
+        const el = document.getElementById(id);
+        if (el) el.checked = !!value;
+      }
+
+      function setValue(id, value) {
+        const el = document.getElementById(id);
+        if (el) el.value = value == null ? "" : String(value);
+      }
+
+      function resetFieldEditor() {
+        if (!fieldEditorForm) return;
+        setValue("original_field_id", "");
+        setValue("editor_name", "");
+        setValue("editor_id", "");
+        setValue("editor_default_value", "");
+        setValue("editor_suffix", "");
+        setValue("editor_alignment", "center");
+        setValue("editor_font_family", "sans");
+        setValue("editor_font_size_mm", "7.0");
+        setValue("editor_position", "body");
+        setValue("editor_max_lines", "3");
+        setCheckbox("editor_bold", false);
+        setCheckbox("editor_italic", false);
+        setCheckbox("editor_underline", false);
+        setCheckbox("editor_print_by_default", true);
+        setCheckbox("editor_required", false);
+        setCheckbox("editor_number_only", false);
+        setCheckbox("editor_append_current_date", false);
+      }
+
+      function loadFieldIntoEditor(fieldId) {
+        const data = fieldData[fieldId];
+        if (!data) return;
+        setValue("original_field_id", data.id || "");
+        setValue("editor_name", data.name || "");
+        setValue("editor_id", data.id || "");
+        setValue("editor_default_value", data.default_value || "");
+        setValue("editor_suffix", data.suffix || "");
+        setValue("editor_alignment", data.alignment || "center");
+        setValue("editor_font_family", data.font_family || "sans");
+        setValue("editor_font_size_mm", data.font_size_mm || "7.0");
+        setValue("editor_position", data.position || "body");
+        setValue("editor_max_lines", data.max_lines || "3");
+        setCheckbox("editor_bold", data.bold);
+        setCheckbox("editor_italic", data.italic);
+        setCheckbox("editor_underline", data.underline);
+        setCheckbox("editor_print_by_default", data.print_by_default);
+        setCheckbox("editor_required", data.required);
+        setCheckbox("editor_number_only", data.number_only);
+        setCheckbox("editor_append_current_date", data.append_current_date);
+      }
+
       if (profileSelect) {
         profileSelect.addEventListener("change", () => {
           const url = new URL(`${ingressBase}/`, window.location.origin);
@@ -526,6 +827,22 @@ HTML = """
           input.addEventListener("change", applyPreviewUpdate);
         }
       });
+
+      document.querySelectorAll(".edit-field-button").forEach((button) => {
+        button.addEventListener("click", () => {
+          const fieldId = button.getAttribute("data-field-id");
+          loadFieldIntoEditor(fieldId || "");
+          if (fieldEditorForm) fieldEditorForm.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      });
+
+      if (newFieldButton) {
+        newFieldButton.addEventListener("click", () => {
+          resetFieldEditor();
+          const nameInput = document.getElementById("editor_name");
+          if (nameInput) nameInput.focus();
+        });
+      }
 
       previewImage.addEventListener("load", syncPreviewFrameToImage);
       window.addEventListener("resize", syncPreviewFrameToImage);
@@ -630,24 +947,6 @@ def ui_text(language_or_options: object, key: str, **kwargs) -> str:
     return template.format(**kwargs)
 
 
-def load_options() -> Dict:
-    options = dict(DEFAULT_OPTIONS)
-    if os.path.exists(OPTIONS_PATH):
-        try:
-            with open(OPTIONS_PATH, "r", encoding="utf-8") as handle:
-                data = json.load(handle)
-            if isinstance(data, dict):
-                options.update(data)
-        except Exception as exc:
-            LOGGER.warning("Failed to load %s: %s", OPTIONS_PATH, exc)
-    options["ui_language"] = normalize_ui_language(options.get("ui_language"), DEFAULT_OPTIONS["ui_language"])
-    raw_profiles = options.get("label_profiles_yaml")
-    if raw_profiles is None:
-        raw_profiles = DEFAULT_OPTIONS["label_profiles_yaml"]
-    options["label_profiles_yaml"] = str(raw_profiles)
-    return options
-
-
 def normalize_profile_field(raw: object, idx: int) -> Dict:
     data = raw if isinstance(raw, dict) else {}
     name = normalize_string(data.get("name"), f"Field {idx}")
@@ -672,16 +971,29 @@ def normalize_profile_field(raw: object, idx: int) -> Dict:
     }
 
 
+def normalize_profile(raw: object, idx: int) -> Dict:
+    data = raw if isinstance(raw, dict) else {}
+    name = normalize_string(data.get("name"), f"Label {idx}")
+    profile_id = sanitize_id(str(data.get("id") or name), f"label_{idx}")
+    return {
+        "id": profile_id,
+        "name": name,
+        "printer_host": normalize_string(data.get("printer_host"), "10.50.20.12"),
+        "printer_port": normalize_int(data.get("printer_port"), 9100, 1, 65535),
+        "label_width_mm": normalize_float(data.get("label_width_mm"), 170.0, 50.0, 500.0),
+        "label_height_mm": normalize_float(data.get("label_height_mm"), 305.0, 50.0, 1000.0),
+        "qr_size_mm": normalize_float(data.get("qr_size_mm"), 170.0, 10.0, 300.0),
+        "top_margin_mm": normalize_float(data.get("top_margin_mm"), 0.0, 0.0, 100.0),
+        "footer_bottom_margin_mm": normalize_float(data.get("footer_bottom_margin_mm"), 0.0, 0.0, 50.0),
+        "print_rotation_degrees": normalize_rotation_degrees(data.get("print_rotation_degrees"), 0),
+        "qr_default_value": "" if data.get("qr_default_value") is None else str(data.get("qr_default_value")),
+        "qr_quiet_zone_modules": normalize_int(data.get("qr_quiet_zone_modules"), 3, 0, 20),
+        "qr_error_correction": str(data.get("qr_error_correction") or "M").strip().upper() if str(data.get("qr_error_correction") or "M").strip().upper() in QR_ERROR_CORRECTION_MAP else "M",
+    }
+
+
 def parse_label_profiles(raw: object) -> List[Dict]:
-    source = raw if raw not in (None, "") else DEFAULT_OPTIONS["label_profiles_yaml"]
-    if isinstance(source, str):
-        try:
-            data = yaml.safe_load(source) if source.strip() else []
-        except Exception as exc:
-            LOGGER.warning("Failed to parse label profiles YAML: %s", exc)
-            data = []
-    else:
-        data = source
+    data = raw
     if isinstance(data, dict):
         for key in ("label_profiles", "profiles", "labels"):
             if isinstance(data.get(key), list):
@@ -691,49 +1003,156 @@ def parse_label_profiles(raw: object) -> List[Dict]:
             data = [data]
     if not isinstance(data, list):
         return []
+    return [normalize_profile(item, idx) for idx, item in enumerate(data, start=1) if isinstance(item, dict)]
+
+
+def parse_legacy_profiles_yaml(raw: object) -> Tuple[List[Dict], Dict[str, List[Dict]]]:
+    source = str(raw or "").strip()
+    if not source:
+        return [], {}
+    try:
+        loaded = yaml.safe_load(source) or []
+    except Exception as exc:
+        LOGGER.warning("Failed to parse legacy label_profiles_yaml: %s", exc)
+        return [], {}
+    if isinstance(loaded, dict):
+        for key in ("label_profiles", "profiles", "labels"):
+            if isinstance(loaded.get(key), list):
+                loaded = loaded[key]
+                break
+        else:
+            loaded = [loaded]
+    if not isinstance(loaded, list):
+        return [], {}
 
     profiles: List[Dict] = []
-    for idx, item in enumerate(data, start=1):
+    field_store: Dict[str, List[Dict]] = {}
+    for idx, item in enumerate(loaded, start=1):
         if not isinstance(item, dict):
             continue
-        name = normalize_string(item.get("name"), f"Label {idx}")
-        profile_id = sanitize_id(str(item.get("id") or name), f"label_{idx}")
+        profile = normalize_profile(item, idx)
         fields = item.get("fields") if isinstance(item.get("fields"), list) else []
-        normalized_fields = [normalize_profile_field(field, field_idx) for field_idx, field in enumerate(fields, start=1)]
-        profiles.append({
-            "id": profile_id,
-            "name": name,
-            "printer_host": normalize_string(item.get("printer_host"), "10.50.20.12"),
-            "printer_port": normalize_int(item.get("printer_port"), 9100, 1, 65535),
-            "label_width_mm": normalize_float(item.get("label_width_mm"), 170.0, 50.0, 500.0),
-            "label_height_mm": normalize_float(item.get("label_height_mm"), 305.0, 50.0, 1000.0),
-            "qr_size_mm": normalize_float(item.get("qr_size_mm"), 170.0, 10.0, 300.0),
-            "top_margin_mm": normalize_float(item.get("top_margin_mm"), 0.0, 0.0, 100.0),
-            "footer_bottom_margin_mm": normalize_float(item.get("footer_bottom_margin_mm"), 0.0, 0.0, 50.0),
-            "print_rotation_degrees": normalize_rotation_degrees(item.get("print_rotation_degrees"), 0),
-            "qr_default_value": "" if item.get("qr_default_value") is None else str(item.get("qr_default_value")),
-            "qr_quiet_zone_modules": normalize_int(item.get("qr_quiet_zone_modules"), 3, 0, 20),
-            "qr_error_correction": str(item.get("qr_error_correction") or "M").strip().upper() if str(item.get("qr_error_correction") or "M").strip().upper() in QR_ERROR_CORRECTION_MAP else "M",
-            "fields": normalized_fields,
-        })
-    return profiles
+        field_store[profile["id"]] = [normalize_profile_field(field, field_idx) for field_idx, field in enumerate(fields, start=1)]
+        profiles.append(profile)
+    return profiles, field_store
+
+
+def load_options() -> Tuple[Dict, Dict[str, List[Dict]], str | None]:
+    options = dict(DEFAULT_OPTIONS)
+    raw = {}
+    migrated_notice = None
+    if os.path.exists(OPTIONS_PATH):
+        try:
+            with open(OPTIONS_PATH, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            if isinstance(data, dict):
+                raw = data
+        except Exception as exc:
+            LOGGER.warning("Failed to load %s: %s", OPTIONS_PATH, exc)
+
+    options["ui_language"] = normalize_ui_language(raw.get("ui_language"), DEFAULT_OPTIONS["ui_language"])
+
+    legacy_field_store: Dict[str, List[Dict]] = {}
+    if isinstance(raw.get("label_profiles"), list):
+        profiles = parse_label_profiles(raw.get("label_profiles"))
+    else:
+        profiles = []
+
+    if not profiles:
+        legacy_profiles, legacy_field_store = parse_legacy_profiles_yaml(raw.get("label_profiles_yaml"))
+        if legacy_profiles:
+            profiles = legacy_profiles
+            migrated_notice = "legacy_migrated"
+
+    if not profiles:
+        profiles = parse_label_profiles(DEFAULT_OPTIONS["label_profiles"])
+
+    options["label_profiles"] = profiles
+    return options, legacy_field_store, migrated_notice
+
+
+def default_field_store_for_profiles(profiles: List[Dict]) -> Dict[str, List[Dict]]:
+    store: Dict[str, List[Dict]] = {}
+    for profile in profiles:
+        defaults = DEFAULT_PROFILE_FIELDS.get(profile["id"], [])
+        store[profile["id"]] = [normalize_profile_field(field, idx) for idx, field in enumerate(defaults, start=1)]
+    return store
+
+
+def load_field_store(profiles: List[Dict], legacy_seed: Dict[str, List[Dict]] | None = None) -> Dict[str, List[Dict]]:
+    profile_ids = {profile["id"] for profile in profiles}
+    store: Dict[str, List[Dict]] = {}
+    wrote_file = False
+    if os.path.exists(FIELD_STORE_PATH):
+        try:
+            with open(FIELD_STORE_PATH, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            if isinstance(data, dict):
+                for profile_id, fields in data.items():
+                    if profile_id not in profile_ids or not isinstance(fields, list):
+                        continue
+                    store[profile_id] = [normalize_profile_field(field, idx) for idx, field in enumerate(fields, start=1)]
+        except Exception as exc:
+            LOGGER.warning("Failed to load %s: %s", FIELD_STORE_PATH, exc)
+
+    defaults = default_field_store_for_profiles(profiles)
+    legacy_seed = legacy_seed or {}
+    for profile in profiles:
+        profile_id = profile["id"]
+        if profile_id in store:
+            continue
+        seed_fields = legacy_seed.get(profile_id)
+        if seed_fields:
+            store[profile_id] = [normalize_profile_field(field, idx) for idx, field in enumerate(seed_fields, start=1)]
+            wrote_file = True
+        else:
+            store[profile_id] = defaults.get(profile_id, [])
+            if defaults.get(profile_id):
+                wrote_file = True
+
+    # Keep only active profile ids.
+    store = {profile_id: store.get(profile_id, []) for profile_id in sorted(profile_ids)}
+    if wrote_file or not os.path.exists(FIELD_STORE_PATH):
+        save_field_store(store)
+    return store
+
+
+def save_field_store(store: Dict[str, List[Dict]]) -> None:
+    serializable = {
+        profile_id: [normalize_profile_field(field, idx) for idx, field in enumerate(fields, start=1)]
+        for profile_id, fields in store.items()
+    }
+    with open(FIELD_STORE_PATH, "w", encoding="utf-8") as handle:
+        json.dump(serializable, handle, ensure_ascii=False, indent=2)
 
 
 def load_runtime_options(profile_id: str | None = None) -> Dict:
-    opts = load_options()
-    profiles = parse_label_profiles(opts.get("label_profiles_yaml"))
+    opts, legacy_seed, migration_notice = load_options()
+    profiles = parse_label_profiles(opts.get("label_profiles"))
     if not profiles:
-        profiles = parse_label_profiles(DEFAULT_OPTIONS["label_profiles_yaml"])
+        profiles = parse_label_profiles(DEFAULT_OPTIONS["label_profiles"])
+    field_store = load_field_store(profiles, legacy_seed)
+
     selected_id = profile_id or request.values.get("profile_id") or request.args.get("profile_id") or request.form.get("profile_id")
     active_profile = None
     if selected_id:
         active_profile = next((profile for profile in profiles if profile["id"] == selected_id), None)
     if active_profile is None and profiles:
         active_profile = profiles[0]
-    opts["label_profiles"] = profiles
+
+    enriched_profiles = []
+    for profile in profiles:
+        enriched_profiles.append({**profile, "fields": deepcopy(field_store.get(profile["id"], []))})
+
+    if active_profile:
+        active_profile = next((profile for profile in enriched_profiles if profile["id"] == active_profile["id"]), active_profile)
+
+    opts["label_profiles"] = enriched_profiles
     opts["active_profile"] = active_profile
     opts["active_profile_id"] = active_profile["id"] if active_profile else ""
     opts["active_profile_name"] = active_profile["name"] if active_profile else ""
+    opts["field_store"] = field_store
+    opts["migration_notice"] = migration_notice
     return opts
 
 
@@ -1179,7 +1598,123 @@ def preview_query_from_form(form: Dict[str, str], field_forms: List[Dict]) -> st
     return urlencode(params)
 
 
-def render_page(form: Dict[str, str], opts: Dict, field_forms: List[Dict], result: Dict | None = None) -> str:
+def blank_editor_form() -> Dict:
+    return {
+        "original_field_id": "",
+        "id": "",
+        "name": "",
+        "default_value": "",
+        "alignment": "center",
+        "font_family": "sans",
+        "font_size_mm": 7.0,
+        "bold": False,
+        "italic": False,
+        "underline": False,
+        "print_by_default": True,
+        "required": False,
+        "number_only": False,
+        "suffix": "",
+        "position": "body",
+        "append_current_date": False,
+        "max_lines": 3,
+    }
+
+
+def editor_form_from_field(field: Dict | None) -> Dict:
+    if not field:
+        return blank_editor_form()
+    return {
+        "original_field_id": field.get("id", ""),
+        "id": field.get("id", ""),
+        "name": field.get("name", ""),
+        "default_value": field.get("default_value", ""),
+        "alignment": field.get("alignment", "center"),
+        "font_family": field.get("font_family", "sans"),
+        "font_size_mm": field.get("font_size_mm", 7.0),
+        "bold": field.get("bold", False),
+        "italic": field.get("italic", False),
+        "underline": field.get("underline", False),
+        "print_by_default": field.get("print_by_default", True),
+        "required": field.get("required", False),
+        "number_only": field.get("number_only", False),
+        "suffix": field.get("suffix", ""),
+        "position": field.get("position", "body"),
+        "append_current_date": field.get("append_current_date", False),
+        "max_lines": field.get("max_lines", 3),
+    }
+
+
+def field_store_map_for_profile(profile: Dict) -> Dict[str, Dict]:
+    return {field["id"]: editor_form_from_field(field) for field in profile.get("fields", [])}
+
+
+def validate_and_normalize_editor_payload(source: Dict, language: str) -> Tuple[str, Dict]:
+    raw_name = normalize_string(source.get("name"), "")
+    if not raw_name:
+        raise ValueError(ui_text(language, "field_name_required"))
+    original_field_id = sanitize_id(str(source.get("original_field_id") or ""), "")
+    normalized = normalize_profile_field(
+        {
+            "id": source.get("id") or raw_name,
+            "name": raw_name,
+            "default_value": source.get("default_value", ""),
+            "alignment": source.get("alignment", "center"),
+            "font_family": source.get("font_family", "sans"),
+            "font_size_mm": source.get("font_size_mm", 7.0),
+            "bold": source.get("bold"),
+            "italic": source.get("italic"),
+            "underline": source.get("underline"),
+            "print_by_default": source.get("print_by_default", "1"),
+            "required": source.get("required"),
+            "number_only": source.get("number_only"),
+            "suffix": source.get("suffix", ""),
+            "position": source.get("position", "body"),
+            "append_current_date": source.get("append_current_date"),
+            "max_lines": source.get("max_lines", 3),
+        },
+        1,
+    )
+    return original_field_id, normalized
+
+
+def save_profile_field(profile_id: str, original_field_id: str, field: Dict, profile_name: str, language: str) -> None:
+    opts, _, _ = load_options()
+    profiles = parse_label_profiles(opts.get("label_profiles"))
+    field_store = load_field_store(profiles)
+    fields = list(field_store.get(profile_id, []))
+    new_id = field["id"]
+    collision = next((existing for existing in fields if existing["id"] == new_id and existing["id"] != original_field_id), None)
+    if collision:
+        raise ValueError(ui_text(language, "field_duplicate_error", field_id=new_id))
+
+    updated = False
+    for idx, existing in enumerate(fields):
+        if existing["id"] == original_field_id and original_field_id:
+            fields[idx] = field
+            updated = True
+            break
+    if not updated:
+        fields.append(field)
+    field_store[profile_id] = fields
+    save_field_store(field_store)
+    LOGGER.info("Saved field %s for profile %s (%s)", field["id"], profile_id, profile_name)
+
+
+def delete_profile_field(profile_id: str, field_id: str, profile_name: str) -> bool:
+    opts, _, _ = load_options()
+    profiles = parse_label_profiles(opts.get("label_profiles"))
+    field_store = load_field_store(profiles)
+    fields = list(field_store.get(profile_id, []))
+    remaining = [field for field in fields if field.get("id") != field_id]
+    changed = len(remaining) != len(fields)
+    field_store[profile_id] = remaining
+    save_field_store(field_store)
+    if changed:
+        LOGGER.info("Deleted field %s from profile %s (%s)", field_id, profile_id, profile_name)
+    return changed
+
+
+def render_page(form: Dict[str, str], opts: Dict, field_forms: List[Dict], result: Dict | None = None, field_result: Dict | None = None, editor_form: Dict | None = None) -> str:
     profile = opts.get("active_profile") or {}
     layout = effective_layout(profile)
     ui = get_ui_strings(opts.get("ui_language"))
@@ -1191,12 +1726,15 @@ def render_page(form: Dict[str, str], opts: Dict, field_forms: List[Dict], resul
         qr_preview = validate_required_text(form.get("qr_value", ""), ui["qr_value_label"], opts["ui_language"])
     except Exception as exc:
         qr_preview = ui_text(opts, "configuration_error", error=exc)
+    editor_form = editor_form or blank_editor_form()
     return render_template_string(
         HTML,
         ui=ui,
         result=result,
+        field_result=field_result,
         form=form,
         field_forms=field_forms,
+        active_profile_fields=profile.get("fields", []),
         label_profiles=opts.get("label_profiles", []),
         active_profile_id=opts.get("active_profile_id", ""),
         active_profile_name=opts.get("active_profile_name", ""),
@@ -1216,6 +1754,11 @@ def render_page(form: Dict[str, str], opts: Dict, field_forms: List[Dict], resul
         preview_display_height_mm=preview_display_height_mm,
         ingress_base=ingress_base_path(),
         preview_query=preview_query_from_form(form, field_forms),
+        editor_form=editor_form,
+        field_editor_json=field_store_map_for_profile(profile),
+        alignments=sorted(ALIGNMENTS),
+        font_families=sorted(FONT_FAMILIES),
+        field_positions=["body", "footer"],
     )
 
 
@@ -1264,7 +1807,10 @@ def index():
     form, field_forms = form_data_from_request(opts)
     profile = opts.get("active_profile") or {}
     LOGGER.info("Opened UI for printer %s:%s", profile.get("printer_host"), profile.get("printer_port"))
-    return render_page(form, opts, field_forms, result=None)
+    field_result = None
+    if opts.get("migration_notice"):
+        field_result = {"success": True, "message": ui_text(opts, opts["migration_notice"])}
+    return render_page(form, opts, field_forms, result=None, field_result=field_result)
 
 
 @APP.route("/print", methods=["POST"])
@@ -1285,6 +1831,73 @@ def print_label():
         LOGGER.exception("Print failed")
         result = {"success": False, "message": ui_text(opts, "print_failed_message", error=exc)}
     return render_page(form, opts, field_forms, result=result)
+
+
+@APP.route("/fields/save", methods=["POST"])
+def save_field():
+    opts = load_runtime_options(request.form.get("profile_id") or None)
+    profile = opts.get("active_profile") or {}
+    form, field_forms = form_data_from_request(opts)
+    editor_form = blank_editor_form()
+    result = None
+    try:
+        if not profile:
+            raise ValueError(ui_text(opts, "profile_not_found"))
+        original_field_id, normalized_field = validate_and_normalize_editor_payload(request.form, opts["ui_language"])
+        save_profile_field(profile["id"], original_field_id, normalized_field, profile.get("name", ""), opts["ui_language"])
+        opts = load_runtime_options(profile["id"])
+        form, field_forms = form_data_from_request(opts)
+        result = {
+            "success": True,
+            "message": ui_text(opts, "field_saved_message", field=normalized_field["name"], profile=opts.get("active_profile_name", "")),
+        }
+        editor_form = blank_editor_form()
+    except Exception as exc:
+        LOGGER.exception("Field save failed")
+        editor_form = editor_form_from_field({
+            "id": request.form.get("id", ""),
+            "name": request.form.get("name", ""),
+            "default_value": request.form.get("default_value", ""),
+            "alignment": request.form.get("alignment", "center"),
+            "font_family": request.form.get("font_family", "sans"),
+            "font_size_mm": request.form.get("font_size_mm", 7.0),
+            "bold": normalize_bool(request.form.get("bold"), False),
+            "italic": normalize_bool(request.form.get("italic"), False),
+            "underline": normalize_bool(request.form.get("underline"), False),
+            "print_by_default": normalize_bool(request.form.get("print_by_default"), True),
+            "required": normalize_bool(request.form.get("required"), False),
+            "number_only": normalize_bool(request.form.get("number_only"), False),
+            "suffix": request.form.get("suffix", ""),
+            "position": request.form.get("position", "body"),
+            "append_current_date": normalize_bool(request.form.get("append_current_date"), False),
+            "max_lines": request.form.get("max_lines", 3),
+        })
+        editor_form["original_field_id"] = request.form.get("original_field_id", "")
+        result = {"success": False, "message": ui_text(opts, "field_save_failed", error=exc)}
+    return render_page(form, opts, field_forms, field_result=result, editor_form=editor_form)
+
+
+@APP.route("/fields/delete", methods=["POST"])
+def delete_field():
+    opts = load_runtime_options(request.form.get("profile_id") or None)
+    profile = opts.get("active_profile") or {}
+    form, field_forms = form_data_from_request(opts)
+    result = None
+    try:
+        if not profile:
+            raise ValueError(ui_text(opts, "profile_not_found"))
+        field_id = sanitize_id(str(request.form.get("field_id") or ""), "")
+        deleted = delete_profile_field(profile["id"], field_id, profile.get("name", ""))
+        opts = load_runtime_options(profile["id"])
+        form, field_forms = form_data_from_request(opts)
+        result = {
+            "success": deleted,
+            "message": ui_text(opts, "field_deleted_message", field=field_id, profile=opts.get("active_profile_name", "")) if deleted else ui_text(opts, "field_delete_failed", error=ui_text(opts, "profile_not_found") if not field_id else field_id),
+        }
+    except Exception as exc:
+        LOGGER.exception("Field delete failed")
+        result = {"success": False, "message": ui_text(opts, "field_delete_failed", error=exc)}
+    return render_page(form, opts, field_forms, field_result=result)
 
 
 @APP.route("/preview", methods=["GET"])
@@ -1352,4 +1965,5 @@ def api_print():
 
 if __name__ == "__main__":
     from waitress import serve
+
     serve(APP, host="0.0.0.0", port=8099)

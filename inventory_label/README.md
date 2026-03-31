@@ -2,29 +2,29 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.37
+## What changed in v0.1.39
 
-This version moves the full label definition into `label_profiles_yaml`.
+This version splits the configuration into two layers:
 
-Only `ui_language` remains global. Everything else is profile-specific, including:
-- printer host
-- printer port
-- label size
-- QR settings
-- rotation
-- all field definitions
+- **Add-on Configuration tab**: create and edit label profiles
+- **Add-on web UI**: create and edit fields for the selected label profile
 
-Each profile contains a nested `fields:` list. Every field has its own label, default value, style, and print behavior.
+This matches the Home Assistant add-on settings UI much better:
+
+- `ui_language` stays global
+- every label profile gets its own structured entry in the settings UI
+- field definitions are stored separately per profile and are managed in the add-on UI
+- legacy `label_profiles_yaml` is migrated automatically on first start
 
 ## Add-on config
 
-Configure one or more label profiles in the add-on **Configuration** tab with `label_profiles_yaml`.
+Configure one or more label profiles in the add-on **Configuration** tab.
 
 Example:
 
 ```yaml
 ui_language: de
-label_profiles_yaml: |
+label_profiles:
   - id: standard
     name: Standard
     printer_host: 10.50.20.12
@@ -38,67 +38,6 @@ label_profiles_yaml: |
     qr_default_value: ""
     qr_quiet_zone_modules: 3
     qr_error_correction: M
-    fields:
-      - id: project_no
-        name: Projektnummer
-        default_value: "250001"
-        alignment: center
-        font_family: sans
-        font_size_mm: 18
-        bold: true
-        italic: false
-        underline: false
-        print_by_default: true
-        required: true
-        number_only: true
-        position: body
-      - id: project_name
-        name: Projektname
-        default_value: EFH Huggentobbler Biel
-        alignment: center
-        font_family: sans
-        font_size_mm: 13
-        bold: false
-        italic: false
-        underline: false
-        print_by_default: true
-        position: body
-      - id: element
-        name: Element
-        default_value: DE1
-        alignment: center
-        font_family: sans
-        font_size_mm: 18
-        bold: false
-        italic: false
-        underline: false
-        print_by_default: true
-        position: body
-      - id: weight
-        name: Gewicht
-        default_value: ""
-        alignment: center
-        font_family: sans
-        font_size_mm: 7
-        bold: false
-        italic: false
-        underline: false
-        print_by_default: false
-        number_only: true
-        suffix: kg
-        position: body
-      - id: footer
-        name: Footer
-        default_value: Ernst Fink AG, Schorenweg 144, 4585 Biezwil
-        alignment: center
-        font_family: sans
-        font_size_mm: 5
-        bold: false
-        italic: false
-        underline: false
-        print_by_default: true
-        position: footer
-        append_current_date: true
 
   - id: rotated
     name: Rotated
@@ -113,36 +52,21 @@ label_profiles_yaml: |
     qr_default_value: ""
     qr_quiet_zone_modules: 4
     qr_error_correction: M
-    fields:
-      - id: article
-        name: Artikel
-        default_value: "123456"
-        alignment: center
-        font_family: sans
-        font_size_mm: 16
-        bold: true
-        italic: false
-        underline: false
-        print_by_default: true
-        required: true
-        number_only: true
-        position: body
-      - id: description
-        name: Beschreibung
-        default_value: Lagerplatz Nord
-        alignment: center
-        font_family: sans
-        font_size_mm: 11
-        bold: false
-        italic: false
-        underline: false
-        print_by_default: true
-        position: body
 ```
 
-## Field options
+## Field management in the web UI
 
-Every field inside `fields:` can use these settings:
+For the currently selected label profile, the web UI now provides a dedicated field manager.
+
+There you can:
+
+- add a new field
+- edit an existing field
+- delete a field
+- keep field definitions separate for each label profile
+
+Field settings supported in the UI:
+
 - `id`
 - `name`
 - `default_value`
@@ -163,12 +87,14 @@ Every field inside `fields:` can use these settings:
 ## Web UI
 
 In the add-on web UI you can:
+
 - choose the active label profile
 - enter the QR value
 - enter each configured field value
 - turn each field on/off for the current label
 - preview PNG and ZPL
 - print to the printer configured inside the selected profile
+- manage fields for the selected profile in a separate field section
 
 ## API
 

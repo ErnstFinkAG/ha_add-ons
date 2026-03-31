@@ -1,10 +1,10 @@
 name: "Inventory Label"
-version: "0.1.38-reissue"
+version: "0.1.39"
 slug: "inventory_label"
 description: >-
   Print large QR-code labels to a networked Zebra ZT420/ZT421 with live PNG preview,
-  English/German UI, optional 90°/270° rotated layout, and profile-based field definitions
-  configured in the add-on Configuration tab.
+  English/German UI, label profiles configured in the add-on settings, and per-label
+  field management in the web UI.
 url: "https://github.com/ErnstFinkAG/ha_add-ons/tree/main/inventory_label"
 startup: services
 boot: auto
@@ -20,10 +20,10 @@ arch:
   - i386
 options:
   ui_language: "de"
-  label_profiles_yaml: |
-    - id: standard
-      name: Standard
-      printer_host: 10.50.20.12
+  label_profiles:
+    - id: "standard"
+      name: "Standard"
+      printer_host: "10.50.20.12"
       printer_port: 9100
       label_width_mm: 170
       label_height_mm: 305
@@ -33,68 +33,20 @@ options:
       print_rotation_degrees: 0
       qr_default_value: ""
       qr_quiet_zone_modules: 3
-      qr_error_correction: M
-      fields:
-        - id: project_no
-          name: Projektnummer
-          default_value: "250001"
-          alignment: center
-          font_family: sans
-          font_size_mm: 18
-          bold: true
-          italic: false
-          underline: false
-          print_by_default: true
-          required: true
-          number_only: true
-          position: body
-        - id: project_name
-          name: Projektname
-          default_value: EFH Huggentobbler Biel
-          alignment: center
-          font_family: sans
-          font_size_mm: 13
-          bold: false
-          italic: false
-          underline: false
-          print_by_default: true
-          position: body
-        - id: element
-          name: Element
-          default_value: DE1
-          alignment: center
-          font_family: sans
-          font_size_mm: 18
-          bold: false
-          italic: false
-          underline: false
-          print_by_default: true
-          position: body
-        - id: weight
-          name: Gewicht
-          default_value: ""
-          alignment: center
-          font_family: sans
-          font_size_mm: 7
-          bold: false
-          italic: false
-          underline: false
-          print_by_default: false
-          number_only: true
-          suffix: kg
-          position: body
-        - id: footer
-          name: Footer
-          default_value: Ernst Fink AG, Schorenweg 144, 4585 Biezwil
-          alignment: center
-          font_family: sans
-          font_size_mm: 5
-          bold: false
-          italic: false
-          underline: false
-          print_by_default: true
-          position: footer
-          append_current_date: true
+      qr_error_correction: "M"
 schema:
-  ui_language: str
-  label_profiles_yaml: str
+  ui_language: "list(de|en)"
+  label_profiles:
+    - id: str
+      name: str
+      printer_host: str
+      printer_port: port
+      label_width_mm: float
+      label_height_mm: float
+      qr_size_mm: float
+      top_margin_mm: float
+      footer_bottom_margin_mm: float
+      print_rotation_degrees: "list(0|90|270)"
+      qr_default_value: "str?"
+      qr_quiet_zone_modules: int
+      qr_error_correction: "list(L|M|Q|H)"
