@@ -52,13 +52,13 @@ DEFAULT_LABEL_PROFILES = [
     {
         "id": "standard",
         "name": "Standard",
-        "printer_host": "10.50.20.12",
-        "printer_port": 9100,
+        "printer_host": "",
+        "printer_port": None,
         "label_width_mm": 170,
         "label_height_mm": 305,
         "qr_size_mm": 170,
         "top_margin_mm": 0,
-        "footer_bottom_margin_mm": 4,
+        "footer_bottom_margin_mm": 0,
         "print_rotation_degrees": 0,
         "qr_default_value": "",
         "qr_quiet_zone_modules": 3,
@@ -232,6 +232,8 @@ UI_STRINGS = {
         "qr_value_label": "QR value",
         "copies": "Copies",
         "configured_printer": "Configured printer",
+        "not_configured": "Not configured",
+        "printer_not_configured": "Printer host and port are not configured for this label profile.",
         "print_label_button": "Print label",
         "preview_zpl": "Preview ZPL",
         "open_png_preview": "Open PNG preview",
@@ -307,6 +309,8 @@ UI_STRINGS = {
         "qr_value_label": "QR-Inhalt",
         "copies": "Anzahl",
         "configured_printer": "Konfigurierter Drucker",
+        "not_configured": "Nicht konfiguriert",
+        "printer_not_configured": "Drucker-Host und Port sind für dieses Etikettenprofil nicht konfiguriert.",
         "print_label_button": "Etikett drucken",
         "preview_zpl": "ZPL-Vorschau",
         "open_png_preview": "PNG-Vorschau öffnen",
@@ -466,7 +470,7 @@ HTML = """
         <div class="row">
           <div>
             <label for="qr_value">{{ ui.qr_value_label }}</label>
-            <input id="qr_value" name="qr_value" type="text" value="{{ form.qr_value }}" required>
+            <input id="qr_value" name="qr_value" type="text" value="{{ form.qr_value }}">
           </div>
           <div>
             <label for="copies">{{ ui.copies }}</label>
@@ -504,7 +508,7 @@ HTML = """
         <div class="row">
           <div>
             <label>{{ ui.configured_printer }}</label>
-            <input value="{{ printer_host }}:{{ printer_port }}" disabled>
+            <input value="{{ printer_target }}" disabled>
           </div>
           <div>
             <label>{{ ui.profile_settings_source }}</label>
@@ -889,6 +893,21 @@ def normalize_int(value: object, default: int, minimum: int | None = None, maxim
     return parsed
 
 
+def normalize_optional_port(value: object) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = int(text)
+    except Exception:
+        return None
+    if 1 <= parsed <= 65535:
+        return parsed
+    return None
+
+
 def normalize_float(value: object, default: float, minimum: float | None = None, maximum: float | None = None) -> float:
     try:
         parsed = float(str(value).strip())
@@ -978,8 +997,8 @@ def normalize_profile(raw: object, idx: int) -> Dict:
     return {
         "id": profile_id,
         "name": name,
-        "printer_host": normalize_string(data.get("printer_host"), "10.50.20.12"),
-        "printer_port": normalize_int(data.get("printer_port"), 9100, 1, 65535),
+        "printer_host": normalize_string(data.get("printer_host"), ""),
+        "printer_port": normalize_optional_port(data.get("printer_port")),
         "label_width_mm": normalize_float(data.get("label_width_mm"), 170.0, 50.0, 500.0),
         "label_height_mm": normalize_float(data.get("label_height_mm"), 305.0, 50.0, 1000.0),
         "qr_size_mm": normalize_float(data.get("qr_size_mm"), 170.0, 10.0, 300.0),
@@ -1213,6 +1232,26 @@ def validate_required_text(value: object, label: str, language: str) -> str:
     if not text:
         raise ValueError(ui_text(language, "field_required", field=label))
     return text
+
+
+def normalize_qr_value(value: object) -> str:
+    return str(value if value is not None else "").strip()
+
+
+def format_printer_target(profile: Dict, language_or_options: object) -> str:
+    host = normalize_string(profile.get("printer_host"), "")
+    port = profile.get("printer_port")
+    if not host or port in (None, "", 0):
+        return ui_text(language_or_options, "not_configured")
+    return f"{host}:{port}"
+
+
+def resolve_printer_target(profile: Dict, language_or_options: object) -> Tuple[str, int]:
+    host = normalize_string(profile.get("printer_host"), "")
+    port = normalize_optional_port(profile.get("printer_port"))
+    if not host or port is None:
+        raise ValueError(ui_text(language_or_options, "printer_not_configured"))
+    return host, port
 
 
 def validate_field_forms(field_forms: List[Dict], language: str) -> List[Dict]:
@@ -1488,17 +1527,22 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
     layout = effective_layout(profile)
     img = Image.new("RGB", (printable_w, canvas_h), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
-    qr_size = min(layout["qr_size_dots"], printable_w)
-    qr_left = max((printable_w - qr_size) // 2, 0)
-    qr_top = layout["top_margin_dots"]
-    qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
-    img.paste(qr_img, (qr_left, qr_top))
-    if preview:
-        preview_border_width = max(2, int(round(DOTS_PER_MM * 0.5)))
-        draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
-    margin_x = max((printable_w - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM))
+    has_qr = bool(normalize_qr_value(qr_value))
+    margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
     text_width = max(1, printable_w - (margin_x * 2))
-    current_y = qr_top + qr_size + mm_to_dots(8)
+    current_y = layout["top_margin_dots"]
+    if has_qr:
+        qr_size = min(layout["qr_size_dots"], printable_w)
+        qr_left = max((printable_w - qr_size) // 2, 0)
+        qr_top = layout["top_margin_dots"]
+        qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
+        img.paste(qr_img, (qr_left, qr_top))
+        if preview:
+            preview_border_width = max(2, int(round(DOTS_PER_MM * 0.5)))
+            draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
+        margin_x = max((printable_w - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM))
+        text_width = max(1, printable_w - (margin_x * 2))
+        current_y = qr_top + qr_size + mm_to_dots(8)
     draw_body_blocks(draw, current_y, margin_x, text_width, body_blocks)
     if footer_blocks:
         footer_bottom = canvas_h - layout["footer_bottom_margin_dots"]
@@ -1512,19 +1556,25 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
     logical_h = printable_w
     landscape = Image.new("RGB", (logical_w, logical_h), color=(255, 255, 255))
     draw = ImageDraw.Draw(landscape)
-    qr_size = min(layout["qr_size_dots"], logical_h)
-    qr_left = min(max(layout["top_margin_dots"], 0), max(0, logical_w - qr_size))
-    qr_top = max((logical_h - qr_size) // 2, 0)
-    qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
-    landscape.paste(qr_img, (qr_left, qr_top))
-    if preview:
-        preview_border_width = max(2, int(round(DOTS_PER_MM * 0.5)))
-        draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
-    inter_block_gap = mm_to_dots(8)
+    has_qr = bool(normalize_qr_value(qr_value))
+    left_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
     right_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
-    text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
+    text_left = left_margin
     text_width = max(1, logical_w - text_left - right_margin)
-    text_top = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
+    text_top = layout["top_margin_dots"]
+    if has_qr:
+        qr_size = min(layout["qr_size_dots"], logical_h)
+        qr_left = min(max(layout["top_margin_dots"], 0), max(0, logical_w - qr_size))
+        qr_top = max((logical_h - qr_size) // 2, 0)
+        qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
+        landscape.paste(qr_img, (qr_left, qr_top))
+        if preview:
+            preview_border_width = max(2, int(round(DOTS_PER_MM * 0.5)))
+            draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
+        inter_block_gap = mm_to_dots(8)
+        text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
+        text_width = max(1, logical_w - text_left - right_margin)
+        text_top = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
     draw_body_blocks(draw, text_top, text_left, text_width, body_blocks)
     if footer_blocks:
         footer_bottom = logical_h - layout["footer_bottom_margin_dots"]
@@ -1722,10 +1772,7 @@ def render_page(form: Dict[str, str], opts: Dict, field_forms: List[Dict], resul
     preview_display_height_mm = profile.get("label_height_mm", 305.0)
     if profile.get("print_rotation_degrees") in (90, 270):
         preview_display_width_mm, preview_display_height_mm = preview_display_height_mm, preview_display_width_mm
-    try:
-        qr_preview = validate_required_text(form.get("qr_value", ""), ui["qr_value_label"], opts["ui_language"])
-    except Exception as exc:
-        qr_preview = ui_text(opts, "configuration_error", error=exc)
+    qr_preview = normalize_qr_value(form.get("qr_value", "")) or ui["none"]
     editor_form = editor_form or blank_editor_form()
     return render_template_string(
         HTML,
@@ -1740,6 +1787,7 @@ def render_page(form: Dict[str, str], opts: Dict, field_forms: List[Dict], resul
         active_profile_name=opts.get("active_profile_name", ""),
         printer_host=profile.get("printer_host", ""),
         printer_port=profile.get("printer_port", ""),
+        printer_target=format_printer_target(profile, opts),
         qr_preview=qr_preview,
         requested_width_mm=profile.get("label_width_mm", 0),
         requested_height_mm=profile.get("label_height_mm", 0),
@@ -1820,13 +1868,14 @@ def print_label():
     form, field_forms = form_data_from_request(opts)
     result = {"success": False, "message": ui_text(opts, "unknown_error")}
     try:
-        qr_value = validate_required_text(form.get("qr_value", ""), ui_text(opts, "qr_value_label"), opts["ui_language"])
+        qr_value = normalize_qr_value(form.get("qr_value", ""))
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         copies = max(1, min(50, int(form.get("copies", "1"))))
         zpl = build_zpl(qr_value, field_forms, copies, profile)
+        host, port = resolve_printer_target(profile, opts)
         LOGGER.info("Print request received: profile=%s copies=%s qr_payload=%r", profile.get("id"), copies, qr_value)
-        send_to_printer(profile["printer_host"], int(profile["printer_port"]), zpl)
-        result = {"success": True, "message": ui_text(opts, "sent_labels_message", copies=copies, host=profile["printer_host"], port=profile["printer_port"], qr_payload=qr_value)}
+        send_to_printer(host, port, zpl)
+        result = {"success": True, "message": ui_text(opts, "sent_labels_message", copies=copies, host=host, port=port, qr_payload=qr_value or ui_text(opts, "none"))}
     except Exception as exc:
         LOGGER.exception("Print failed")
         result = {"success": False, "message": ui_text(opts, "print_failed_message", error=exc)}
@@ -1906,7 +1955,7 @@ def preview():
     profile = opts.get("active_profile") or {}
     form, field_forms = form_data_from_request(opts)
     try:
-        qr_value = validate_required_text(form.get("qr_value", ""), ui_text(opts, "qr_value_label"), opts["ui_language"])
+        qr_value = normalize_qr_value(form.get("qr_value", ""))
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         copies = max(1, min(50, int(form.get("copies", "1"))))
         zpl = build_zpl(qr_value, field_forms, copies, profile)
@@ -1922,7 +1971,7 @@ def preview_png():
     opts = load_runtime_options()
     form, field_forms = form_data_from_request(opts)
     try:
-        qr_value = validate_required_text(form.get("qr_value", ""), ui_text(opts, "qr_value_label"), opts["ui_language"])
+        qr_value = normalize_qr_value(form.get("qr_value", ""))
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("active_profile_id"), qr_value)
         img = render_label_image(qr_value, field_forms, opts["active_profile"], preview=True)
@@ -1941,16 +1990,18 @@ def api_print():
     opts = load_runtime_options(str(payload.get("profile_id") or "") or None)
     profile = opts.get("active_profile") or {}
     try:
-        qr_value = validate_required_text(payload.get("qr_value", profile.get("qr_default_value", "")), ui_text(opts, "qr_value_label"), opts["ui_language"])
+        qr_value = normalize_qr_value(payload.get("qr_value", profile.get("qr_default_value", "")))
         field_forms = validate_field_forms(api_field_forms_from_payload(profile, payload), opts["ui_language"])
         copies = max(1, min(50, int(payload.get("copies", 1))))
         zpl = build_zpl(qr_value, field_forms, copies, profile)
+        host, port = resolve_printer_target(profile, opts)
         LOGGER.info("API print request received: profile=%s copies=%s qr_value=%r", profile.get("id"), copies, qr_value)
-        send_to_printer(profile["printer_host"], int(profile["printer_port"]), zpl)
+        send_to_printer(host, port, zpl)
         return jsonify({
             "ok": True,
             "profile_id": profile.get("id", ""),
-            "printer": profile.get("printer_host", ""),
+            "printer": host,
+            "printer_port": port,
             "copies": copies,
             "qr_payload": qr_value,
             "language": opts["ui_language"],

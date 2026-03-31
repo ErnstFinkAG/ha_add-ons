@@ -1,5 +1,5 @@
 name: "Inventory Label"
-version: "0.1.39"
+version: "0.1.40"
 slug: "inventory_label"
 description: >-
   Print large QR-code labels to a networked Zebra ZT420/ZT421 with live PNG preview,
@@ -23,13 +23,12 @@ options:
   label_profiles:
     - id: "standard"
       name: "Standard"
-      printer_host: "10.50.20.12"
-      printer_port: 9100
+      printer_host: ""
       label_width_mm: 170
       label_height_mm: 305
       qr_size_mm: 170
       top_margin_mm: 0
-      footer_bottom_margin_mm: 4
+      footer_bottom_margin_mm: 0
       print_rotation_degrees: 0
       qr_default_value: ""
       qr_quiet_zone_modules: 3
@@ -39,8 +38,8 @@ schema:
   label_profiles:
     - id: str
       name: str
-      printer_host: str
-      printer_port: port
+      printer_host: "str?"
+      printer_port: "port?"
       label_width_mm: float
       label_height_mm: float
       qr_size_mm: float

@@ -2,7 +2,7 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.39
+## What changed in v0.1.40
 
 This version splits the configuration into two layers:
 
@@ -27,13 +27,12 @@ ui_language: de
 label_profiles:
   - id: standard
     name: Standard
-    printer_host: 10.50.20.12
-    printer_port: 9100
+    printer_host: ""
     label_width_mm: 170
     label_height_mm: 305
     qr_size_mm: 170
     top_margin_mm: 0
-    footer_bottom_margin_mm: 4
+    footer_bottom_margin_mm: 0
     print_rotation_degrees: 0
     qr_default_value: ""
     qr_quiet_zone_modules: 3
@@ -41,13 +40,12 @@ label_profiles:
 
   - id: rotated
     name: Rotated
-    printer_host: 10.50.20.12
-    printer_port: 9100
+    printer_host: ""
     label_width_mm: 170
     label_height_mm: 305
     qr_size_mm: 160
     top_margin_mm: 0
-    footer_bottom_margin_mm: 4
+    footer_bottom_margin_mm: 0
     print_rotation_degrees: 90
     qr_default_value: ""
     qr_quiet_zone_modules: 4
@@ -85,6 +83,8 @@ Field settings supported in the UI:
 - `max_lines`
 
 ## Web UI
+
+Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If the QR value is empty, no QR code is rendered. New label profiles should use 0 mm for all margin options.
 
 In the add-on web UI you can:
 

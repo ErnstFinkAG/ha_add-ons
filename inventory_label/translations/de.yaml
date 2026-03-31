@@ -14,10 +14,10 @@ configuration:
         description: Name, der im Add-on angezeigt wird.
       printer_host:
         name: Drucker-Host
-        description: IP-Adresse oder Hostname des Netzwerkdruckers.
+        description: Optional. IP-Adresse oder Hostname des Netzwerkdruckers.
       printer_port:
         name: Drucker-Port
-        description: Raw-TCP-Port des Druckers, normalerweise 9100.
+        description: Optional. Raw-TCP-Port des Druckers, normalerweise 9100.
       label_width_mm:
         name: Labelbreite (mm)
         description: Physische Breite des Labels.
@@ -32,7 +32,7 @@ configuration:
         description: Oberer Abstand vor dem QR-Code.
       footer_bottom_margin_mm:
         name: Footer-Unterrand (mm)
-        description: Unterer Abstand für Footer-Text.
+        description: Unterer Abstand für Footer-Text. Standard für neue Labels: 0 mm.
       print_rotation_degrees:
         name: Druckdrehung
         description: Drehung des gerenderten Labels.

@@ -14,10 +14,10 @@ configuration:
         description: Name shown in the add-on UI.
       printer_host:
         name: Printer host
-        description: IP address or host name of the network printer.
+        description: Optional. IP address or host name of the network printer.
       printer_port:
         name: Printer port
-        description: Raw TCP port of the printer, usually 9100.
+        description: Optional. Raw TCP port of the printer, usually 9100.
       label_width_mm:
         name: Label width (mm)
         description: Physical width of the label.
@@ -32,7 +32,7 @@ configuration:
         description: Top offset before placing the QR code.
       footer_bottom_margin_mm:
         name: Footer bottom margin (mm)
-        description: Bottom offset for footer text.
+        description: Bottom offset for footer text. Default for new labels: 0 mm.
       print_rotation_degrees:
         name: Print rotation
         description: Rotation of the rendered label.
