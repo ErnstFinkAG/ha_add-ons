@@ -60,7 +60,6 @@ DEFAULT_LABEL_PROFILES = [
         "top_margin_mm": 0,
         "footer_bottom_margin_mm": 0,
         "print_rotation_degrees": 0,
-        "qr_default_value": "",
         "qr_quiet_zone_modules": 3,
         "qr_error_correction": "M",
     }
@@ -229,7 +228,9 @@ UI_STRINGS = {
         "intro_text": "Create label profiles in the add-on configuration. Field definitions are managed here in the web UI for the currently selected label.",
         "profile_select": "Label profile",
         "profile_none": "(none)",
-        "qr_value_label": "QR value",
+        "qr_value_label": "QR fields",
+        "qr_field_help": "Select one or more defined fields. The QR content is built automatically from their current values.",
+        "qr_field_empty": "No QR field selected. No QR code will be generated.",
         "copies": "Copies",
         "configured_printer": "Configured printer",
         "not_configured": "Not configured",
@@ -306,7 +307,9 @@ UI_STRINGS = {
         "intro_text": "Lege die Etikettenprofile in der Add-on-Konfiguration an. Die Felddefinitionen werden hier in der Weboberfläche pro ausgewähltem Label verwaltet.",
         "profile_select": "Etikettenprofil",
         "profile_none": "(keins)",
-        "qr_value_label": "QR-Inhalt",
+        "qr_value_label": "QR-Felder",
+        "qr_field_help": "Wähle ein oder mehrere definierte Felder. Der QR-Inhalt wird automatisch aus deren aktuellen Werten zusammengesetzt.",
+        "qr_field_empty": "Kein QR-Feld ausgewählt. Es wird kein QR-Code erzeugt.",
         "copies": "Anzahl",
         "configured_printer": "Konfigurierter Drucker",
         "not_configured": "Nicht konfiguriert",
@@ -438,6 +441,11 @@ HTML = """
     .field-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
     .small { font-size: 0.92rem; }
     .headline-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+    .selector-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .selector-option { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: #111827; cursor: pointer; }
+    .selector-option input { margin-top: 3px; margin-bottom: 0; }
+    .selector-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .selector-text strong, .selector-text span { word-break: break-word; }
     code { word-break: break-word; }
     @media (max-width: 980px) {
       .two-col { grid-template-columns: 1fr; }
@@ -469,8 +477,24 @@ HTML = """
 
         <div class="row">
           <div>
-            <label for="qr_value">{{ ui.qr_value_label }}</label>
-            <input id="qr_value" name="qr_value" type="text" value="{{ form.qr_value }}">
+            <label>{{ ui.qr_value_label }}</label>
+            <div class="selector-grid">
+              {% for field in qr_field_options %}
+              <label class="selector-option" for="qr_field_{{ field.id }}">
+                <input id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" {% if field.selected %}checked{% endif %}>
+                <div class="selector-text">
+                  <strong>{{ field.name }}</strong>
+                  <span class="muted small">{{ field.value or ui.none }}</span>
+                </div>
+              </label>
+              {% else %}
+              <div class="field-card muted">{{ ui.no_fields_configured }}</div>
+              {% endfor %}
+            </div>
+            <p class="muted small">{{ ui.qr_field_help }}</p>
+            {% if not qr_selected_ids %}
+            <p class="muted small">{{ ui.qr_field_empty }}</p>
+            {% endif %}
           </div>
           <div>
             <label for="copies">{{ ui.copies }}</label>
@@ -715,7 +739,7 @@ HTML = """
         const formData = new FormData(form);
         for (const [key, value] of formData.entries()) {
           if (key === "copies") continue;
-          params.set(key, String(value));
+          params.append(key, String(value));
         }
         params.set("copies", normalizedCopies());
         return params;
@@ -1198,10 +1222,10 @@ def build_field_forms(profile: Dict, source: Dict | None = None) -> List[Dict]:
     return forms
 
 
-def default_form_from_profile(profile: Dict | None) -> Dict[str, str]:
-    form = {
+def default_form_from_profile(profile: Dict | None) -> Dict[str, object]:
+    form: Dict[str, object] = {
         "profile_id": profile["id"] if profile else "",
-        "qr_value": profile.get("qr_default_value", "") if profile else "",
+        "qr_field_ids": [],
         "copies": "1",
     }
     for field in (profile or {}).get("fields", []):
@@ -1211,12 +1235,13 @@ def default_form_from_profile(profile: Dict | None) -> Dict[str, str]:
     return form
 
 
-def form_data_from_request(opts: Dict) -> Tuple[Dict[str, str], List[Dict]]:
+def form_data_from_request(opts: Dict) -> Tuple[Dict[str, object], List[Dict]]:
     profile = opts.get("active_profile") or {}
     defaults = default_form_from_profile(profile)
-    form = {
+    selected_qr_fields = selected_qr_field_ids_from_source(profile, request.values)
+    form: Dict[str, object] = {
         "profile_id": request.values.get("profile_id", defaults.get("profile_id", "")),
-        "qr_value": request.values.get("qr_value", defaults.get("qr_value", "")),
+        "qr_field_ids": selected_qr_fields,
         "copies": request.values.get("copies", defaults.get("copies", "1")),
     }
     field_forms = build_field_forms(profile, request.values)
@@ -1236,6 +1261,55 @@ def validate_required_text(value: object, label: str, language: str) -> str:
 
 def normalize_qr_value(value: object) -> str:
     return str(value if value is not None else "").strip()
+
+
+def normalize_qr_field_ids(values: object) -> List[str]:
+    if values is None:
+        return []
+    if isinstance(values, str):
+        raw_values = [part.strip() for part in values.split(",")]
+    elif isinstance(values, (list, tuple, set)):
+        raw_values = []
+        for item in values:
+            if isinstance(item, str):
+                raw_values.extend(part.strip() for part in item.split(","))
+            elif item is not None:
+                raw_values.append(str(item).strip())
+    else:
+        raw_values = [str(values).strip()]
+    result: List[str] = []
+    seen = set()
+    for item in raw_values:
+        normalized = sanitize_id(item, "")
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
+
+
+def selected_qr_field_ids_from_source(profile: Dict, source: object) -> List[str]:
+    values: object = []
+    if hasattr(source, "getlist"):
+        values = source.getlist("qr_field_ids")
+    elif isinstance(source, dict):
+        values = source.get("qr_field_ids", source.get("qr_fields", []))
+    selected = normalize_qr_field_ids(values)
+    valid_ids = {field.get("id") for field in profile.get("fields", [])}
+    return [field_id for field_id in selected if field_id in valid_ids]
+
+
+def qr_payload_from_field_forms(field_forms: List[Dict], selected_field_ids: List[str]) -> str:
+    selected_lookup = set(normalize_qr_field_ids(selected_field_ids))
+    if not selected_lookup:
+        return ""
+    parts: List[str] = []
+    for field in field_forms:
+        if field.get("id") not in selected_lookup:
+            continue
+        value = normalize_qr_value(field.get("value", ""))
+        if value:
+            parts.append(value)
+    return " - ".join(parts)
 
 
 def format_printer_target(profile: Dict, language_or_options: object) -> str:
@@ -1635,17 +1709,18 @@ def send_to_printer(host: str, port: int, payload: str) -> None:
     LOGGER.info("Finished sending label payload to printer %s:%s", host, port)
 
 
-def preview_query_from_form(form: Dict[str, str], field_forms: List[Dict]) -> str:
-    params = {
-        "profile_id": form.get("profile_id", ""),
-        "qr_value": form.get("qr_value", ""),
-        "copies": form.get("copies", "1"),
-    }
+def preview_query_from_form(form: Dict[str, object], field_forms: List[Dict]) -> str:
+    params: List[Tuple[str, str]] = [
+        ("profile_id", str(form.get("profile_id", ""))),
+        ("copies", str(form.get("copies", "1"))),
+    ]
+    for field_id in normalize_qr_field_ids(form.get("qr_field_ids", [])):
+        params.append(("qr_field_ids", field_id))
     for field in field_forms:
-        params[field_value_name(field["id"])] = field.get("value", "")
+        params.append((field_value_name(field["id"]), str(field.get("value", ""))))
         if field.get("print_enabled"):
-            params[field_print_name(field["id"])] = "1"
-    return urlencode(params)
+            params.append((field_print_name(field["id"]), "1"))
+    return urlencode(params, doseq=True)
 
 
 def blank_editor_form() -> Dict:
@@ -1764,7 +1839,7 @@ def delete_profile_field(profile_id: str, field_id: str, profile_name: str) -> b
     return changed
 
 
-def render_page(form: Dict[str, str], opts: Dict, field_forms: List[Dict], result: Dict | None = None, field_result: Dict | None = None, editor_form: Dict | None = None) -> str:
+def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], result: Dict | None = None, field_result: Dict | None = None, editor_form: Dict | None = None) -> str:
     profile = opts.get("active_profile") or {}
     layout = effective_layout(profile)
     ui = get_ui_strings(opts.get("ui_language"))
@@ -1772,7 +1847,17 @@ def render_page(form: Dict[str, str], opts: Dict, field_forms: List[Dict], resul
     preview_display_height_mm = profile.get("label_height_mm", 305.0)
     if profile.get("print_rotation_degrees") in (90, 270):
         preview_display_width_mm, preview_display_height_mm = preview_display_height_mm, preview_display_width_mm
-    qr_preview = normalize_qr_value(form.get("qr_value", "")) or ui["none"]
+    qr_selected_ids = normalize_qr_field_ids(form.get("qr_field_ids", []))
+    qr_preview = qr_payload_from_field_forms(field_forms, qr_selected_ids) or ui["none"]
+    qr_field_options = [
+        {
+            "id": field["id"],
+            "name": field["name"],
+            "value": normalize_qr_value(field.get("value", "")),
+            "selected": field["id"] in qr_selected_ids,
+        }
+        for field in field_forms
+    ]
     editor_form = editor_form or blank_editor_form()
     return render_template_string(
         HTML,
@@ -1804,6 +1889,8 @@ def render_page(form: Dict[str, str], opts: Dict, field_forms: List[Dict], resul
         preview_query=preview_query_from_form(form, field_forms),
         editor_form=editor_form,
         field_editor_json=field_store_map_for_profile(profile),
+        qr_field_options=qr_field_options,
+        qr_selected_ids=qr_selected_ids,
         alignments=sorted(ALIGNMENTS),
         font_families=sorted(FONT_FAMILIES),
         field_positions=["body", "footer"],
@@ -1868,8 +1955,8 @@ def print_label():
     form, field_forms = form_data_from_request(opts)
     result = {"success": False, "message": ui_text(opts, "unknown_error")}
     try:
-        qr_value = normalize_qr_value(form.get("qr_value", ""))
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
         zpl = build_zpl(qr_value, field_forms, copies, profile)
         host, port = resolve_printer_target(profile, opts)
@@ -1955,8 +2042,8 @@ def preview():
     profile = opts.get("active_profile") or {}
     form, field_forms = form_data_from_request(opts)
     try:
-        qr_value = normalize_qr_value(form.get("qr_value", ""))
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
         zpl = build_zpl(qr_value, field_forms, copies, profile)
         LOGGER.info("Generated ZPL preview for profile=%s copies=%s", profile.get("id"), copies)
@@ -1971,8 +2058,8 @@ def preview_png():
     opts = load_runtime_options()
     form, field_forms = form_data_from_request(opts)
     try:
-        qr_value = normalize_qr_value(form.get("qr_value", ""))
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("active_profile_id"), qr_value)
         img = render_label_image(qr_value, field_forms, opts["active_profile"], preview=True)
         bio = BytesIO()
@@ -1990,8 +2077,9 @@ def api_print():
     opts = load_runtime_options(str(payload.get("profile_id") or "") or None)
     profile = opts.get("active_profile") or {}
     try:
-        qr_value = normalize_qr_value(payload.get("qr_value", profile.get("qr_default_value", "")))
         field_forms = validate_field_forms(api_field_forms_from_payload(profile, payload), opts["ui_language"])
+        qr_field_ids = selected_qr_field_ids_from_source(profile, payload)
+        qr_value = qr_payload_from_field_forms(field_forms, qr_field_ids) if qr_field_ids else normalize_qr_value(payload.get("qr_value", profile.get("qr_default_value", "")))
         copies = max(1, min(50, int(payload.get("copies", 1))))
         zpl = build_zpl(qr_value, field_forms, copies, profile)
         host, port = resolve_printer_target(profile, opts)

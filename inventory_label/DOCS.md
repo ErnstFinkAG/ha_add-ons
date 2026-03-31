@@ -2,7 +2,7 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.40
+## What changed in v0.1.41
 
 This version splits the configuration into two layers:
 
@@ -34,7 +34,6 @@ label_profiles:
     top_margin_mm: 0
     footer_bottom_margin_mm: 0
     print_rotation_degrees: 0
-    qr_default_value: ""
     qr_quiet_zone_modules: 3
     qr_error_correction: M
 
@@ -47,7 +46,6 @@ label_profiles:
     top_margin_mm: 0
     footer_bottom_margin_mm: 0
     print_rotation_degrees: 90
-    qr_default_value: ""
     qr_quiet_zone_modules: 4
     qr_error_correction: M
 ```
@@ -84,12 +82,12 @@ Field settings supported in the UI:
 
 ## Web UI
 
-Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If the QR value is empty, no QR code is rendered. New label profiles should use 0 mm for all margin options.
+Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options.
 
 In the add-on web UI you can:
 
 - choose the active label profile
-- enter the QR value
+- build the QR content by selecting one or more defined fields
 - enter each configured field value
 - turn each field on/off for the current label
 - preview PNG and ZPL
@@ -105,7 +103,7 @@ Example payload:
 ```json
 {
   "profile_id": "standard",
-  "qr_value": "250001 - EFH Huggentobbler Biel",
+  "qr_field_ids": ["project_no", "project_name"],
   "copies": 1,
   "field_values": {
     "project_no": "250001",
