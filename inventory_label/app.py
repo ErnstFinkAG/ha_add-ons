@@ -136,6 +136,7 @@ DEFAULT_PROFILE_FIELDS = {
             "print_by_default": True,
             "position": "footer",
             "footer_text": True,
+            "footer_bottom_margin_mm": 0.0,
             "append_current_date": True,
         },
     ]
@@ -292,6 +293,7 @@ UI_STRINGS = {
         "append_current_date_label": "Append current date",
         "always_use_for_qr_label": "Always use for QR code",
         "footer_text_label": "Footer text (bottom anchored)",
+        "footer_bottom_margin_label": "Footer bottom margin (mm)",
         "value_options_label": "Value list",
         "value_options_help": "Optional suggestions, one value per line. Users can still enter any text.",
         "value_options_summary": "Choices",
@@ -376,6 +378,7 @@ UI_STRINGS = {
         "append_current_date_label": "Aktuelles Datum anhängen",
         "always_use_for_qr_label": "Immer für QR-Code verwenden",
         "footer_text_label": "Footer-Text (unten verankert)",
+        "footer_bottom_margin_label": "Footer-Abstand unten (mm)",
         "value_options_label": "Werteliste",
         "value_options_help": "Optionale Vorschläge, ein Wert pro Zeile. Freitext bleibt weiterhin möglich.",
         "value_options_summary": "Auswahlwerte",
@@ -620,6 +623,7 @@ HTML = """
             {% if field.suffix %}<span class="tag">{{ field.suffix }}</span>{% endif %}
             {% if field.always_use_for_qr %}<span class="tag">QR</span>{% endif %}
             {% if field.footer_text %}<span class="tag">{{ ui.footer_text_label }}</span>{% endif %}
+            {% if field.footer_bottom_margin_mm %}<span class="tag">{{ ui.footer_bottom_margin_label }}: {{ field.footer_bottom_margin_mm }} mm</span>{% endif %}
             {% if field.value_options %}<span class="tag">{{ ui.value_options_summary }}: {{ field.value_options|length }}</span>{% endif %}
             {% if field.append_current_date %}<span class="tag">Date</span>{% endif %}
           </div>
@@ -708,6 +712,10 @@ HTML = """
             <div>
               <label for="editor_max_lines">{{ ui.max_lines_label }}</label>
               <input id="editor_max_lines" name="max_lines" type="number" min="1" max="8" step="1" value="{{ editor_form.max_lines }}">
+            </div>
+            <div>
+              <label for="editor_footer_bottom_margin_mm">{{ ui.footer_bottom_margin_label }}</label>
+              <input id="editor_footer_bottom_margin_mm" name="footer_bottom_margin_mm" type="number" min="0" max="100" step="0.5" value="{{ editor_form.footer_bottom_margin_mm }}">
             </div>
           </div>
 
@@ -853,6 +861,7 @@ HTML = """
         setValue("editor_font_size_mm", "7.0");
         setValue("editor_position", "body");
         setValue("editor_max_lines", "3");
+        setValue("editor_footer_bottom_margin_mm", "0.0");
         setValue("editor_value_options_text", "");
         setCheckbox("editor_bold", false);
         setCheckbox("editor_italic", false);
@@ -878,6 +887,7 @@ HTML = """
         setValue("editor_font_size_mm", data.font_size_mm || "7.0");
         setValue("editor_position", data.position || "body");
         setValue("editor_max_lines", data.max_lines || "3");
+        setValue("editor_footer_bottom_margin_mm", data.footer_bottom_margin_mm ?? "0.0");
         setValue("editor_value_options_text", data.value_options_text || "");
         setCheckbox("editor_bold", data.bold);
         setCheckbox("editor_italic", data.italic);
@@ -1086,6 +1096,7 @@ def normalize_profile_field(raw: object, idx: int) -> Dict:
         "suffix": str(data.get("suffix") or "").strip(),
         "position": position,
         "footer_text": footer_text,
+        "footer_bottom_margin_mm": normalize_float(data.get("footer_bottom_margin_mm"), 0.0, 0.0, 100.0),
         "append_current_date": normalize_bool(data.get("append_current_date"), False),
         "always_use_for_qr": normalize_bool(data.get("always_use_for_qr"), False),
         "value_options": normalize_value_options(data.get("value_options")),
@@ -1493,6 +1504,7 @@ def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
             "italic": field["italic"],
             "underline": field["underline"],
             "max_lines": field["max_lines"],
+            "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
         }
         if field.get("position") == "footer":
             footer.append(block)
@@ -1692,6 +1704,7 @@ def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int) -> Tupl
 def draw_footer_blocks(draw: ImageDraw.ImageDraw, bottom_y: int, box_left: int, box_width: int, footer_blocks: List[Dict]) -> int:
     current_bottom = bottom_y
     for block in reversed(footer_blocks):
+        current_bottom -= max(0, int(round(float(block.get("footer_bottom_margin_mm", 0.0)) * DOTS_PER_MM)))
         total_h, font, lines, spacing = block_height(draw, block, box_width)
         top_y = current_bottom - total_h
         draw_aligned_lines(draw, lines, top_y, box_left, box_width, font, block["alignment"], block["underline"], spacing)
@@ -1855,6 +1868,7 @@ def blank_editor_form() -> Dict:
         "suffix": "",
         "position": "body",
         "footer_text": False,
+        "footer_bottom_margin_mm": 0.0,
         "append_current_date": False,
         "always_use_for_qr": False,
         "value_options": [],
@@ -1883,6 +1897,7 @@ def editor_form_from_field(field: Dict | None) -> Dict:
         "suffix": field.get("suffix", ""),
         "position": field.get("position", "body"),
         "footer_text": normalize_bool(field.get("footer_text"), field.get("position") == "footer"),
+        "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
         "append_current_date": field.get("append_current_date", False),
         "always_use_for_qr": field.get("always_use_for_qr", False),
         "value_options": normalize_value_options(field.get("value_options", [])),
@@ -1917,6 +1932,7 @@ def validate_and_normalize_editor_payload(source: Dict, language: str) -> Tuple[
             "suffix": source.get("suffix", ""),
             "position": source.get("position", "body"),
             "footer_text": source.get("footer_text"),
+            "footer_bottom_margin_mm": source.get("footer_bottom_margin_mm", 0.0),
             "append_current_date": source.get("append_current_date"),
             "always_use_for_qr": source.get("always_use_for_qr"),
             "value_options": normalize_value_options(source.get("value_options_text", source.get("value_options", []))),
@@ -2153,6 +2169,7 @@ def save_field():
             "suffix": request.form.get("suffix", ""),
             "position": request.form.get("position", "body"),
             "footer_text": normalize_bool(request.form.get("footer_text"), False),
+            "footer_bottom_margin_mm": request.form.get("footer_bottom_margin_mm", 0.0),
             "append_current_date": normalize_bool(request.form.get("append_current_date"), False),
             "always_use_for_qr": normalize_bool(request.form.get("always_use_for_qr"), False),
             "value_options": normalize_value_options(request.form.get("value_options_text", "")),
