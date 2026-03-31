@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.6.1.1"
+version: "0.6.1.2"
 slug: qr_inventory
 description: "Scan QR codes from one or more RTSPS/RTSP cameras, map them to storage zones, and serve per-camera overlay/debug endpoints via HTTP."
 arch:
@@ -114,16 +114,6 @@ schema:
       required: int?
       restrict_to_zones: bool?
       zones: str
-
-  # Old single-camera keys (ignored; kept optional to allow upgrades without errors)
-  camera_mode: "str?"
-  rtsp_url: "str?"
-  interval_seconds: "int?"
-  required_consistency: "int?"
-  zones: "str?"
-  tls_verify: "bool?"
-  overlay_png_name: "str?"
-  debug_zone: "str?"
 
 
   # Decoder / overlay tuning
