@@ -1,8 +1,8 @@
 name: "Inventory Label"
-version: "0.1.34"
+version: "0.1.35"
 slug: "inventory_label"
 description: >-
-  Print large QR-code project or inventory labels to a Zebra ZT420/ZT421 with live PNG preview, English/German UI, optional 90°/270° rotated layout, sign-off suggestions, optional separate weight, per-field styling, config-tab label profiles selectable in the UI, on-screen custom text blocks with per-block styling, optional footer with automatic current date, and TCP 9100 printing
+  Print large QR-code project or inventory labels to a Zebra ZT420/ZT421 with live PNG preview, English/German UI, optional 90°/270° rotated layout, sign-off suggestions, optional separate weight, per-field styling, profile selection from the web UI, config-tab label profiles, and clipboard duplication for ready-to-paste profile YAML
 url: "https://github.com/ErnstFinkAG/ha_add-ons/tree/main/inventory_label"
 startup: services
 boot: auto
@@ -20,127 +20,75 @@ options:
   ui_language: "de"
   printer_host: "10.50.20.12"
   printer_port: 9100
-  label_width_mm: 170
-  label_height_mm: 305
-  qr_size_mm: 170
-  top_margin_mm: 0
-  print_rotation_degrees: 0
-  field1_label: "Projektnummer"
-  field2_label: "Projektname"
-  field3_label: "Element"
-  field1_default_value: "250001"
-  field2_default_value: "EFH Huggentobbler Biel"
-  field3_default_value: "DE1"
-  field1_alignment: "center"
-  field2_alignment: "center"
-  field3_alignment: "center"
-  field1_font_family: "sans"
-  field2_font_family: "sans"
-  field3_font_family: "sans"
-  field1_font_size_mm: 18
-  field2_font_size_mm: 13
-  field3_font_size_mm: 18
-  field1_bold: true
-  field2_bold: false
-  field3_bold: false
-  field1_italic: false
-  field2_italic: false
-  field3_italic: false
-  field1_underline: false
-  field2_underline: false
-  field3_underline: false
-  sign_off_label: "Sign-off"
-  sign_off_default_value: ""
-  sign_off_options: ""
-  sign_off_alignment: "center"
-  sign_off_font_family: "sans"
-  sign_off_font_size_mm: 7
-  sign_off_bold: false
-  sign_off_italic: false
-  sign_off_underline: false
-  weight_label: "Weight (kg)"
-  weight_default_value: ""
-  weight_alignment: "center"
-  weight_font_family: "sans"
-  weight_font_size_mm: 7
-  weight_bold: false
-  weight_italic: false
-  weight_underline: false
-  footer_label: "Footer"
-  footer_default_value: "Ernst Fink AG, Schorenweg 144, 4585 Biezwil"
-  footer_alignment: "center"
-  footer_font_family: "sans"
-  footer_font_size_mm: 5
-  footer_bottom_margin_mm: 0
-  footer_bold: false
-  footer_italic: false
-  footer_underline: false
-  qr_value_template: "{text1 - text2}"
-  qr_quiet_zone_modules: 3
-  qr_error_correction: "M"
-  label_profiles: []
+  label_profiles:
+    - id: "standard"
+      name: "Standard"
+      label_width_mm: 170
+      label_height_mm: 305
+      qr_size_mm: 170
+      top_margin_mm: 0
+      print_rotation_degrees: 0
+      field1_label: "Projektnummer"
+      field2_label: "Projektname"
+      field3_label: "Element"
+      sign_off_label: "Sign-off"
+      weight_label: "Weight (kg)"
+      footer_label: "Footer"
+      field1_default_value: "250001"
+      field2_default_value: "EFH Huggentobbler Biel"
+      field3_default_value: "DE1"
+      sign_off_default_value: ""
+      sign_off_options: ""
+      weight_default_value: ""
+      footer_default_value: "Ernst Fink AG, Schorenweg 144, 4585 Biezwil"
+      field1_alignment: "center"
+      field2_alignment: "center"
+      field3_alignment: "center"
+      sign_off_alignment: "center"
+      weight_alignment: "center"
+      footer_alignment: "center"
+      field1_font_family: "sans"
+      field2_font_family: "sans"
+      field3_font_family: "sans"
+      sign_off_font_family: "sans"
+      weight_font_family: "sans"
+      footer_font_family: "sans"
+      field1_font_size_mm: 18
+      field2_font_size_mm: 13
+      field3_font_size_mm: 18
+      sign_off_font_size_mm: 7
+      weight_font_size_mm: 7
+      footer_font_size_mm: 5
+      footer_bottom_margin_mm: 0
+      field1_bold: true
+      field2_bold: false
+      field3_bold: false
+      sign_off_bold: false
+      weight_bold: false
+      footer_bold: false
+      field1_italic: false
+      field2_italic: false
+      field3_italic: false
+      sign_off_italic: false
+      weight_italic: false
+      footer_italic: false
+      field1_underline: false
+      field2_underline: false
+      field3_underline: false
+      sign_off_underline: false
+      weight_underline: false
+      footer_underline: false
+      qr_value_template: "{text1 - text2}"
+      qr_quiet_zone_modules: 3
+      qr_error_correction: "M"
+      default_print_text2: true
+      default_print_text3: true
+      default_print_weight: false
+      default_print_footer: true
 schema:
   ui_language: str
   printer_host: str
   printer_port: port
-  label_width_mm: float
-  label_height_mm: float
-  qr_size_mm: float
-  top_margin_mm: float
-  print_rotation_degrees: int
-  field1_label: str
-  field2_label: str
-  field3_label: str
-  sign_off_label: str
-  weight_label: str
-  footer_label: str
-  field1_default_value: str?
-  field2_default_value: str?
-  field3_default_value: str?
-  sign_off_default_value: str?
-  sign_off_options: str
-  weight_default_value: str?
-  footer_default_value: str?
-  field1_alignment: str
-  field2_alignment: str
-  field3_alignment: str
-  sign_off_alignment: str
-  weight_alignment: str
-  footer_alignment: str
-  field1_font_family: str
-  field2_font_family: str
-  field3_font_family: str
-  sign_off_font_family: str
-  weight_font_family: str
-  footer_font_family: str
-  field1_font_size_mm: float
-  field2_font_size_mm: float
-  field3_font_size_mm: float
-  sign_off_font_size_mm: float
-  weight_font_size_mm: float
-  footer_font_size_mm: float
-  footer_bottom_margin_mm: float
-  field1_bold: bool
-  field2_bold: bool
-  field3_bold: bool
-  sign_off_bold: bool
-  weight_bold: bool
-  footer_bold: bool
-  field1_italic: bool
-  field2_italic: bool
-  field3_italic: bool
-  sign_off_italic: bool
-  weight_italic: bool
-  footer_italic: bool
-  field1_underline: bool
-  field2_underline: bool
-  field3_underline: bool
-  sign_off_underline: bool
-  weight_underline: bool
-  footer_underline: bool
-  qr_value_template: str
-  qr_quiet_zone_modules: int
-  qr_error_correction: str
   label_profiles:
     - id: str
       name: str
@@ -148,6 +96,7 @@ schema:
       label_height_mm: float?
       qr_size_mm: float?
       top_margin_mm: float?
+      print_rotation_degrees: int?
       field1_label: str?
       field2_label: str?
       field3_label: str?
@@ -201,7 +150,6 @@ schema:
       qr_value_template: str?
       qr_quiet_zone_modules: int?
       qr_error_correction: str?
-      print_rotation_degrees: int?
       default_print_text2: bool?
       default_print_text3: bool?
       default_print_weight: bool?

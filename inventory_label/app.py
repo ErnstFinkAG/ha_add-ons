@@ -186,7 +186,74 @@ DEFAULT_OPTIONS = {
     "qr_error_correction": "M",
     "print_rotation_degrees": 0,
     "label_profiles_yaml": "",
-    "label_profiles": [],
+    "label_profiles": [
+        {
+            "id": "standard",
+            "name": "Standard",
+            "label_width_mm": 170.0,
+            "label_height_mm": 305.0,
+            "qr_size_mm": 170.0,
+            "top_margin_mm": 0.0,
+            "print_rotation_degrees": 0,
+            "field1_label": "Projektnummer",
+            "field2_label": "Projektname",
+            "field3_label": "Element",
+            "sign_off_label": "Sign-off",
+            "weight_label": "Weight (kg)",
+            "footer_label": "Footer",
+            "field1_default_value": "250001",
+            "field2_default_value": "EFH Huggentobbler Biel",
+            "field3_default_value": "DE1",
+            "sign_off_default_value": "",
+            "sign_off_options": "",
+            "weight_default_value": "",
+            "footer_default_value": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
+            "field1_alignment": "center",
+            "field2_alignment": "center",
+            "field3_alignment": "center",
+            "sign_off_alignment": "center",
+            "weight_alignment": "center",
+            "footer_alignment": "center",
+            "field1_font_family": "sans",
+            "field2_font_family": "sans",
+            "field3_font_family": "sans",
+            "sign_off_font_family": "sans",
+            "weight_font_family": "sans",
+            "footer_font_family": "sans",
+            "field1_font_size_mm": 18.0,
+            "field2_font_size_mm": 13.0,
+            "field3_font_size_mm": 18.0,
+            "sign_off_font_size_mm": 7.0,
+            "weight_font_size_mm": 7.0,
+            "footer_font_size_mm": 5.0,
+            "footer_bottom_margin_mm": 0.0,
+            "field1_bold": True,
+            "field2_bold": False,
+            "field3_bold": False,
+            "sign_off_bold": False,
+            "weight_bold": False,
+            "footer_bold": False,
+            "field1_italic": False,
+            "field2_italic": False,
+            "field3_italic": False,
+            "sign_off_italic": False,
+            "weight_italic": False,
+            "footer_italic": False,
+            "field1_underline": False,
+            "field2_underline": False,
+            "field3_underline": False,
+            "sign_off_underline": False,
+            "weight_underline": False,
+            "footer_underline": False,
+            "qr_value_template": "{text1 - text2}",
+            "qr_quiet_zone_modules": 3,
+            "qr_error_correction": "M",
+            "default_print_text2": True,
+            "default_print_text3": True,
+            "default_print_weight": False,
+            "default_print_footer": True,
+        }
+    ],
 }
 
 QR_ERROR_CORRECTION_MAP = {
@@ -273,6 +340,11 @@ UI_STRINGS = {
         "profile_none": "Default settings",
         "profile_yaml_label": "Configured label profiles",
         "profile_yaml_note": "Profiles come from the add-on Configuration tab. Each profile contains its own label settings group and can be selected here.",
+        "duplicate_profile_button": "Duplicate profile to clipboard",
+        "duplicate_profile_note": "Copies a full profile YAML block to the clipboard so you can paste it into label_profiles in the Configuration tab, then adjust id/name.",
+        "duplicate_profile_success": "Copied duplicated profile YAML for {name} to the clipboard.",
+        "duplicate_profile_failed": "Could not copy the duplicated profile YAML automatically. Copy it from the box below.",
+        "duplicate_profile_fallback_label": "Duplicated profile YAML",
     },
     "de": {
         "lang": "de",
@@ -310,7 +382,7 @@ UI_STRINGS = {
         "requested_label": "Angefordertes Etikett",
         "requested_qr": "Angeforderter QR-Code",
         "effective_print_width": "Effektive Druckbreite auf dem ZT420/ZT421 bei 203 dpi",
-        "layout_note": "Feld 1 wird immer in Klarschrift gedruckt. Feld 2, Feld 3, Gewicht und die Fußzeile können pro Etikett in der Oberfläche ein- oder ausgeschaltet werden. Die Signatur wird gedruckt, sobald ein Wert eingetragen ist. Wenn Feld 3 und Gewicht beide aktiviert sind, wird das Gewicht mit <code> - </code> vor <code>kg</code> an Feld 3 angehängt. Wenn die Fußzeile aktiviert ist, wird das heutige Datum automatisch am Ende ergänzt. Der QR-Code folgt der oben konfigurierten Vorlage.",
+        "layout_note": "Feld 1 wird immer in Klarschrift gedruckt. Feld 2, Feld 3, Gewicht und die Fußzeile können pro Etikett in der Oberfläche ein- oder ausgeschaltet werden. Die Signatur wird gedruckt, sobald ein Wert eingetragen ist. Das Gewicht wird, wenn aktiviert und ausgefüllt, auf einer eigenen Zeile gedruckt. Wenn die Fußzeile aktiviert ist, wird das heutige Datum automatisch am Ende ergänzt. Der QR-Code folgt der oben konfigurierten Vorlage.",
         "on": "an",
         "off": "aus",
         "none": "(keine)",
@@ -348,6 +420,11 @@ UI_STRINGS = {
         "profile_none": "Standardkonfiguration",
         "profile_yaml_label": "Konfigurierte Etikettenprofile",
         "profile_yaml_note": "Die Profile kommen aus dem Add-on-Konfigurationstab. Jedes Profil enthält seine eigene Einstellungsgruppe und kann hier ausgewählt werden.",
+        "duplicate_profile_button": "Profil duplizieren und in die Zwischenablage kopieren",
+        "duplicate_profile_note": "Kopiert einen vollständigen YAML-Profilblock in die Zwischenablage, damit du ihn in label_profiles im Konfigurationstab einfügen und danach id/name anpassen kannst.",
+        "duplicate_profile_success": "Dupliziertes Profil-YAML für {name} in die Zwischenablage kopiert.",
+        "duplicate_profile_failed": "Das duplizierte Profil-YAML konnte nicht automatisch kopiert werden. Bitte aus dem Feld unten kopieren.",
+        "duplicate_profile_fallback_label": "Dupliziertes Profil-YAML",
     },
 }
 
@@ -579,6 +656,24 @@ HTML = """
       border: 1px solid var(--danger);
       color: #fecaca;
     }
+    .profile-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 8px;
+      margin-bottom: 12px;
+    }
+    .profile-duplicate-status {
+      margin-top: 8px;
+      min-height: 1.2em;
+    }
+    .profile-duplicate-status.ok {
+      color: #86efac;
+    }
+    .profile-duplicate-status.error {
+      color: #fca5a5;
+    }
   </style>
 </head>
 <body>
@@ -597,6 +692,13 @@ HTML = """
             <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
           {% endfor %}
         </select>
+        <div class="profile-actions">
+          <button id="duplicate-profile-button" class="secondary small-button" type="button">{{ ui.duplicate_profile_button }}</button>
+          <span class="small-muted">{{ ui.duplicate_profile_note }}</span>
+        </div>
+        <div id="profile-duplicate-status" class="small-muted profile-duplicate-status" aria-live="polite"></div>
+        <label for="profile-duplicate-yaml" class="small-muted">{{ ui.duplicate_profile_fallback_label }}</label>
+        <textarea id="profile-duplicate-yaml" class="small-muted" rows="8" spellcheck="false"></textarea>
         {% else %}
         <input id="profile_id" name="profile_id" type="hidden" value="{{ active_profile_id }}">
         {% endif %}
@@ -711,6 +813,9 @@ HTML = """
     (function () {
       const ingressBase = {{ ingress_base|tojson }};
       const profileSelect = document.getElementById("profile_id");
+      const duplicateProfileButton = document.getElementById("duplicate-profile-button");
+      const profileDuplicateStatus = document.getElementById("profile-duplicate-status");
+      const profileDuplicateYaml = document.getElementById("profile-duplicate-yaml");
       const text1 = document.getElementById("text1");
       const text2 = document.getElementById("text2");
       const text3 = document.getElementById("text3");
@@ -735,11 +840,79 @@ HTML = """
       if (!text1 || !text2 || !text3 || !signOff || !weight || !footer || !printText2 || !printText3 || !printWeight || !printFooter || !customBlocksJsonInput || !addCustomBlockButton || !customBlocksContainer || !customBlocksEmpty || !copies || !previewImage || !previewFrame || !previewWrap || !previewStage || !previewPngLink || !previewZplLink) return;
 
       const customBlockUi = {{ custom_block_ui|tojson }};
+      const profileExports = {{ label_profile_exports|tojson }};
       const maxCustomBlocks = {{ custom_block_max }};
       const customBlockStorageKey = "inventory_label_custom_blocks";
       let refreshTimer = null;
       let previewNonce = Date.now();
       let customBlocks = [];
+
+      function yamlScalar(value) {
+        if (value === null || value === undefined) return '""';
+        if (typeof value === "boolean" || typeof value === "number") return String(value);
+        return JSON.stringify(String(value));
+      }
+
+      function serializeProfileYaml(profileData) {
+        const orderedKeys = [
+          "id", "name", "label_width_mm", "label_height_mm", "qr_size_mm", "top_margin_mm", "print_rotation_degrees",
+          "field1_label", "field2_label", "field3_label", "sign_off_label", "weight_label", "footer_label",
+          "field1_default_value", "field2_default_value", "field3_default_value", "sign_off_default_value", "sign_off_options", "weight_default_value", "footer_default_value",
+          "field1_alignment", "field2_alignment", "field3_alignment", "sign_off_alignment", "weight_alignment", "footer_alignment",
+          "field1_font_family", "field2_font_family", "field3_font_family", "sign_off_font_family", "weight_font_family", "footer_font_family",
+          "field1_font_size_mm", "field2_font_size_mm", "field3_font_size_mm", "sign_off_font_size_mm", "weight_font_size_mm", "footer_font_size_mm", "footer_bottom_margin_mm",
+          "field1_bold", "field2_bold", "field3_bold", "sign_off_bold", "weight_bold", "footer_bold",
+          "field1_italic", "field2_italic", "field3_italic", "sign_off_italic", "weight_italic", "footer_italic",
+          "field1_underline", "field2_underline", "field3_underline", "sign_off_underline", "weight_underline", "footer_underline",
+          "qr_value_template", "qr_quiet_zone_modules", "qr_error_correction",
+          "default_print_text2", "default_print_text3", "default_print_weight", "default_print_footer"
+        ];
+        const lines = ["  - id: " + yamlScalar(profileData.id), "    name: " + yamlScalar(profileData.name)];
+        for (const key of orderedKeys) {
+          if (key === "id" || key === "name") continue;
+          if (!(key in profileData)) continue;
+          lines.push("    " + key + ": " + yamlScalar(profileData[key]));
+        }
+        return lines.join("
+");
+      }
+
+      function slugifyProfileId(value) {
+        return String(value || "")
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]+/g, "-")
+          .replace(/^-+|-+$/g, "") || "label-copy";
+      }
+
+      function buildDuplicatedProfile() {
+        if (!profileExports.length) return null;
+        const selected = profileExports.find((profile) => profile.id === (profileSelect && profileSelect.value ? profileSelect.value : "")) || profileExports[0];
+        if (!selected || !selected.data) return null;
+        const duplicated = JSON.parse(JSON.stringify(selected.data));
+        duplicated.name = `${selected.name} (Copy)`;
+        duplicated.id = slugifyProfileId(`${selected.id || selected.name || 'label'}-copy`);
+        return duplicated;
+      }
+
+      function setDuplicateStatus(message, isError) {
+        if (!profileDuplicateStatus) return;
+        profileDuplicateStatus.textContent = message || "";
+        profileDuplicateStatus.classList.toggle("ok", !!message && !isError);
+        profileDuplicateStatus.classList.toggle("error", !!message && !!isError);
+      }
+
+      async function duplicateProfileToClipboard() {
+        const duplicated = buildDuplicatedProfile();
+        if (!duplicated) return;
+        const yamlBlock = serializeProfileYaml(duplicated);
+        if (profileDuplicateYaml) profileDuplicateYaml.value = yamlBlock;
+        try {
+          await navigator.clipboard.writeText(yamlBlock);
+          setDuplicateStatus({{ ui.duplicate_profile_success|tojson }}.replace("{name}", duplicated.name), false);
+        } catch (error) {
+          setDuplicateStatus({{ ui.duplicate_profile_failed|tojson }}, true);
+        }
+      }
 
       function clampCustomBlockFontSize(value) {
         const parsed = parseFloat(value);
@@ -1247,6 +1420,87 @@ def parse_label_profiles(raw: object) -> List[Dict]:
     return profiles
 
 
+PROFILE_EXPORT_ORDER = [
+    "id",
+    "name",
+    "label_width_mm",
+    "label_height_mm",
+    "qr_size_mm",
+    "top_margin_mm",
+    "print_rotation_degrees",
+    "field1_label",
+    "field2_label",
+    "field3_label",
+    "sign_off_label",
+    "weight_label",
+    "footer_label",
+    "field1_default_value",
+    "field2_default_value",
+    "field3_default_value",
+    "sign_off_default_value",
+    "sign_off_options",
+    "weight_default_value",
+    "footer_default_value",
+    "field1_alignment",
+    "field2_alignment",
+    "field3_alignment",
+    "sign_off_alignment",
+    "weight_alignment",
+    "footer_alignment",
+    "field1_font_family",
+    "field2_font_family",
+    "field3_font_family",
+    "sign_off_font_family",
+    "weight_font_family",
+    "footer_font_family",
+    "field1_font_size_mm",
+    "field2_font_size_mm",
+    "field3_font_size_mm",
+    "sign_off_font_size_mm",
+    "weight_font_size_mm",
+    "footer_font_size_mm",
+    "footer_bottom_margin_mm",
+    "field1_bold",
+    "field2_bold",
+    "field3_bold",
+    "sign_off_bold",
+    "weight_bold",
+    "footer_bold",
+    "field1_italic",
+    "field2_italic",
+    "field3_italic",
+    "sign_off_italic",
+    "weight_italic",
+    "footer_italic",
+    "field1_underline",
+    "field2_underline",
+    "field3_underline",
+    "sign_off_underline",
+    "weight_underline",
+    "footer_underline",
+    "qr_value_template",
+    "qr_quiet_zone_modules",
+    "qr_error_correction",
+    "default_print_text2",
+    "default_print_text3",
+    "default_print_weight",
+    "default_print_footer",
+]
+
+
+def build_full_profile_exports(base_opts: Dict, profiles: List[Dict]) -> List[Dict]:
+    exports: List[Dict] = []
+    for profile in profiles:
+        merged = apply_profile_overrides(base_opts, profile)
+        data = {"id": profile.get("id", ""), "name": profile.get("name", "")}
+        for key in PROFILE_EXPORT_ORDER:
+            if key in {"id", "name"}:
+                continue
+            data[key] = merged.get(key)
+        exports.append({"id": data["id"], "name": data["name"], "data": data})
+    return exports
+
+
 def apply_profile_overrides(opts: Dict, profile: Dict | None) -> Dict:
     merged = dict(opts)
     if not profile:
@@ -1265,6 +1519,7 @@ def load_runtime_options(profile_id: str | None = None) -> Dict:
     profiles = parse_label_profiles(base_opts.get("label_profiles"))
     if not profiles:
         profiles = parse_label_profiles(base_opts.get("label_profiles_yaml", ""))
+    profile_exports = build_full_profile_exports(base_opts, profiles)
     selected_id = profile_id
     if selected_id is None:
         selected_id = request.values.get("profile_id") or request.args.get("profile_id") or request.form.get("profile_id")
@@ -1275,6 +1530,7 @@ def load_runtime_options(profile_id: str | None = None) -> Dict:
         active_profile = profiles[0]
     opts = apply_profile_overrides(base_opts, active_profile)
     opts["label_profiles"] = profiles
+    opts["label_profile_exports"] = profile_exports
     return opts
 
 
@@ -2149,6 +2405,7 @@ def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) ->
         label_profiles=opts.get("label_profiles", []),
         active_profile_id=opts.get("active_profile_id", ""),
         active_profile_name=opts.get("active_profile_name", ""),
+        label_profile_exports=opts.get("label_profile_exports", []),
     )
 
 
