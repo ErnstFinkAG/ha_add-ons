@@ -1,6 +1,5 @@
 import json
 import logging
-import math
 import os
 import re
 import socket
@@ -8,13 +7,13 @@ from datetime import datetime
 from functools import lru_cache
 from io import BytesIO
 from typing import Dict, List, Tuple
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
-from flask import Flask, Response, jsonify, render_template_string, request, send_file
 import qrcode
 import yaml
+from flask import Flask, Response, jsonify, render_template_string, request, send_file
 from PIL import Image, ImageDraw, ImageFont
-
 
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 root_logger = logging.getLogger()
@@ -33,26 +32,108 @@ APP = Flask(__name__)
 APP.logger.handlers.clear()
 APP.logger.propagate = True
 
-DOTS_PER_MM = 203 / 25.4  # 8 dots/mm for 203 dpi
-PRINTER_MAX_WIDTH_DOTS = 1344  # Zebra ZT420/ZT421 203 dpi maximum print width
+DOTS_PER_MM = 203 / 25.4
+PRINTER_MAX_WIDTH_DOTS = 1344
 INGRESS_ALLOWED_IP = "172.30.32.2"
 LOCAL_ALLOWED_IPS = {"127.0.0.1", "::1", None}
 OPTIONS_PATH = "/data/options.json"
 DEFAULT_TEXT_BLOCK_MARGIN_MM = 8.0
-FIELD_COUNT = 3
-ALLOWED_QR_TOKENS = ("text1", "text2", "text3")
-OPTION_MAX_LINES = {"sign_off": 2, "weight": 1}
-ALIGNMENTS = {"left", "center", "right"}
-FONT_FAMILIES = {"sans", "serif", "mono"}
+FIELD_GAP_MM = 4.0
+FOOTER_GAP_MM = 3.0
 SUPPORTED_UI_LANGUAGES = {"en", "de"}
 SUPPORTED_ROTATIONS = {0, 90, 270}
-FIELD_GAPS_MM = {1: 8.0, 2: 6.0, 3: 4.0}
-FIELD_MAX_LINES = {1: 4, 2: 3, 3: 3}
-FOOTER_MAX_LINES = 3
-CUSTOM_BLOCK_MAX = 20
-CUSTOM_BLOCK_MAX_LINES = 3
-CUSTOM_BLOCK_DEFAULT_FONT_SIZE_MM = 7.0
-CUSTOM_BLOCK_GAP_MM = 4.0
+ALIGNMENTS = {"left", "center", "right"}
+FONT_FAMILIES = {"sans", "serif", "mono"}
+FIELD_POSITIONS = {"body", "footer"}
+
+DEFAULT_PROFILES_YAML = """\
+- id: standard
+  name: Standard
+  printer_host: 10.50.20.12
+  printer_port: 9100
+  label_width_mm: 170
+  label_height_mm: 305
+  qr_size_mm: 170
+  top_margin_mm: 0
+  footer_bottom_margin_mm: 4
+  print_rotation_degrees: 0
+  qr_default_value: ""
+  qr_quiet_zone_modules: 3
+  qr_error_correction: M
+  fields:
+    - id: project_no
+      name: Projektnummer
+      default_value: "250001"
+      alignment: center
+      font_family: sans
+      font_size_mm: 18
+      bold: true
+      italic: false
+      underline: false
+      print_by_default: true
+      required: true
+      number_only: true
+      position: body
+    - id: project_name
+      name: Projektname
+      default_value: EFH Huggentobbler Biel
+      alignment: center
+      font_family: sans
+      font_size_mm: 13
+      bold: false
+      italic: false
+      underline: false
+      print_by_default: true
+      position: body
+    - id: element
+      name: Element
+      default_value: DE1
+      alignment: center
+      font_family: sans
+      font_size_mm: 18
+      bold: false
+      italic: false
+      underline: false
+      print_by_default: true
+      position: body
+    - id: weight
+      name: Gewicht
+      default_value: ""
+      alignment: center
+      font_family: sans
+      font_size_mm: 7
+      bold: false
+      italic: false
+      underline: false
+      print_by_default: false
+      number_only: true
+      suffix: kg
+      position: body
+    - id: footer
+      name: Footer
+      default_value: Ernst Fink AG, Schorenweg 144, 4585 Biezwil
+      alignment: center
+      font_family: sans
+      font_size_mm: 5
+      bold: false
+      italic: false
+      underline: false
+      print_by_default: true
+      position: footer
+      append_current_date: true
+"""
+
+DEFAULT_OPTIONS = {
+    "ui_language": "de",
+    "label_profiles_yaml": DEFAULT_PROFILES_YAML,
+}
+
+QR_ERROR_CORRECTION_MAP = {
+    "L": qrcode.constants.ERROR_CORRECT_L,
+    "M": qrcode.constants.ERROR_CORRECT_M,
+    "Q": qrcode.constants.ERROR_CORRECT_Q,
+    "H": qrcode.constants.ERROR_CORRECT_H,
+}
 
 FONT_PATHS = {
     "sans": {
@@ -123,154 +204,14 @@ FONT_PATHS = {
     },
 }
 
-DEFAULT_OPTIONS = {
-    "ui_language": "de",
-    "printer_host": "10.50.20.12",
-    "printer_port": 9100,
-    "label_width_mm": 170.0,
-    "label_height_mm": 305.0,
-    "qr_size_mm": 170.0,
-    "top_margin_mm": 0.0,
-    "field1_label": "Projektnummer",
-    "field2_label": "Projektname",
-    "field3_label": "Element",
-    "field1_default_value": "250001",
-    "field2_default_value": "EFH Huggentobbler Biel",
-    "field3_default_value": "DE1",
-    "field1_alignment": "center",
-    "field2_alignment": "center",
-    "field3_alignment": "center",
-    "field1_font_family": "sans",
-    "field2_font_family": "sans",
-    "field3_font_family": "sans",
-    "field1_font_size_mm": 18.0,
-    "field2_font_size_mm": 13.0,
-    "field3_font_size_mm": 18.0,
-    "field1_bold": True,
-    "field2_bold": False,
-    "field3_bold": False,
-    "field1_italic": False,
-    "field2_italic": False,
-    "field3_italic": False,
-    "field1_underline": False,
-    "field2_underline": False,
-    "field3_underline": False,
-    "footer_label": "Footer",
-    "footer_default_value": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
-    "footer_alignment": "center",
-    "footer_font_family": "sans",
-    "footer_font_size_mm": 5.0,
-    "footer_bottom_margin_mm": 0.0,
-    "footer_bold": False,
-    "footer_italic": False,
-    "footer_underline": False,
-    "sign_off_label": "Sign-off",
-    "sign_off_default_value": "",
-    "sign_off_options": "",
-    "sign_off_alignment": "center",
-    "sign_off_font_family": "sans",
-    "sign_off_font_size_mm": 7.0,
-    "sign_off_bold": False,
-    "sign_off_italic": False,
-    "sign_off_underline": False,
-    "weight_label": "Weight (kg)",
-    "weight_default_value": "",
-    "weight_alignment": "center",
-    "weight_font_family": "sans",
-    "weight_font_size_mm": 7.0,
-    "weight_bold": False,
-    "weight_italic": False,
-    "weight_underline": False,
-    "qr_value_template": "{text1 - text2}",
-    "qr_quiet_zone_modules": 3,
-    "qr_error_correction": "M",
-    "print_rotation_degrees": 0,
-    "label_profiles_yaml": "",
-    "label_profiles": [
-        {
-            "id": "standard",
-            "name": "Standard",
-            "label_width_mm": 170.0,
-            "label_height_mm": 305.0,
-            "qr_size_mm": 170.0,
-            "top_margin_mm": 0.0,
-            "print_rotation_degrees": 0,
-            "field1_label": "Projektnummer",
-            "field2_label": "Projektname",
-            "field3_label": "Element",
-            "sign_off_label": "Sign-off",
-            "weight_label": "Weight (kg)",
-            "footer_label": "Footer",
-            "field1_default_value": "250001",
-            "field2_default_value": "EFH Huggentobbler Biel",
-            "field3_default_value": "DE1",
-            "sign_off_default_value": "",
-            "sign_off_options": "",
-            "weight_default_value": "",
-            "footer_default_value": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
-            "field1_alignment": "center",
-            "field2_alignment": "center",
-            "field3_alignment": "center",
-            "sign_off_alignment": "center",
-            "weight_alignment": "center",
-            "footer_alignment": "center",
-            "field1_font_family": "sans",
-            "field2_font_family": "sans",
-            "field3_font_family": "sans",
-            "sign_off_font_family": "sans",
-            "weight_font_family": "sans",
-            "footer_font_family": "sans",
-            "field1_font_size_mm": 18.0,
-            "field2_font_size_mm": 13.0,
-            "field3_font_size_mm": 18.0,
-            "sign_off_font_size_mm": 7.0,
-            "weight_font_size_mm": 7.0,
-            "footer_font_size_mm": 5.0,
-            "footer_bottom_margin_mm": 0.0,
-            "field1_bold": True,
-            "field2_bold": False,
-            "field3_bold": False,
-            "sign_off_bold": False,
-            "weight_bold": False,
-            "footer_bold": False,
-            "field1_italic": False,
-            "field2_italic": False,
-            "field3_italic": False,
-            "sign_off_italic": False,
-            "weight_italic": False,
-            "footer_italic": False,
-            "field1_underline": False,
-            "field2_underline": False,
-            "field3_underline": False,
-            "sign_off_underline": False,
-            "weight_underline": False,
-            "footer_underline": False,
-            "qr_value_template": "{text1 - text2}",
-            "qr_quiet_zone_modules": 3,
-            "qr_error_correction": "M",
-            "default_print_text2": True,
-            "default_print_text3": True,
-            "default_print_weight": False,
-            "default_print_footer": True,
-        }
-    ],
-}
-
-QR_ERROR_CORRECTION_MAP = {
-    "L": qrcode.constants.ERROR_CORRECT_L,
-    "M": qrcode.constants.ERROR_CORRECT_M,
-    "Q": qrcode.constants.ERROR_CORRECT_Q,
-    "H": qrcode.constants.ERROR_CORRECT_H,
-}
-
-PROFILE_ALLOWED_OPTIONS = (set(DEFAULT_OPTIONS) | {"default_print_text2", "default_print_text3", "default_print_weight", "default_print_footer"}) - {"ui_language", "printer_host", "printer_port", "label_profiles_yaml", "label_profiles"}
-
 UI_STRINGS = {
     "en": {
         "lang": "en",
         "page_title": "Inventory Label",
-        "intro_text": "Prints one large QR code label to a networked Zebra printer using raw ZPL over TCP. {field1_label} accepts digits only, and {weight_label} accepts digits only when enabled.",
-        "print_field": "Print",
+        "intro_text": "Choose a label profile from the add-on configuration, enter the QR value and the configured field values, then preview and print.",
+        "profile_select": "Label profile",
+        "profile_none": "(none)",
+        "qr_value_label": "QR value",
         "copies": "Copies",
         "configured_printer": "Configured printer",
         "print_label_button": "Print label",
@@ -278,162 +219,70 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi. The preview is shown at the configured label size in mm to approximate a 1:1 on-screen view. When print rotation is enabled, the preview keeps the same rotated aspect ratio as the printed label and, in horizontal mode, expands to the available preview width without horizontal scrolling. The red outline shows the full QR footprint including the configured quiet zone. Actual physical size can still vary with browser zoom, OS scaling, and display calibration.",
-        "configured_label_mapping": "Configured label mapping",
-        "field1_label_meta": "Field 1 label",
-        "field2_label_meta": "Field 2 label",
-        "field3_label_meta": "Field 3 label",
-        "sign_off_label_meta": "Sign-off label",
-        "configured_sign_off_names": "Configured sign-off names",
-        "weight_label_meta": "Weight label",
-        "footer_label_meta": "Footer label",
-        "default_word": "default",
-        "style_word": "style",
-        "printed_as": "printed as",
-        "qr_template": "QR template",
-        "qr_quiet_zone": "QR quiet zone",
-        "module_word": "module(s)",
-        "qr_error_correction": "QR error correction",
-        "footer_bottom_margin": "Footer bottom margin",
-        "print_rotation": "Print rotation",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
+        "fields_heading": "Configured fields",
+        "print_field": "Print",
+        "required": "Required",
+        "numeric_only": "Numbers only",
+        "position": "Position",
+        "position_body": "Body",
+        "position_footer": "Footer",
+        "configured_label_mapping": "Active profile summary",
+        "profile_active": "Active profile",
         "current_qr_payload": "Current QR payload",
-        "current_print_selection": "Current print selection",
-        "layout_heading": "Layout",
         "requested_label": "Requested label",
         "requested_qr": "Requested QR",
         "effective_print_width": "Effective print width on ZT420/ZT421 @ 203 dpi",
-        "layout_note": "Field 1 is always printed in human-readable form. Fields 2, 3, weight, and the footer can be turned on or off in the UI for each label. Sign-off prints whenever it is filled in. Weight prints on its own line whenever it is enabled and filled in. When the footer is enabled, today's date is appended automatically at the end. The QR code follows the configured template above.",
-        "on": "on",
-        "off": "off",
-        "none": "(none)",
-        "configuration_error": "Configuration error: {error}",
-        "unknown_error": "Unknown error",
+        "print_rotation": "Print rotation",
+        "width_warning": "Requested width exceeds the printer's 168 mm printable width. The add-on clamps the printed width automatically.",
         "sent_labels_message": "Sent {copies} label(s) to {host}:{port}. QR payload: {qr_payload}",
         "print_failed_message": "Print failed: {error}",
         "preview_failed_message": "Preview failed: {error}",
         "field_required": "{field} is required.",
         "field_numbers_only": "{field} must contain numbers only.",
-        "custom_blocks_heading": "Custom text blocks",
-        "add_custom_block_button": "Add custom block",
-        "no_custom_blocks": "No custom text blocks added yet.",
-        "custom_block_label": "Block label",
-        "custom_block_value": "Block value",
-        "custom_block_print": "Print this block",
-        "custom_block_font_family": "Font family",
-        "custom_block_font_size": "Font size (mm)",
-        "custom_block_alignment": "Alignment",
-        "custom_block_bold": "Bold",
-        "custom_block_italic": "Italic",
-        "custom_block_underline": "Underline",
-        "custom_block_remove": "Remove",
-        "custom_block_count": "Custom blocks",
-        "custom_block_count_value": "{count} block(s)",
-        "default_custom_block_label": "Custom",
-        "font_family_sans": "Sans",
-        "font_family_serif": "Serif",
-        "font_family_mono": "Mono",
-        "alignment_left": "Left",
-        "alignment_center": "Center",
-        "alignment_right": "Right",
-        "profile_select": "Label profile",
-        "profile_active": "Active profile",
-        "profile_none": "Default settings",
-        "profile_yaml_label": "Configured label profiles",
-        "profile_yaml_note": "Profiles come from the add-on Configuration tab. Each profile contains its own label settings group and can be selected here.",
-        "duplicate_profile_button": "Duplicate profile to clipboard",
-        "duplicate_profile_note": "Copies a full profile YAML block to the clipboard so you can paste it into label_profiles in the Configuration tab, then adjust id/name.",
-        "duplicate_profile_success": "Copied duplicated profile YAML for {name} to the clipboard.",
-        "duplicate_profile_failed": "Could not copy the duplicated profile YAML automatically. Copy it from the box below.",
-        "duplicate_profile_fallback_label": "Duplicated profile YAML",
+        "configuration_error": "Configuration error: {error}",
+        "unknown_error": "Unknown error",
+        "none": "(none)",
     },
     "de": {
         "lang": "de",
-        "page_title": "Inventaretikett",
-        "intro_text": "Druckt ein großes QR-Code-Etikett auf einen Zebra-Netzwerkdrucker per rohem ZPL über TCP. {field1_label} akzeptiert nur Ziffern, und {weight_label} akzeptiert nur Ziffern, wenn das Feld aktiviert ist.",
-        "print_field": "Drucken",
-        "copies": "Exemplare",
+        "page_title": "Inventory Label",
+        "intro_text": "Wähle ein Etikettenprofil aus der Add-on-Konfiguration, gib den QR-Inhalt und die konfigurierten Feldwerte ein und drucke danach das Etikett.",
+        "profile_select": "Etikettenprofil",
+        "profile_none": "(keins)",
+        "qr_value_label": "QR-Inhalt",
+        "copies": "Anzahl",
         "configured_printer": "Konfigurierter Drucker",
         "print_label_button": "Etikett drucken",
         "preview_zpl": "ZPL-Vorschau",
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Das PNG wird aus denselben Layout-Koordinaten wie der Druck erzeugt und mit 203 dpi exportiert. Die Vorschau wird in der konfigurierten Etikettengröße in mm angezeigt, um eine möglichst 1:1 Bildschirmdarstellung anzunähern. Wenn eine Druckdrehung aktiviert ist, behält auch die Vorschau das gedrehte Seitenverhältnis des gedruckten Etiketts und wird im horizontalen Modus auf die verfügbare Vorschaubreite eingepasst. Die rote Umrandung zeigt den gesamten QR-Bereich einschließlich der konfigurierten Ruhezone. Die tatsächliche physische Größe kann durch Browser-Zoom, OS-Skalierung und Bildschirmkalibrierung trotzdem abweichen.",
-        "configured_label_mapping": "Konfigurierte Etikettenzuordnung",
-        "field1_label_meta": "Feld-1-Bezeichnung",
-        "field2_label_meta": "Feld-2-Bezeichnung",
-        "field3_label_meta": "Feld-3-Bezeichnung",
-        "sign_off_label_meta": "Signatur-Bezeichnung",
-        "configured_sign_off_names": "Konfigurierte Signatur-Namen",
-        "weight_label_meta": "Gewichtsbezeichnung",
-        "footer_label_meta": "Fußzeilen-Bezeichnung",
-        "default_word": "Standard",
-        "style_word": "Stil",
-        "printed_as": "gedruckt als",
-        "qr_template": "QR-Vorlage",
-        "qr_quiet_zone": "QR-Ruhezone",
-        "module_word": "Modul(e)",
-        "qr_error_correction": "QR-Fehlerkorrektur",
-        "footer_bottom_margin": "Fußzeilen-Abstand unten",
-        "print_rotation": "Drehung des Druckbilds",
+        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit 203 dpi exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
+        "fields_heading": "Konfigurierte Felder",
+        "print_field": "Drucken",
+        "required": "Pflichtfeld",
+        "numeric_only": "Nur Zahlen",
+        "position": "Position",
+        "position_body": "Inhalt",
+        "position_footer": "Footer",
+        "configured_label_mapping": "Zusammenfassung des aktiven Profils",
+        "profile_active": "Aktives Profil",
         "current_qr_payload": "Aktueller QR-Inhalt",
-        "current_print_selection": "Aktuelle Druckauswahl",
-        "layout_heading": "Layout",
-        "requested_label": "Angefordertes Etikett",
-        "requested_qr": "Angeforderter QR-Code",
-        "effective_print_width": "Effektive Druckbreite auf dem ZT420/ZT421 bei 203 dpi",
-        "layout_note": "Feld 1 wird immer in Klarschrift gedruckt. Feld 2, Feld 3, Gewicht und die Fußzeile können pro Etikett in der Oberfläche ein- oder ausgeschaltet werden. Die Signatur wird gedruckt, sobald ein Wert eingetragen ist. Das Gewicht wird, wenn aktiviert und ausgefüllt, auf einer eigenen Zeile gedruckt. Wenn die Fußzeile aktiviert ist, wird das heutige Datum automatisch am Ende ergänzt. Der QR-Code folgt der oben konfigurierten Vorlage.",
-        "on": "an",
-        "off": "aus",
-        "none": "(keine)",
-        "configuration_error": "Konfigurationsfehler: {error}",
-        "unknown_error": "Unbekannter Fehler",
+        "requested_label": "Gewünschtes Label",
+        "requested_qr": "Gewünschter QR",
+        "effective_print_width": "Effektive Druckbreite auf ZT420/ZT421 @ 203 dpi",
+        "print_rotation": "Drehung",
+        "width_warning": "Die gewünschte Breite überschreitet die druckbare Breite von 168 mm. Das Add-on begrenzt die Druckbreite automatisch.",
         "sent_labels_message": "{copies} Etikett(en) an {host}:{port} gesendet. QR-Inhalt: {qr_payload}",
-        "print_failed_message": "Drucken fehlgeschlagen: {error}",
+        "print_failed_message": "Druck fehlgeschlagen: {error}",
         "preview_failed_message": "Vorschau fehlgeschlagen: {error}",
         "field_required": "{field} ist erforderlich.",
-        "field_numbers_only": "{field} darf nur Ziffern enthalten.",
-        "custom_blocks_heading": "Benutzerdefinierte Textblöcke",
-        "add_custom_block_button": "Textblock hinzufügen",
-        "no_custom_blocks": "Noch keine benutzerdefinierten Textblöcke hinzugefügt.",
-        "custom_block_label": "Blockbezeichnung",
-        "custom_block_value": "Blockinhalt",
-        "custom_block_print": "Diesen Block drucken",
-        "custom_block_font_family": "Schriftfamilie",
-        "custom_block_font_size": "Schriftgröße (mm)",
-        "custom_block_alignment": "Ausrichtung",
-        "custom_block_bold": "Fett",
-        "custom_block_italic": "Kursiv",
-        "custom_block_underline": "Unterstrichen",
-        "custom_block_remove": "Entfernen",
-        "custom_block_count": "Benutzerdefinierte Blöcke",
-        "custom_block_count_value": "{count} Block/Blöcke",
-        "default_custom_block_label": "Benutzerdefiniert",
-        "font_family_sans": "Sans",
-        "font_family_serif": "Serif",
-        "font_family_mono": "Mono",
-        "alignment_left": "Links",
-        "alignment_center": "Zentriert",
-        "alignment_right": "Rechts",
-        "profile_select": "Etikettenprofil",
-        "profile_active": "Aktives Profil",
-        "profile_none": "Standardkonfiguration",
-        "profile_yaml_label": "Konfigurierte Etikettenprofile",
-        "profile_yaml_note": "Die Profile kommen aus dem Add-on-Konfigurationstab. Jedes Profil enthält seine eigene Einstellungsgruppe und kann hier ausgewählt werden.",
-        "duplicate_profile_button": "Profil duplizieren und in die Zwischenablage kopieren",
-        "duplicate_profile_note": "Kopiert einen vollständigen YAML-Profilblock in die Zwischenablage, damit du ihn in label_profiles im Konfigurationstab einfügen und danach id/name anpassen kannst.",
-        "duplicate_profile_success": "Dupliziertes Profil-YAML für {name} in die Zwischenablage kopiert.",
-        "duplicate_profile_failed": "Das duplizierte Profil-YAML konnte nicht automatisch kopiert werden. Bitte aus dem Feld unten kopieren.",
-        "duplicate_profile_fallback_label": "Dupliziertes Profil-YAML",
+        "field_numbers_only": "{field} darf nur Zahlen enthalten.",
+        "configuration_error": "Konfigurationsfehler: {error}",
+        "unknown_error": "Unbekannter Fehler",
+        "none": "(keins)",
     },
-}
-
-DEFAULT_FORM = {
-    "copies": "1",
-    "print_text2": "1",
-    "print_text3": "1",
-    "print_footer": "1",
-    "print_weight": "0",
 }
 
 HTML = """
@@ -457,286 +306,78 @@ HTML = """
       --label-bg: #ffffff;
       --label-edge: #d1d5db;
     }
-    body {
-      margin: 0;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-    }
-    .wrap {
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 24px;
-    }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 20px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
-      margin-bottom: 20px;
-    }
+    body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); margin-bottom: 20px; }
     h1, h2, h3 { margin-top: 0; }
-    label {
-      display: block;
-      font-weight: 600;
-      margin-bottom: 8px;
-    }
-    input, select {
-      width: 100%;
-      box-sizing: border-box;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: #0f172a;
-      color: var(--text);
-      padding: 12px 14px;
-      font: inherit;
-      margin-bottom: 16px;
-    }
-    .row {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 16px;
-    }
-    .btns {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-    button, .button-link {
-      border: none;
-      background: var(--accent);
-      color: white;
-      padding: 12px 18px;
-      border-radius: 12px;
-      font: inherit;
-      cursor: pointer;
-      text-decoration: none;
-      display: inline-block;
-    }
-    .secondary {
-      background: transparent;
-      border: 1px solid var(--border);
-    }
-    .flash {
-      border-radius: 12px;
-      padding: 14px 16px;
-      margin-bottom: 16px;
-    }
+    label { display: block; font-weight: 600; margin-bottom: 8px; }
+    input, select { width: 100%; box-sizing: border-box; border-radius: 12px; border: 1px solid var(--border); background: #0f172a; color: var(--text); padding: 12px 14px; font: inherit; margin-bottom: 16px; }
+    input[type="checkbox"] { width: auto; margin: 0; accent-color: var(--accent); }
+    .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+    .btns { display: flex; gap: 12px; flex-wrap: wrap; }
+    button, .button-link { border: none; background: var(--accent); color: white; padding: 12px 18px; border-radius: 12px; font: inherit; cursor: pointer; text-decoration: none; display: inline-block; }
+    .secondary { background: transparent; border: 1px solid var(--border); }
+    .flash { border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
     .flash.ok { background: rgba(16,185,129,0.14); border: 1px solid var(--ok); }
     .flash.error { background: rgba(239,68,68,0.14); border: 1px solid var(--danger); }
-    code, pre {
-      background: #0b1220;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 12px;
-      overflow: auto;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
     .muted { color: var(--muted); }
-    .warn { color: #fbbf24; }
-    .preview-wrap {
-      overflow: auto;
-      background: #0b1220;
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 16px;
-    }
-    .preview-stage {
-      display: flex;
-      justify-content: center;
-      align-items: flex-start;
-      min-width: 0;
-      width: 100%;
-    }
-    .preview-frame {
-      width: {{ preview_display_width_mm }}mm;
-      height: {{ preview_display_height_mm }}mm;
-      flex: 0 0 auto;
-      max-width: none;
-      background: var(--label-bg);
-      border: 1px solid var(--label-edge);
-      box-shadow: 0 10px 30px rgba(0,0,0,0.28);
-    }
-    .preview-frame img {
-      display: block;
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      background: white;
-    }
-    .preview-meta {
-      margin-top: 12px;
-      font-size: 0.95rem;
-      color: var(--muted);
-    }
-    .config-list {
-      margin: 0;
-      padding-left: 18px;
-      color: var(--muted);
-    }
+    .preview-wrap { overflow: auto; background: #0b1220; border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
+    .preview-stage { display: flex; justify-content: center; align-items: flex-start; min-width: 0; width: 100%; }
+    .preview-frame { width: {{ preview_display_width_mm }}mm; height: {{ preview_display_height_mm }}mm; flex: 0 0 auto; max-width: none; background: var(--label-bg); border: 1px solid var(--label-edge); box-shadow: 0 10px 30px rgba(0,0,0,0.28); }
+    .preview-frame img { display: block; width: 100%; height: 100%; object-fit: contain; background: white; }
+    .preview-meta { margin-top: 12px; font-size: 0.95rem; color: var(--muted); }
+    .config-list { margin: 0; padding-left: 18px; color: var(--muted); }
     .config-list li + li { margin-top: 8px; }
-    .checkbox-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin: -6px 0 16px;
-      font-weight: 500;
-    }
-    .checkbox-row input {
-      width: auto;
-      margin: 0;
-      transform: scale(1.1);
-      accent-color: var(--accent);
-    }
-    .section-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
-      margin-bottom: 12px;
-    }
-    .small-button {
-      padding: 10px 14px;
-    }
-    .small-muted {
-      color: var(--muted);
-      font-size: 0.92rem;
-      margin-bottom: 12px;
-    }
-    .custom-blocks {
-      display: grid;
-      gap: 14px;
-      margin-bottom: 16px;
-    }
-    .custom-block {
-      background: #111827;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 14px;
-    }
-    .custom-block-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-    .custom-block-title {
-      font-weight: 700;
-      color: var(--muted);
-    }
-    .custom-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 12px;
-    }
-    .inline-checks {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 14px;
-      margin-top: 8px;
-    }
-    .inline-checks label {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 0;
-      font-weight: 500;
-    }
-    .inline-checks input {
-      width: auto;
-      margin: 0;
-      accent-color: var(--accent);
-    }
-    .block-remove {
-      background: transparent;
-      border: 1px solid var(--danger);
-      color: #fecaca;
-    }
-    .profile-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-      margin-top: 8px;
-      margin-bottom: 12px;
-    }
-    .profile-duplicate-status {
-      margin-top: 8px;
-      min-height: 1.2em;
-    }
-    .profile-duplicate-status.ok {
-      color: #86efac;
-    }
-    .profile-duplicate-status.error {
-      color: #fca5a5;
-    }
+    .field-grid { display: grid; gap: 14px; }
+    .field-card { background: #111827; border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
+    .field-card h3 { margin-bottom: 10px; font-size: 1rem; }
+    .field-meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 0.92rem; margin-bottom: 12px; }
+    .checkline { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <h1>{{ ui.page_title }}</h1>
-      <p class="muted">{{ intro_text }}</p>
+      <p class="muted">{{ ui.intro_text }}</p>
       {% if result %}
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
       {% endif %}
       <form id="label-form" method="post" action="{{ ingress_base }}/print">
-        {% if label_profiles %}
         <label for="profile_id">{{ ui.profile_select }}</label>
         <select id="profile_id" name="profile_id">
           {% for profile in label_profiles %}
             <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
           {% endfor %}
         </select>
-        <div class="profile-actions">
-          <button id="duplicate-profile-button" class="secondary small-button" type="button">{{ ui.duplicate_profile_button }}</button>
-          <span class="small-muted">{{ ui.duplicate_profile_note }}</span>
-        </div>
-        <div id="profile-duplicate-status" class="small-muted profile-duplicate-status" aria-live="polite"></div>
-        <label for="profile-duplicate-yaml" class="small-muted">{{ ui.duplicate_profile_fallback_label }}</label>
-        <textarea id="profile-duplicate-yaml" class="small-muted" rows="8" spellcheck="false"></textarea>
-        {% else %}
-        <input id="profile_id" name="profile_id" type="hidden" value="{{ active_profile_id }}">
-        {% endif %}
 
-        <label for="text1">{{ field1_label }}</label>
-        <input id="text1" name="text1" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" required value="{{ form.text1 }}">
+        <label for="qr_value">{{ ui.qr_value_label }}</label>
+        <input id="qr_value" name="qr_value" type="text" value="{{ form.qr_value }}" required>
 
-        <label for="text2">{{ field2_label }}</label>
-        <input id="text2" name="text2" value="{{ form.text2 }}">
-        <label class="checkbox-row"><input id="print_text2" name="print_text2" type="checkbox" value="1" {% if form.print_text2 == '1' %}checked{% endif %}> {{ ui.print_field }} {{ field2_label }}</label>
-
-        <label for="text3">{{ field3_label }}</label>
-        <input id="text3" name="text3" value="{{ form.text3 }}">
-        <label class="checkbox-row"><input id="print_text3" name="print_text3" type="checkbox" value="1" {% if form.print_text3 == '1' %}checked{% endif %}> {{ ui.print_field }} {{ field3_label }}</label>
-
-        <label for="sign_off">{{ sign_off_label }}</label>
-        <input id="sign_off" name="sign_off" list="signoff-options" value="{{ form.sign_off }}" autocomplete="off">
-        <datalist id="signoff-options">
-          {% for name in sign_off_options %}
-            <option value="{{ name }}"></option>
+        <h2>{{ ui.fields_heading }}</h2>
+        <div class="field-grid">
+          {% for field in field_forms %}
+          <div class="field-card">
+            <h3>{{ field.name }}</h3>
+            <div class="field-meta">
+              <span>{{ ui.position }}: {{ ui.position_footer if field.position == 'footer' else ui.position_body }}</span>
+              {% if field.required %}<span>{{ ui.required }}</span>{% endif %}
+              {% if field.number_only %}<span>{{ ui.numeric_only }}</span>{% endif %}
+            </div>
+            <div class="checkline">
+              <input id="print_{{ field.id }}" name="print_{{ field.id }}" type="checkbox" value="1" {% if field.print_enabled %}checked{% endif %}>
+              <label for="print_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.print_field }}</label>
+            </div>
+            <input
+              id="field_{{ field.id }}"
+              name="field_{{ field.id }}"
+              type="text"
+              value="{{ field.value }}"
+              {% if field.number_only %}inputmode="numeric" pattern="[0-9]*" data-number-only="1"{% endif %}
+            >
+          </div>
           {% endfor %}
-        </datalist>
-
-        <label for="weight">{{ weight_label }}</label>
-        <input id="weight" name="weight" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="{{ form.weight }}">
-        <label class="checkbox-row"><input id="print_weight" name="print_weight" type="checkbox" value="1" {% if form.print_weight == '1' %}checked{% endif %}> {{ ui.print_field }} {{ weight_label }}</label>
-
-        <label for="footer">{{ footer_label }}</label>
-        <input id="footer" name="footer" value="{{ form.footer }}">
-        <label class="checkbox-row"><input id="print_footer" name="print_footer" type="checkbox" value="1" {% if form.print_footer == '1' %}checked{% endif %}> {{ ui.print_field }} {{ footer_label }}</label>
-
-        <input id="custom_blocks_json" name="custom_blocks_json" type="hidden" value="{{ custom_blocks_json|e }}">
-        <div class="section-row">
-          <label>{{ ui.custom_blocks_heading }}</label>
-          <button id="add-custom-block" class="secondary small-button" type="button">{{ ui.add_custom_block_button }}</button>
         </div>
-        <div id="custom-blocks-empty" class="small-muted">{{ ui.no_custom_blocks }}</div>
-        <div id="custom-blocks-container" class="custom-blocks"></div>
 
         <div class="row">
           <div>
@@ -751,8 +392,8 @@ HTML = """
 
         <div class="btns">
           <button type="submit">{{ ui.print_label_button }}</button>
-          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}&custom_blocks_json={{ custom_blocks_json|urlencode }}&profile_id={{ active_profile_id|urlencode }}">{{ ui.preview_zpl }}</a>
-          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}&custom_blocks_json={{ custom_blocks_json|urlencode }}&profile_id={{ active_profile_id|urlencode }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
+          <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?{{ preview_query }}">{{ ui.preview_zpl }}</a>
+          <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?{{ preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
         </div>
       </form>
     </div>
@@ -762,365 +403,69 @@ HTML = """
       <div class="preview-wrap">
         <div class="preview-stage">
           <div class="preview-frame">
-            <img id="preview-image" src="{{ ingress_base }}/preview.png?text1={{ form.text1|urlencode }}&text2={{ form.text2|urlencode }}&text3={{ form.text3|urlencode }}&sign_off={{ form.sign_off|urlencode }}&weight={{ form.weight|urlencode }}&footer={{ form.footer|urlencode }}&copies={{ form.copies }}&print_text2={{ form.print_text2 }}&print_text3={{ form.print_text3 }}&print_weight={{ form.print_weight }}&print_footer={{ form.print_footer }}&custom_blocks_json={{ custom_blocks_json|urlencode }}&profile_id={{ active_profile_id|urlencode }}" alt="{{ ui.preview_alt }}">
+            <img id="preview-image" src="{{ ingress_base }}/preview.png?{{ preview_query }}" alt="{{ ui.preview_alt }}">
           </div>
         </div>
       </div>
-      <div class="preview-meta">
-        {{ ui.preview_meta }}
-      </div>
+      <div class="preview-meta">{{ ui.preview_meta }}</div>
     </div>
 
     <div class="card">
       <h2>{{ ui.configured_label_mapping }}</h2>
       <ul class="config-list">
         <li><strong>{{ ui.profile_active }}:</strong> <code>{{ active_profile_name or ui.profile_none }}</code></li>
-        {% if label_profiles %}<li><strong>{{ ui.profile_yaml_label }}:</strong> <code>{{ label_profiles|length }}</code> · {{ ui.profile_yaml_note }}</li>{% endif %}
-        <li><strong>{{ ui.field1_label_meta }}:</strong> <code>{{ field1_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ field1_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ field1_style_summary }}</code></li>
-        <li><strong>{{ ui.field2_label_meta }}:</strong> <code>{{ field2_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ field2_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ field2_style_summary }}</code></li>
-        <li><strong>{{ ui.field3_label_meta }}:</strong> <code>{{ field3_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ field3_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ field3_style_summary }}</code></li>
-        <li><strong>{{ ui.sign_off_label_meta }}:</strong> <code>{{ sign_off_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ sign_off_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ sign_off_style_summary }}</code></li>
-        <li><strong>{{ ui.configured_sign_off_names }}:</strong> <code>{{ sign_off_options_display }}</code></li>
-        <li><strong>{{ ui.custom_block_count }}:</strong> <code>{{ custom_block_count_text }}</code></li>
-        <li><strong>{{ ui.weight_label_meta }}:</strong> <code>{{ weight_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ weight_default_value }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ weight_style_summary }}</code></li>
-        <li><strong>{{ ui.footer_label_meta }}:</strong> <code>{{ footer_label }}</code> · <strong>{{ ui.default_word }}:</strong> <code>{{ footer_default_value }}</code> · <strong>{{ ui.printed_as }}:</strong> <code>{{ footer_preview_text }}</code> · <strong>{{ ui.style_word }}:</strong> <code>{{ footer_style_summary }}</code></li>
-        <li><strong>{{ ui.qr_template }}:</strong> <code>{{ qr_value_template }}</code></li>
-        <li><strong>{{ ui.qr_quiet_zone }}:</strong> <code>{{ qr_quiet_zone_modules }} {{ ui.module_word }}</code></li>
-        <li><strong>{{ ui.qr_error_correction }}:</strong> <code>{{ qr_error_correction }}</code></li>
-        <li><strong>{{ ui.footer_bottom_margin }}:</strong> <code>{{ footer_bottom_margin_mm }} mm</code></li>
-        <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview }}</code></li>
-        <li><strong>{{ ui.current_print_selection }}:</strong> <code>field1={{ ui.on }}, field2={{ ui.on if form.print_text2 == "1" else ui.off }}, field3={{ ui.on if form.print_text3 == "1" else ui.off }}, sign-off={{ ui.on if form.sign_off else ui.off }}, weight={{ ui.on if form.print_weight == "1" else ui.off }}, footer={{ ui.on if form.print_footer == "1" else ui.off }}, custom={{ custom_block_count_text }}</code></li>
+        <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview or ui.none }}</code></li>
+        <li><strong>{{ ui.requested_label }}:</strong> <code>{{ requested_width_mm }} × {{ requested_height_mm }} mm</code></li>
+        <li><strong>{{ ui.requested_qr }}:</strong> <code>{{ requested_qr_mm }} × {{ requested_qr_mm }} mm</code></li>
+        <li><strong>QR:</strong> <code>quiet zone {{ qr_quiet_zone_modules }}, ECC {{ qr_error_correction }}</code></li>
+        <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
+        <li><strong>{{ ui.effective_print_width }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
       </ul>
-    </div>
-
-    <div class="card">
-      <h2>{{ ui.layout_heading }}</h2>
-      <p class="muted">
-        {{ ui.requested_label }}: {{ requested_width_mm }} × {{ requested_height_mm }} mm<br>
-        {{ ui.requested_qr }}: {{ requested_qr_mm }} × {{ requested_qr_mm }} mm<br>
-        QR quiet zone: {{ qr_quiet_zone_modules }} module(s), error correction: {{ qr_error_correction }}<br>
-        Footer bottom margin: {{ footer_bottom_margin_mm }} mm<br>
-        {{ ui.print_rotation }}: {{ print_rotation_degrees }}°<br>
-        {{ ui.effective_print_width }}: {{ effective_width_mm }} mm ({{ effective_width_dots }} dots)
-      </p>
       {% if width_warning %}
-      <p class="warn">{{ width_warning }}</p>
+      <p class="muted">{{ ui.width_warning }}</p>
       {% endif %}
-      <p class="muted">{{ ui.layout_note|safe }}</p>
     </div>
   </div>
+
   <script>
     (function () {
-      const ingressBase = {{ ingress_base|tojson }};
+      const form = document.getElementById("label-form");
       const profileSelect = document.getElementById("profile_id");
-      const duplicateProfileButton = document.getElementById("duplicate-profile-button");
-      const profileDuplicateStatus = document.getElementById("profile-duplicate-status");
-      const profileDuplicateYaml = document.getElementById("profile-duplicate-yaml");
-      const text1 = document.getElementById("text1");
-      const text2 = document.getElementById("text2");
-      const text3 = document.getElementById("text3");
-      const signOff = document.getElementById("sign_off");
-      const weight = document.getElementById("weight");
-      const footer = document.getElementById("footer");
-      const printText2 = document.getElementById("print_text2");
-      const printText3 = document.getElementById("print_text3");
-      const printWeight = document.getElementById("print_weight");
-      const printFooter = document.getElementById("print_footer");
-      const customBlocksJsonInput = document.getElementById("custom_blocks_json");
-      const addCustomBlockButton = document.getElementById("add-custom-block");
-      const customBlocksContainer = document.getElementById("custom-blocks-container");
-      const customBlocksEmpty = document.getElementById("custom-blocks-empty");
-      const copies = document.getElementById("copies");
       const previewImage = document.getElementById("preview-image");
       const previewFrame = document.querySelector(".preview-frame");
       const previewWrap = document.querySelector(".preview-wrap");
       const previewStage = document.querySelector(".preview-stage");
       const previewPngLink = document.getElementById("preview-png-link");
       const previewZplLink = document.getElementById("preview-zpl-link");
-      if (!text1 || !text2 || !text3 || !signOff || !weight || !footer || !printText2 || !printText3 || !printWeight || !printFooter || !customBlocksJsonInput || !addCustomBlockButton || !customBlocksContainer || !customBlocksEmpty || !copies || !previewImage || !previewFrame || !previewWrap || !previewStage || !previewPngLink || !previewZplLink) return;
+      if (!form || !previewImage || !previewFrame || !previewWrap || !previewStage || !previewPngLink || !previewZplLink) return;
 
-      const customBlockUi = {{ custom_block_ui|tojson }};
-      const profileExports = {{ label_profile_exports|tojson }};
-      const maxCustomBlocks = {{ custom_block_max }};
-      const customBlockStorageKey = "inventory_label_custom_blocks";
       let refreshTimer = null;
       let previewNonce = Date.now();
-      let customBlocks = [];
+      const ingressBase = {{ ingress_base|tojson }};
+      const portraitWidthMm = {{ preview_display_width_mm|tojson }};
+      const portraitHeightMm = {{ preview_display_height_mm|tojson }};
 
-      function yamlScalar(value) {
-        if (value === null || value === undefined) return '""';
-        if (typeof value === "boolean" || typeof value === "number") return String(value);
-        return JSON.stringify(String(value));
-      }
-
-      function serializeProfileYaml(profileData) {
-        const orderedKeys = [
-          "id", "name", "label_width_mm", "label_height_mm", "qr_size_mm", "top_margin_mm", "print_rotation_degrees",
-          "field1_label", "field2_label", "field3_label", "sign_off_label", "weight_label", "footer_label",
-          "field1_default_value", "field2_default_value", "field3_default_value", "sign_off_default_value", "sign_off_options", "weight_default_value", "footer_default_value",
-          "field1_alignment", "field2_alignment", "field3_alignment", "sign_off_alignment", "weight_alignment", "footer_alignment",
-          "field1_font_family", "field2_font_family", "field3_font_family", "sign_off_font_family", "weight_font_family", "footer_font_family",
-          "field1_font_size_mm", "field2_font_size_mm", "field3_font_size_mm", "sign_off_font_size_mm", "weight_font_size_mm", "footer_font_size_mm", "footer_bottom_margin_mm",
-          "field1_bold", "field2_bold", "field3_bold", "sign_off_bold", "weight_bold", "footer_bold",
-          "field1_italic", "field2_italic", "field3_italic", "sign_off_italic", "weight_italic", "footer_italic",
-          "field1_underline", "field2_underline", "field3_underline", "sign_off_underline", "weight_underline", "footer_underline",
-          "qr_value_template", "qr_quiet_zone_modules", "qr_error_correction",
-          "default_print_text2", "default_print_text3", "default_print_weight", "default_print_footer"
-        ];
-        const lines = ["  - id: " + yamlScalar(profileData.id), "    name: " + yamlScalar(profileData.name)];
-        for (const key of orderedKeys) {
-          if (key === "id" || key === "name") continue;
-          if (!(key in profileData)) continue;
-          lines.push("    " + key + ": " + yamlScalar(profileData[key]));
-        }
-        return lines.join("
-");
-      }
-
-      function slugifyProfileId(value) {
-        return String(value || "")
-          .toLowerCase()
-          .replace(/[^a-z0-9_-]+/g, "-")
-          .replace(/^-+|-+$/g, "") || "label-copy";
-      }
-
-      function buildDuplicatedProfile() {
-        if (!profileExports.length) return null;
-        const selected = profileExports.find((profile) => profile.id === (profileSelect && profileSelect.value ? profileSelect.value : "")) || profileExports[0];
-        if (!selected || !selected.data) return null;
-        const duplicated = JSON.parse(JSON.stringify(selected.data));
-        duplicated.name = `${selected.name} (Copy)`;
-        duplicated.id = slugifyProfileId(`${selected.id || selected.name || 'label'}-copy`);
-        return duplicated;
-      }
-
-      function setDuplicateStatus(message, isError) {
-        if (!profileDuplicateStatus) return;
-        profileDuplicateStatus.textContent = message || "";
-        profileDuplicateStatus.classList.toggle("ok", !!message && !isError);
-        profileDuplicateStatus.classList.toggle("error", !!message && !!isError);
-      }
-
-      async function duplicateProfileToClipboard() {
-        const duplicated = buildDuplicatedProfile();
-        if (!duplicated) return;
-        const yamlBlock = serializeProfileYaml(duplicated);
-        if (profileDuplicateYaml) profileDuplicateYaml.value = yamlBlock;
-        try {
-          await navigator.clipboard.writeText(yamlBlock);
-          setDuplicateStatus({{ ui.duplicate_profile_success|tojson }}.replace("{name}", duplicated.name), false);
-        } catch (error) {
-          setDuplicateStatus({{ ui.duplicate_profile_failed|tojson }}, true);
-        }
-      }
-
-      function clampCustomBlockFontSize(value) {
-        const parsed = parseFloat(value);
-        if (Number.isNaN(parsed)) return 7;
-        return Math.max(2, Math.min(30, parsed));
-      }
-
-      function normalizeCustomBlock(block, index) {
-        const safe = block && typeof block === "object" ? block : {};
-        const label = String(safe.label || `${customBlockUi.defaultLabel} ${index + 1}`).trim();
-        const alignment = ["left", "center", "right"].includes(String(safe.alignment || "").toLowerCase()) ? String(safe.alignment).toLowerCase() : "center";
-        const fontFamily = ["sans", "serif", "mono"].includes(String(safe.font_family || "").toLowerCase()) ? String(safe.font_family).toLowerCase() : "sans";
-        return {
-          label: label || `${customBlockUi.defaultLabel} ${index + 1}`,
-          value: String(safe.value || ""),
-          print: safe.print !== false,
-          alignment,
-          font_family: fontFamily,
-          font_size_mm: clampCustomBlockFontSize(safe.font_size_mm),
-          bold: Boolean(safe.bold),
-          italic: Boolean(safe.italic),
-          underline: Boolean(safe.underline),
-        };
-      }
-
-      try {
-        const parsed = JSON.parse(customBlocksJsonInput.value || "[]");
-        customBlocks = Array.isArray(parsed) ? parsed.slice(0, maxCustomBlocks).map(normalizeCustomBlock) : [];
-      } catch (error) {
-        customBlocks = [];
-      }
-
-      if (!customBlocks.length) {
-        try {
-          const storedBlocks = window.localStorage.getItem(customBlockStorageKey);
-          if (storedBlocks) {
-            const parsedStored = JSON.parse(storedBlocks);
-            customBlocks = Array.isArray(parsedStored) ? parsedStored.slice(0, maxCustomBlocks).map(normalizeCustomBlock) : [];
-          }
-        } catch (error) {
-          customBlocks = [];
-        }
-      }
-
-      function syncCustomBlocksField() {
-        customBlocks = customBlocks.slice(0, maxCustomBlocks).map(normalizeCustomBlock);
-        customBlocksJsonInput.value = JSON.stringify(customBlocks);
-        try { window.localStorage.setItem(customBlockStorageKey, customBlocksJsonInput.value); } catch (error) {}
-        customBlocksEmpty.style.display = customBlocks.length ? "none" : "block";
-      }
-
-      function makeOption(value, label, selected) {
-        const option = document.createElement("option");
-        option.value = value;
-        option.textContent = label;
-        option.selected = selected;
-        return option;
-      }
-
-      function appendField(wrapper, labelText, control) {
-        const field = document.createElement("div");
-        const label = document.createElement("label");
-        label.textContent = labelText;
-        field.appendChild(label);
-        field.appendChild(control);
-        wrapper.appendChild(field);
-      }
-
-      function renderCustomBlocks() {
-        customBlocks = customBlocks.slice(0, maxCustomBlocks).map(normalizeCustomBlock);
-        customBlocksContainer.innerHTML = "";
-        customBlocks.forEach((block, index) => {
-          const card = document.createElement("div");
-          card.className = "custom-block";
-
-          const header = document.createElement("div");
-          header.className = "custom-block-header";
-          const title = document.createElement("div");
-          title.className = "custom-block-title";
-          title.textContent = block.label || `${customBlockUi.defaultLabel} ${index + 1}`;
-          const removeButton = document.createElement("button");
-          removeButton.type = "button";
-          removeButton.className = "secondary small-button block-remove";
-          removeButton.textContent = customBlockUi.remove;
-          removeButton.addEventListener("click", () => {
-            customBlocks.splice(index, 1);
-            renderCustomBlocks();
-            applyPreviewUpdate();
-          });
-          header.appendChild(title);
-          header.appendChild(removeButton);
-          card.appendChild(header);
-
-          const grid = document.createElement("div");
-          grid.className = "custom-grid";
-
-          const labelInput = document.createElement("input");
-          labelInput.type = "text";
-          labelInput.value = block.label;
-          labelInput.addEventListener("input", () => {
-            block.label = labelInput.value;
-            syncCustomBlocksField();
-            title.textContent = labelInput.value || `${customBlockUi.defaultLabel} ${index + 1}`;
-            schedulePreviewUpdate();
-          });
-          appendField(grid, customBlockUi.label, labelInput);
-
-          const valueInput = document.createElement("input");
-          valueInput.type = "text";
-          valueInput.value = block.value;
-          valueInput.addEventListener("input", () => {
-            block.value = valueInput.value;
-            syncCustomBlocksField();
-            schedulePreviewUpdate();
-          });
-          appendField(grid, customBlockUi.value, valueInput);
-
-          const alignmentSelect = document.createElement("select");
-          alignmentSelect.appendChild(makeOption("left", customBlockUi.alignmentLeft, block.alignment === "left"));
-          alignmentSelect.appendChild(makeOption("center", customBlockUi.alignmentCenter, block.alignment === "center"));
-          alignmentSelect.appendChild(makeOption("right", customBlockUi.alignmentRight, block.alignment === "right"));
-          alignmentSelect.addEventListener("change", () => {
-            block.alignment = alignmentSelect.value;
-            syncCustomBlocksField();
-            applyPreviewUpdate();
-          });
-          appendField(grid, customBlockUi.alignment, alignmentSelect);
-
-          const familySelect = document.createElement("select");
-          familySelect.appendChild(makeOption("sans", customBlockUi.fontSans, block.font_family === "sans"));
-          familySelect.appendChild(makeOption("serif", customBlockUi.fontSerif, block.font_family === "serif"));
-          familySelect.appendChild(makeOption("mono", customBlockUi.fontMono, block.font_family === "mono"));
-          familySelect.addEventListener("change", () => {
-            block.font_family = familySelect.value;
-            syncCustomBlocksField();
-            applyPreviewUpdate();
-          });
-          appendField(grid, customBlockUi.fontFamily, familySelect);
-
-          const sizeInput = document.createElement("input");
-          sizeInput.type = "number";
-          sizeInput.min = "2";
-          sizeInput.max = "30";
-          sizeInput.step = "0.5";
-          sizeInput.value = String(block.font_size_mm);
-          sizeInput.addEventListener("input", () => {
-            block.font_size_mm = clampCustomBlockFontSize(sizeInput.value);
-            syncCustomBlocksField();
-            schedulePreviewUpdate();
-          });
-          sizeInput.addEventListener("change", () => {
-            sizeInput.value = String(clampCustomBlockFontSize(sizeInput.value));
-            block.font_size_mm = clampCustomBlockFontSize(sizeInput.value);
-            syncCustomBlocksField();
-            applyPreviewUpdate();
-          });
-          appendField(grid, customBlockUi.fontSize, sizeInput);
-
-          card.appendChild(grid);
-
-          const checks = document.createElement("div");
-          checks.className = "inline-checks";
-          [
-            ["print", customBlockUi.print],
-            ["bold", customBlockUi.bold],
-            ["italic", customBlockUi.italic],
-            ["underline", customBlockUi.underline],
-          ].forEach(([key, labelText]) => {
-            const label = document.createElement("label");
-            const checkbox = document.createElement("input");
-            checkbox.type = "checkbox";
-            checkbox.checked = Boolean(block[key]);
-            checkbox.addEventListener("change", () => {
-              block[key] = checkbox.checked;
-              syncCustomBlocksField();
-              applyPreviewUpdate();
-            });
-            label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(labelText));
-            checks.appendChild(label);
-          });
-          card.appendChild(checks);
-          customBlocksContainer.appendChild(card);
-        });
-        syncCustomBlocksField();
+      function sanitizeNumericInput(input) {
+        if (!input || input.dataset.numberOnly !== "1") return;
+        const cleaned = (input.value || "").replace(/\\D+/g, "");
+        if (cleaned !== input.value) input.value = cleaned;
       }
 
       function normalizedCopies() {
-        const raw = parseInt(copies.value || "1", 10);
+        const input = document.getElementById("copies");
+        const raw = parseInt((input && input.value) || "1", 10);
         if (Number.isNaN(raw)) return "1";
         return String(Math.max(1, Math.min(50, raw)));
       }
 
       function buildQuery() {
         const params = new URLSearchParams();
-        params.set("text1", text1.value || "");
-        params.set("text2", text2.value || "");
-        params.set("text3", text3.value || "");
-        params.set("sign_off", signOff.value || "");
-        params.set("weight", weight.value || "");
-        params.set("footer", footer.value || "");
+        const formData = new FormData(form);
+        for (const [key, value] of formData.entries()) {
+          if (key === "copies") continue;
+          params.set(key, String(value));
+        }
         params.set("copies", normalizedCopies());
-        params.set("print_text2", printText2.checked ? "1" : "0");
-        params.set("print_text3", printText3.checked ? "1" : "0");
-        params.set("print_weight", printWeight.checked ? "1" : "0");
-        params.set("print_footer", printFooter.checked ? "1" : "0");
-        params.set("custom_blocks_json", customBlocksJsonInput.value || "[]");
-        if (profileSelect && profileSelect.value) params.set("profile_id", profileSelect.value);
         return params;
       }
 
@@ -1140,8 +485,8 @@ HTML = """
         } else {
           previewWrap.style.overflowX = "auto";
           previewStage.style.width = "100%";
-          previewFrame.style.width = `${Math.min({{ preview_display_width_mm }}, {{ preview_display_height_mm }})}mm`;
-          previewFrame.style.height = `${Math.max({{ preview_display_width_mm }}, {{ preview_display_height_mm }})}mm`;
+          previewFrame.style.width = `${portraitWidthMm}mm`;
+          previewFrame.style.height = `${portraitHeightMm}mm`;
         }
       }
 
@@ -1160,12 +505,7 @@ HTML = """
         refreshTimer = window.setTimeout(applyPreviewUpdate, 180);
       }
 
-      const sanitizeText1 = () => {
-        const digits = (text1.value || "").replace(/[^0-9]+/g, "");
-        if (digits !== text1.value) text1.value = digits;
-      };
-
-      if (profileSelect && profileSelect.tagName === "SELECT") {
+      if (profileSelect) {
         profileSelect.addEventListener("change", () => {
           const url = new URL(`${ingressBase}/`, window.location.origin);
           if (profileSelect.value) url.searchParams.set("profile_id", profileSelect.value);
@@ -1173,53 +513,22 @@ HTML = """
         });
       }
 
-      text1.addEventListener("input", () => {
-        sanitizeText1();
-        schedulePreviewUpdate();
-      });
-      text1.addEventListener("change", () => {
-        sanitizeText1();
-        applyPreviewUpdate();
-      });
-
-      const sanitizeWeight = () => {
-        const digits = (weight.value || "").replace(/[^0-9]+/g, "");
-        if (digits !== weight.value) weight.value = digits;
-      };
-
-      weight.addEventListener("input", () => {
-        sanitizeWeight();
-        schedulePreviewUpdate();
-      });
-      weight.addEventListener("change", () => {
-        sanitizeWeight();
-        applyPreviewUpdate();
-      });
-
-      [text2, text3, signOff, footer, copies].forEach((input) => {
-        input.addEventListener("input", schedulePreviewUpdate);
-        input.addEventListener("change", applyPreviewUpdate);
-      });
-
-      [printText2, printText3, printWeight, printFooter].forEach((checkbox) => {
-        checkbox.addEventListener("input", schedulePreviewUpdate);
-        checkbox.addEventListener("change", applyPreviewUpdate);
-        checkbox.addEventListener("click", applyPreviewUpdate);
-      });
-
-      addCustomBlockButton.addEventListener("click", () => {
-        if (customBlocks.length >= maxCustomBlocks) return;
-        customBlocks.push(normalizeCustomBlock({ print: true }, customBlocks.length));
-        renderCustomBlocks();
-        applyPreviewUpdate();
+      form.querySelectorAll("input, select").forEach((input) => {
+        if (input.dataset && input.dataset.numberOnly === "1") {
+          input.addEventListener("input", () => { sanitizeNumericInput(input); schedulePreviewUpdate(); });
+          input.addEventListener("change", () => { sanitizeNumericInput(input); applyPreviewUpdate(); });
+          return;
+        }
+        if (input.type === "checkbox") {
+          input.addEventListener("click", applyPreviewUpdate);
+        } else {
+          input.addEventListener("input", schedulePreviewUpdate);
+          input.addEventListener("change", applyPreviewUpdate);
+        }
       });
 
       previewImage.addEventListener("load", syncPreviewFrameToImage);
       window.addEventListener("resize", syncPreviewFrameToImage);
-
-      sanitizeText1();
-      sanitizeWeight();
-      renderCustomBlocks();
       applyPreviewUpdate();
     })();
   </script>
@@ -1233,77 +542,76 @@ def ingress_base_path() -> str:
     return base.rstrip("/")
 
 
-@lru_cache(maxsize=128)
-def load_font(family: str, bold: bool, italic: bool, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    family = family if family in FONT_FAMILIES else "sans"
-    size = max(10, int(size))
-    style = "bolditalic" if bold and italic else "bold" if bold else "italic" if italic else "regular"
-    fallback_order = [style, "bold" if bold else "regular", "italic" if italic else "regular", "regular"]
-    tried = set()
-    for style_name in fallback_order:
-        if style_name in tried:
-            continue
-        tried.add(style_name)
-        for path in FONT_PATHS[family][style_name]:
-            if os.path.exists(path):
-                return ImageFont.truetype(path, size=size)
-    return ImageFont.load_default()
+def normalize_string(value: object, default: str = "") -> str:
+    text = str(value).strip() if value is not None else ""
+    return text if text else default
 
 
-def normalize_string(value: object, default: str) -> str:
-    text = str(value if value is not None else default)
-    return text.strip() or default
-
-
-def normalize_float(value: object, default: float, minimum: float, maximum: float) -> float:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return max(minimum, min(maximum, parsed))
-
-
-def normalize_int(value: object, default: int, minimum: int, maximum: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return max(minimum, min(maximum, parsed))
-
-
-def normalize_bool(value: object, default: bool) -> bool:
+def normalize_bool(value: object, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "off"}:
-            return False
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "y"}:
+        return True
+    if text in {"0", "false", "no", "off", "n", ""}:
+        return False
     return default
 
 
-def normalize_alignment(value: object, default: str) -> str:
-    align = str(value if value is not None else default).strip().lower()
-    return align if align in ALIGNMENTS else default
+def normalize_int(value: object, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+    return parsed
 
 
-def normalize_font_family(value: object, default: str) -> str:
-    family = str(value if value is not None else default).strip().lower()
+def normalize_float(value: object, default: float, minimum: float | None = None, maximum: float | None = None) -> float:
+    try:
+        parsed = float(str(value).strip())
+    except Exception:
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+    return parsed
+
+
+def normalize_ui_language(value: object, default: str = "de") -> str:
+    lang = normalize_string(value, default).lower()
+    return lang if lang in SUPPORTED_UI_LANGUAGES else default
+
+
+def normalize_alignment(value: object, default: str = "center") -> str:
+    alignment = normalize_string(value, default).lower()
+    return alignment if alignment in ALIGNMENTS else default
+
+
+def normalize_font_family(value: object, default: str = "sans") -> str:
+    family = normalize_string(value, default).lower()
     return family if family in FONT_FAMILIES else default
 
 
-def normalize_ui_language(value: object, default: str) -> str:
-    language = str(value if value is not None else default).strip().lower()
-    return language if language in SUPPORTED_UI_LANGUAGES else default
-
-
-def normalize_rotation_degrees(value: object, default: int) -> int:
-    try:
-        rotation = int(value)
-    except (TypeError, ValueError):
-        rotation = default
+def normalize_rotation_degrees(value: object, default: int = 0) -> int:
+    rotation = normalize_int(value, default)
     return rotation if rotation in SUPPORTED_ROTATIONS else default
+
+
+def normalize_position(value: object, default: str = "body") -> str:
+    pos = normalize_string(value, default).lower()
+    return pos if pos in FIELD_POSITIONS else default
+
+
+def sanitize_id(value: str, fallback: str) -> str:
+    normalized = re.sub(r"[^a-z0-9_-]+", "_", value.strip().lower()).strip("_")
+    return normalized or fallback
 
 
 def get_ui_strings(language: object) -> Dict[str, str]:
@@ -1332,75 +640,50 @@ def load_options() -> Dict:
                 options.update(data)
         except Exception as exc:
             LOGGER.warning("Failed to load %s: %s", OPTIONS_PATH, exc)
-
     options["ui_language"] = normalize_ui_language(options.get("ui_language"), DEFAULT_OPTIONS["ui_language"])
-    options["printer_host"] = normalize_string(options.get("printer_host"), DEFAULT_OPTIONS["printer_host"])
-    options["printer_port"] = normalize_int(options.get("printer_port"), DEFAULT_OPTIONS["printer_port"], 1, 65535)
-    options["label_width_mm"] = normalize_float(options.get("label_width_mm"), DEFAULT_OPTIONS["label_width_mm"], 50.0, 500.0)
-    options["label_height_mm"] = normalize_float(options.get("label_height_mm"), DEFAULT_OPTIONS["label_height_mm"], 50.0, 1000.0)
-    options["qr_size_mm"] = normalize_float(options.get("qr_size_mm"), DEFAULT_OPTIONS["qr_size_mm"], 10.0, 300.0)
-    options["top_margin_mm"] = normalize_float(options.get("top_margin_mm"), DEFAULT_OPTIONS["top_margin_mm"], 0.0, 100.0)
-    options["qr_value_template"] = str(options.get("qr_value_template") or DEFAULT_OPTIONS["qr_value_template"])
-    options["qr_quiet_zone_modules"] = normalize_int(options.get("qr_quiet_zone_modules"), DEFAULT_OPTIONS["qr_quiet_zone_modules"], 0, 20)
-    level = str(options.get("qr_error_correction") or DEFAULT_OPTIONS["qr_error_correction"]).strip().upper()
-    options["qr_error_correction"] = level if level in QR_ERROR_CORRECTION_MAP else DEFAULT_OPTIONS["qr_error_correction"]
-    options["print_rotation_degrees"] = normalize_rotation_degrees(options.get("print_rotation_degrees"), DEFAULT_OPTIONS["print_rotation_degrees"])
-
-    for idx in range(1, FIELD_COUNT + 1):
-        options[f"field{idx}_label"] = normalize_string(options.get(f"field{idx}_label"), DEFAULT_OPTIONS[f"field{idx}_label"])
-        options[f"field{idx}_default_value"] = "" if options.get(f"field{idx}_default_value") is None else str(options.get(f"field{idx}_default_value"))
-        options[f"field{idx}_alignment"] = normalize_alignment(options.get(f"field{idx}_alignment"), DEFAULT_OPTIONS[f"field{idx}_alignment"])
-        options[f"field{idx}_font_family"] = normalize_font_family(options.get(f"field{idx}_font_family"), DEFAULT_OPTIONS[f"field{idx}_font_family"])
-        options[f"field{idx}_font_size_mm"] = normalize_float(options.get(f"field{idx}_font_size_mm"), DEFAULT_OPTIONS[f"field{idx}_font_size_mm"], 2.0, 30.0)
-        options[f"field{idx}_bold"] = normalize_bool(options.get(f"field{idx}_bold"), DEFAULT_OPTIONS[f"field{idx}_bold"])
-        options[f"field{idx}_italic"] = normalize_bool(options.get(f"field{idx}_italic"), DEFAULT_OPTIONS[f"field{idx}_italic"])
-        options[f"field{idx}_underline"] = normalize_bool(options.get(f"field{idx}_underline"), DEFAULT_OPTIONS[f"field{idx}_underline"])
-    options["footer_label"] = normalize_string(options.get("footer_label"), DEFAULT_OPTIONS["footer_label"])
-    options["footer_default_value"] = "" if options.get("footer_default_value") is None else str(options.get("footer_default_value"))
-    options["footer_alignment"] = normalize_alignment(options.get("footer_alignment"), DEFAULT_OPTIONS["footer_alignment"])
-    options["footer_font_family"] = normalize_font_family(options.get("footer_font_family"), DEFAULT_OPTIONS["footer_font_family"])
-    options["footer_font_size_mm"] = normalize_float(options.get("footer_font_size_mm"), DEFAULT_OPTIONS["footer_font_size_mm"], 2.0, 30.0)
-    options["footer_bottom_margin_mm"] = normalize_float(options.get("footer_bottom_margin_mm"), DEFAULT_OPTIONS["footer_bottom_margin_mm"], 0.0, 100.0)
-    options["footer_bold"] = normalize_bool(options.get("footer_bold"), DEFAULT_OPTIONS["footer_bold"])
-    options["footer_italic"] = normalize_bool(options.get("footer_italic"), DEFAULT_OPTIONS["footer_italic"])
-    options["footer_underline"] = normalize_bool(options.get("footer_underline"), DEFAULT_OPTIONS["footer_underline"])
-    options["sign_off_label"] = normalize_string(options.get("sign_off_label"), DEFAULT_OPTIONS["sign_off_label"])
-    options["sign_off_default_value"] = "" if options.get("sign_off_default_value") is None else str(options.get("sign_off_default_value"))
-    options["sign_off_options"] = str(options.get("sign_off_options") or DEFAULT_OPTIONS["sign_off_options"])
-    options["sign_off_alignment"] = normalize_alignment(options.get("sign_off_alignment"), DEFAULT_OPTIONS["sign_off_alignment"])
-    options["sign_off_font_family"] = normalize_font_family(options.get("sign_off_font_family"), DEFAULT_OPTIONS["sign_off_font_family"])
-    options["sign_off_font_size_mm"] = normalize_float(options.get("sign_off_font_size_mm"), DEFAULT_OPTIONS["sign_off_font_size_mm"], 2.0, 30.0)
-    options["sign_off_bold"] = normalize_bool(options.get("sign_off_bold"), DEFAULT_OPTIONS["sign_off_bold"])
-    options["sign_off_italic"] = normalize_bool(options.get("sign_off_italic"), DEFAULT_OPTIONS["sign_off_italic"])
-    options["sign_off_underline"] = normalize_bool(options.get("sign_off_underline"), DEFAULT_OPTIONS["sign_off_underline"])
-    options["weight_label"] = normalize_string(options.get("weight_label"), DEFAULT_OPTIONS["weight_label"])
-    options["weight_default_value"] = digits_only("" if options.get("weight_default_value") is None else options.get("weight_default_value"))
-    options["weight_alignment"] = normalize_alignment(options.get("weight_alignment"), DEFAULT_OPTIONS["weight_alignment"])
-    options["weight_font_family"] = normalize_font_family(options.get("weight_font_family"), DEFAULT_OPTIONS["weight_font_family"])
-    options["weight_font_size_mm"] = normalize_float(options.get("weight_font_size_mm"), DEFAULT_OPTIONS["weight_font_size_mm"], 2.0, 30.0)
-    options["weight_bold"] = normalize_bool(options.get("weight_bold"), DEFAULT_OPTIONS["weight_bold"])
-    options["weight_italic"] = normalize_bool(options.get("weight_italic"), DEFAULT_OPTIONS["weight_italic"])
-    options["weight_underline"] = normalize_bool(options.get("weight_underline"), DEFAULT_OPTIONS["weight_underline"])
-    options["label_profiles_yaml"] = str(options.get("label_profiles_yaml") or DEFAULT_OPTIONS.get("label_profiles_yaml", ""))
-    options["label_profiles"] = options.get("label_profiles") if isinstance(options.get("label_profiles"), list) else []
+    raw_profiles = options.get("label_profiles_yaml")
+    if raw_profiles is None:
+        raw_profiles = DEFAULT_OPTIONS["label_profiles_yaml"]
+    options["label_profiles_yaml"] = str(raw_profiles)
     return options
 
 
+def normalize_profile_field(raw: object, idx: int) -> Dict:
+    data = raw if isinstance(raw, dict) else {}
+    name = normalize_string(data.get("name"), f"Field {idx}")
+    field_id = sanitize_id(str(data.get("id") or name), f"field_{idx}")
+    return {
+        "id": field_id,
+        "name": name,
+        "default_value": "" if data.get("default_value") is None else str(data.get("default_value")),
+        "alignment": normalize_alignment(data.get("alignment"), "center"),
+        "font_family": normalize_font_family(data.get("font_family"), "sans"),
+        "font_size_mm": normalize_float(data.get("font_size_mm"), 7.0, 2.0, 30.0),
+        "bold": normalize_bool(data.get("bold"), False),
+        "italic": normalize_bool(data.get("italic"), False),
+        "underline": normalize_bool(data.get("underline"), False),
+        "print_by_default": normalize_bool(data.get("print_by_default"), True),
+        "required": normalize_bool(data.get("required"), False),
+        "number_only": normalize_bool(data.get("number_only"), False),
+        "suffix": str(data.get("suffix") or "").strip(),
+        "position": normalize_position(data.get("position"), "body"),
+        "append_current_date": normalize_bool(data.get("append_current_date"), False),
+        "max_lines": normalize_int(data.get("max_lines"), 3, 1, 8),
+    }
 
 
 def parse_label_profiles(raw: object) -> List[Dict]:
-    data = raw
-    if isinstance(raw, str):
-        source = raw.strip()
-        if not source:
-            return []
+    source = raw if raw not in (None, "") else DEFAULT_OPTIONS["label_profiles_yaml"]
+    if isinstance(source, str):
         try:
-            data = yaml.safe_load(source)
+            data = yaml.safe_load(source) if source.strip() else []
         except Exception as exc:
-            LOGGER.warning("Failed to parse label profiles: %s", exc)
-            return []
+            LOGGER.warning("Failed to parse label profiles YAML: %s", exc)
+            data = []
+    else:
+        data = source
     if isinstance(data, dict):
-        for key in ("labels", "label_profiles", "profiles"):
+        for key in ("label_profiles", "profiles", "labels"):
             if isinstance(data.get(key), list):
                 data = data[key]
                 break
@@ -1408,433 +691,121 @@ def parse_label_profiles(raw: object) -> List[Dict]:
             data = [data]
     if not isinstance(data, list):
         return []
+
     profiles: List[Dict] = []
     for idx, item in enumerate(data, start=1):
         if not isinstance(item, dict):
             continue
-        name = str(item.get("name") or item.get("label") or f"Label {idx}").strip() or f"Label {idx}"
-        raw_id = str(item.get("id") or name).strip().lower()
-        profile_id = re.sub(r"[^a-z0-9_-]+", "-", raw_id).strip("-") or f"label-{idx}"
-        overrides = {key: value for key, value in item.items() if key in PROFILE_ALLOWED_OPTIONS}
-        profiles.append({"id": profile_id, "name": name, "options": overrides})
+        name = normalize_string(item.get("name"), f"Label {idx}")
+        profile_id = sanitize_id(str(item.get("id") or name), f"label_{idx}")
+        fields = item.get("fields") if isinstance(item.get("fields"), list) else []
+        normalized_fields = [normalize_profile_field(field, field_idx) for field_idx, field in enumerate(fields, start=1)]
+        profiles.append({
+            "id": profile_id,
+            "name": name,
+            "printer_host": normalize_string(item.get("printer_host"), "10.50.20.12"),
+            "printer_port": normalize_int(item.get("printer_port"), 9100, 1, 65535),
+            "label_width_mm": normalize_float(item.get("label_width_mm"), 170.0, 50.0, 500.0),
+            "label_height_mm": normalize_float(item.get("label_height_mm"), 305.0, 50.0, 1000.0),
+            "qr_size_mm": normalize_float(item.get("qr_size_mm"), 170.0, 10.0, 300.0),
+            "top_margin_mm": normalize_float(item.get("top_margin_mm"), 0.0, 0.0, 100.0),
+            "footer_bottom_margin_mm": normalize_float(item.get("footer_bottom_margin_mm"), 0.0, 0.0, 50.0),
+            "print_rotation_degrees": normalize_rotation_degrees(item.get("print_rotation_degrees"), 0),
+            "qr_default_value": "" if item.get("qr_default_value") is None else str(item.get("qr_default_value")),
+            "qr_quiet_zone_modules": normalize_int(item.get("qr_quiet_zone_modules"), 3, 0, 20),
+            "qr_error_correction": str(item.get("qr_error_correction") or "M").strip().upper() if str(item.get("qr_error_correction") or "M").strip().upper() in QR_ERROR_CORRECTION_MAP else "M",
+            "fields": normalized_fields,
+        })
     return profiles
 
 
-PROFILE_EXPORT_ORDER = [
-    "id",
-    "name",
-    "label_width_mm",
-    "label_height_mm",
-    "qr_size_mm",
-    "top_margin_mm",
-    "print_rotation_degrees",
-    "field1_label",
-    "field2_label",
-    "field3_label",
-    "sign_off_label",
-    "weight_label",
-    "footer_label",
-    "field1_default_value",
-    "field2_default_value",
-    "field3_default_value",
-    "sign_off_default_value",
-    "sign_off_options",
-    "weight_default_value",
-    "footer_default_value",
-    "field1_alignment",
-    "field2_alignment",
-    "field3_alignment",
-    "sign_off_alignment",
-    "weight_alignment",
-    "footer_alignment",
-    "field1_font_family",
-    "field2_font_family",
-    "field3_font_family",
-    "sign_off_font_family",
-    "weight_font_family",
-    "footer_font_family",
-    "field1_font_size_mm",
-    "field2_font_size_mm",
-    "field3_font_size_mm",
-    "sign_off_font_size_mm",
-    "weight_font_size_mm",
-    "footer_font_size_mm",
-    "footer_bottom_margin_mm",
-    "field1_bold",
-    "field2_bold",
-    "field3_bold",
-    "sign_off_bold",
-    "weight_bold",
-    "footer_bold",
-    "field1_italic",
-    "field2_italic",
-    "field3_italic",
-    "sign_off_italic",
-    "weight_italic",
-    "footer_italic",
-    "field1_underline",
-    "field2_underline",
-    "field3_underline",
-    "sign_off_underline",
-    "weight_underline",
-    "footer_underline",
-    "qr_value_template",
-    "qr_quiet_zone_modules",
-    "qr_error_correction",
-    "default_print_text2",
-    "default_print_text3",
-    "default_print_weight",
-    "default_print_footer",
-]
-
-
-def build_full_profile_exports(base_opts: Dict, profiles: List[Dict]) -> List[Dict]:
-    exports: List[Dict] = []
-    for profile in profiles:
-        merged = apply_profile_overrides(base_opts, profile)
-        data = {"id": profile.get("id", ""), "name": profile.get("name", "")}
-        for key in PROFILE_EXPORT_ORDER:
-            if key in {"id", "name"}:
-                continue
-            data[key] = merged.get(key)
-        exports.append({"id": data["id"], "name": data["name"], "data": data})
-    return exports
-
-
-def apply_profile_overrides(opts: Dict, profile: Dict | None) -> Dict:
-    merged = dict(opts)
-    if not profile:
-        merged["active_profile_id"] = ""
-        merged["active_profile_name"] = ""
-        return merged
-    for key, value in profile.get("options", {}).items():
-        merged[key] = value
-    merged["active_profile_id"] = profile.get("id", "")
-    merged["active_profile_name"] = profile.get("name", "")
-    return merged
-
-
 def load_runtime_options(profile_id: str | None = None) -> Dict:
-    base_opts = load_options()
-    profiles = parse_label_profiles(base_opts.get("label_profiles"))
+    opts = load_options()
+    profiles = parse_label_profiles(opts.get("label_profiles_yaml"))
     if not profiles:
-        profiles = parse_label_profiles(base_opts.get("label_profiles_yaml", ""))
-    profile_exports = build_full_profile_exports(base_opts, profiles)
-    selected_id = profile_id
-    if selected_id is None:
-        selected_id = request.values.get("profile_id") or request.args.get("profile_id") or request.form.get("profile_id")
+        profiles = parse_label_profiles(DEFAULT_OPTIONS["label_profiles_yaml"])
+    selected_id = profile_id or request.values.get("profile_id") or request.args.get("profile_id") or request.form.get("profile_id")
     active_profile = None
     if selected_id:
         active_profile = next((profile for profile in profiles if profile["id"] == selected_id), None)
     if active_profile is None and profiles:
         active_profile = profiles[0]
-    opts = apply_profile_overrides(base_opts, active_profile)
     opts["label_profiles"] = profiles
-    opts["label_profile_exports"] = profile_exports
+    opts["active_profile"] = active_profile
+    opts["active_profile_id"] = active_profile["id"] if active_profile else ""
+    opts["active_profile_name"] = active_profile["name"] if active_profile else ""
     return opts
 
 
-def default_form_from_options(opts: Dict) -> Dict[str, str]:
-    return {
-        "profile_id": str(opts.get("active_profile_id") or ""),
-        "text1": digits_only(opts.get("field1_default_value") or ""),
-        "text2": str(opts.get("field2_default_value") or ""),
-        "text3": str(opts.get("field3_default_value") or ""),
-        "sign_off": str(opts.get("sign_off_default_value") or ""),
-        "weight": digits_only(opts.get("weight_default_value") or ""),
-        "footer": str(opts.get("footer_default_value") or ""),
-        "custom_blocks_json": "[]",
-        "copies": DEFAULT_FORM["copies"],
-        "print_text2": normalize_form_checkbox(opts.get("default_print_text2"), DEFAULT_FORM["print_text2"]),
-        "print_text3": normalize_form_checkbox(opts.get("default_print_text3"), DEFAULT_FORM["print_text3"]),
-        "print_weight": normalize_form_checkbox(opts.get("default_print_weight"), DEFAULT_FORM["print_weight"]),
-        "print_footer": normalize_form_checkbox(opts.get("default_print_footer"), DEFAULT_FORM["print_footer"]),
+def field_value_name(field_id: str) -> str:
+    return f"field_{field_id}"
+
+
+def field_print_name(field_id: str) -> str:
+    return f"print_{field_id}"
+
+
+def build_field_forms(profile: Dict, source: Dict | None = None) -> List[Dict]:
+    source = source or {}
+    forms: List[Dict] = []
+    for field in profile.get("fields", []):
+        value_key = field_value_name(field["id"])
+        print_key = field_print_name(field["id"])
+        value = source.get(value_key)
+        if value is None:
+            value = field["default_value"]
+        print_raw = source.get(print_key)
+        print_enabled = field["print_by_default"] if print_raw is None else normalize_bool(print_raw, field["print_by_default"])
+        forms.append({**field, "value": str(value), "print_enabled": print_enabled})
+    return forms
+
+
+def default_form_from_profile(profile: Dict | None) -> Dict[str, str]:
+    form = {
+        "profile_id": profile["id"] if profile else "",
+        "qr_value": profile.get("qr_default_value", "") if profile else "",
+        "copies": "1",
     }
+    for field in (profile or {}).get("fields", []):
+        form[field_value_name(field["id"])] = field["default_value"]
+        if field["print_by_default"]:
+            form[field_print_name(field["id"])] = "1"
+    return form
 
 
-def form_data_from_request(opts: Dict) -> Dict[str, str]:
-    defaults = default_form_from_options(opts)
-    return {
-        "profile_id": request.values.get("profile_id", defaults["profile_id"]),
-        "text1": digits_only(request.values.get("text1", defaults["text1"]), defaults["text1"]),
-        "text2": request.values.get("text2", defaults["text2"]),
-        "text3": request.values.get("text3", defaults["text3"]),
-        "sign_off": request.values.get("sign_off", defaults["sign_off"]),
-        "weight": digits_only(request.values.get("weight", defaults["weight"]), defaults["weight"]),
-        "footer": request.values.get("footer", defaults["footer"]),
-        "custom_blocks_json": request.values.get("custom_blocks_json", defaults["custom_blocks_json"]),
-        "copies": request.values.get("copies", defaults["copies"]),
-        "print_text2": normalize_form_checkbox(request.values.get("print_text2"), defaults["print_text2"]),
-        "print_text3": normalize_form_checkbox(request.values.get("print_text3"), defaults["print_text3"]),
-        "print_weight": normalize_form_checkbox(request.values.get("print_weight"), defaults["print_weight"]),
-        "print_footer": normalize_form_checkbox(request.values.get("print_footer"), defaults["print_footer"]),
+def form_data_from_request(opts: Dict) -> Tuple[Dict[str, str], List[Dict]]:
+    profile = opts.get("active_profile") or {}
+    defaults = default_form_from_profile(profile)
+    form = {
+        "profile_id": request.values.get("profile_id", defaults.get("profile_id", "")),
+        "qr_value": request.values.get("qr_value", defaults.get("qr_value", "")),
+        "copies": request.values.get("copies", defaults.get("copies", "1")),
     }
+    field_forms = build_field_forms(profile, request.values)
+    for field in field_forms:
+        form[field_value_name(field["id"])] = field["value"]
+        if field["print_enabled"]:
+            form[field_print_name(field["id"])] = "1"
+    return form, field_forms
 
 
-def normalize_form_checkbox(value: object, default: str = "0") -> str:
-    if value is None:
-        return default
-    return "1" if normalize_bool(value, False) else "0"
-
-
-def digits_only(value: object, fallback: str = "") -> str:
-    text = fallback if value is None else str(value)
-    return re.sub(r"\D+", "", text)
-
-
-def validate_text1_numeric(value: object, field1_label: str, language: str = "en") -> str:
+def validate_required_text(value: object, label: str, language: str) -> str:
     text = str(value if value is not None else "").strip()
     if not text:
-        raise ValueError(ui_text(language, "field_required", field=field1_label))
-    if not text.isdigit():
-        raise ValueError(ui_text(language, "field_numbers_only", field=field1_label))
+        raise ValueError(ui_text(language, "field_required", field=label))
     return text
 
 
-def validate_optional_numeric(value: object, label: str, language: str = "en") -> str:
-    text = str(value if value is not None else "").strip()
-    if not text:
-        return ""
-    if not text.isdigit():
-        raise ValueError(ui_text(language, "field_numbers_only", field=label))
-    return text
-
-
-def parse_print_toggles(data: Dict[str, str]) -> Dict[str, bool]:
-    return {
-        "print_text2": normalize_bool(data.get("print_text2"), True),
-        "print_text3": normalize_bool(data.get("print_text3"), True),
-        "print_weight": normalize_bool(data.get("print_weight"), False),
-        "print_footer": normalize_bool(data.get("print_footer"), True),
-    }
-
-
-def mm_to_dots(mm_value: float) -> int:
-    return max(1, int(round(float(mm_value) * DOTS_PER_MM)))
-
-
-def dots_to_mm(dots: int) -> float:
-    return round(dots / DOTS_PER_MM, 1)
-
-
-def effective_layout(opts: Dict) -> Dict:
-    requested_width_dots = mm_to_dots(opts["label_width_mm"])
-    requested_height_dots = mm_to_dots(opts["label_height_mm"])
-    qr_size_dots = mm_to_dots(opts["qr_size_mm"])
-    top_margin_dots = mm_to_dots(opts["top_margin_mm"])
-    effective_width_dots = min(requested_width_dots, PRINTER_MAX_WIDTH_DOTS)
-    width_warning = None
-    if requested_width_dots > PRINTER_MAX_WIDTH_DOTS:
-        width_warning = (
-            f"Requested width {opts['label_width_mm']} mm exceeds the printer's 168 mm printable width. "
-            f"The add-on will clamp the printed width to {dots_to_mm(effective_width_dots)} mm."
-        )
-    return {
-        "requested_width_dots": requested_width_dots,
-        "requested_height_dots": requested_height_dots,
-        "qr_size_dots": qr_size_dots,
-        "top_margin_dots": top_margin_dots,
-        "effective_width_dots": effective_width_dots,
-        "width_warning": width_warning,
-    }
-
-
-def qr_quiet_zone_modules(opts: Dict) -> int:
-    return normalize_int(opts.get("qr_quiet_zone_modules"), DEFAULT_OPTIONS["qr_quiet_zone_modules"], 0, 20)
-
-
-def qr_error_correction_constant(opts: Dict) -> int:
-    level = str(opts.get("qr_error_correction") or DEFAULT_OPTIONS["qr_error_correction"]).strip().upper()
-    return QR_ERROR_CORRECTION_MAP.get(level, QR_ERROR_CORRECTION_MAP[DEFAULT_OPTIONS["qr_error_correction"]])
-
-
-def build_qr_image(data: str, size_dots: int, opts: Dict) -> Image.Image:
-    qr = qrcode.QRCode(
-        version=None,
-        error_correction=qr_error_correction_constant(opts),
-        box_size=10,
-        border=qr_quiet_zone_modules(opts),
-    )
-    qr.add_data(data)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white").convert("1")
-    return img.resize((size_dots, size_dots), Image.Resampling.NEAREST)
-
-
-def image_to_gfa(img: Image.Image) -> Tuple[int, int, str]:
-    mono = img.convert("1")
-    width, height = mono.size
-    bytes_per_row = math.ceil(width / 8)
-    total_bytes = bytes_per_row * height
-    pixels = mono.load()
-    lines = []
-    for y in range(height):
-        row = bytearray()
-        for xb in range(bytes_per_row):
-            byte = 0
-            for bit in range(8):
-                x = xb * 8 + bit
-                if x < width and pixels[x, y] == 0:
-                    byte |= 1 << (7 - bit)
-            row.append(byte)
-        lines.append(row.hex().upper())
-    return total_bytes, bytes_per_row, "".join(lines)
-
-
-def build_qr_payload(text1: str, text2: str, text3: str, opts: Dict) -> str:
-    template = str(opts.get("qr_value_template") or DEFAULT_OPTIONS["qr_value_template"]).strip()
-    if template.startswith("{") and template.endswith("}") and len(template) >= 2:
-        template = template[1:-1].strip()
-    values = {"text1": text1, "text2": text2, "text3": text3}
-    invalid_tokens = sorted({token.lower() for token in re.findall(r"\btext\d+\b", template, flags=re.IGNORECASE)} - set(ALLOWED_QR_TOKENS))
-    if invalid_tokens:
-        allowed = ", ".join(ALLOWED_QR_TOKENS)
-        raise ValueError(f"qr_value_template uses unsupported token(s): {', '.join(invalid_tokens)}. Allowed tokens: {allowed}.")
-
-    def replace_token(match: re.Match[str]) -> str:
-        return values[match.group(0).lower()]
-
-    payload = re.sub(r"\b(?:text1|text2|text3)\b", replace_token, template, flags=re.IGNORECASE).strip()
-    if not payload:
-        raise ValueError("QR payload is empty. Adjust qr_value_template or enter field values.")
-    return payload
-
-
-def style_summary_from_prefix(opts: Dict, prefix: str) -> str:
-    parts = [
-        f"{opts[f'{prefix}_alignment']}",
-        f"{opts[f'{prefix}_font_family']}",
-        f"{opts[f'{prefix}_font_size_mm']} mm",
-    ]
-    if opts.get(f"{prefix}_bold"):
-        parts.append("bold")
-    if opts.get(f"{prefix}_italic"):
-        parts.append("italic")
-    if opts.get(f"{prefix}_underline"):
-        parts.append("underline")
-    return ", ".join(parts)
-
-
-def field_style_summary(opts: Dict, idx: int) -> str:
-    return style_summary_from_prefix(opts, f"field{idx}")
-
-
-def footer_style_summary(opts: Dict) -> str:
-    return f"{style_summary_from_prefix(opts, 'footer')}, bottom margin {opts['footer_bottom_margin_mm']} mm"
-
-
-def option_style_summary(opts: Dict, name: str) -> str:
-    return style_summary_from_prefix(opts, name)
-
-
-def get_field_config(opts: Dict, idx: int) -> Dict:
-    return {
-        "label": opts[f"field{idx}_label"],
-        "default_value": opts[f"field{idx}_default_value"],
-        "alignment": opts[f"field{idx}_alignment"],
-        "font_family": opts[f"field{idx}_font_family"],
-        "font_size_mm": opts[f"field{idx}_font_size_mm"],
-        "bold": opts[f"field{idx}_bold"],
-        "italic": opts[f"field{idx}_italic"],
-        "underline": opts[f"field{idx}_underline"],
-        "max_lines": FIELD_MAX_LINES[idx],
-        "gap_after_dots": mm_to_dots(FIELD_GAPS_MM[idx]),
-    }
-
-
-def get_footer_config(opts: Dict) -> Dict:
-    return {
-        "label": opts["footer_label"],
-        "default_value": opts["footer_default_value"],
-        "alignment": opts["footer_alignment"],
-        "font_family": opts["footer_font_family"],
-        "font_size_mm": opts["footer_font_size_mm"],
-        "bottom_margin_mm": opts["footer_bottom_margin_mm"],
-        "bold": opts["footer_bold"],
-        "italic": opts["footer_italic"],
-        "underline": opts["footer_underline"],
-        "max_lines": FOOTER_MAX_LINES,
-        "gap_after_dots": 0,
-    }
-
-
-def get_optional_block_config(opts: Dict, name: str) -> Dict:
-    return {
-        "label": opts[f"{name}_label"],
-        "default_value": opts[f"{name}_default_value"],
-        "alignment": opts[f"{name}_alignment"],
-        "font_family": opts[f"{name}_font_family"],
-        "font_size_mm": opts[f"{name}_font_size_mm"],
-        "bold": opts[f"{name}_bold"],
-        "italic": opts[f"{name}_italic"],
-        "underline": opts[f"{name}_underline"],
-        "max_lines": OPTION_MAX_LINES.get(name, 2),
-        "gap_after_dots": mm_to_dots(4.0 if name == "sign_off" else 6.0),
-    }
-
-
-def get_custom_block_config(block: Dict) -> Dict:
-    return {
-        "label": str(block.get("label") or ""),
-        "default_value": str(block.get("value") or ""),
-        "alignment": normalize_alignment(block.get("alignment"), "center"),
-        "font_family": normalize_font_family(block.get("font_family"), "sans"),
-        "font_size_mm": normalize_float(block.get("font_size_mm"), CUSTOM_BLOCK_DEFAULT_FONT_SIZE_MM, 2.0, 30.0),
-        "bold": normalize_bool(block.get("bold"), False),
-        "italic": normalize_bool(block.get("italic"), False),
-        "underline": normalize_bool(block.get("underline"), False),
-        "max_lines": CUSTOM_BLOCK_MAX_LINES,
-        "gap_after_dots": mm_to_dots(CUSTOM_BLOCK_GAP_MM),
-    }
-
-
-def parse_sign_off_options(opts: Dict) -> List[str]:
-    raw = str(opts.get("sign_off_options") or "")
-    parts = [part.strip() for part in re.split(r"\n|,|;", raw)]
-    seen = set()
-    names: List[str] = []
-    for part in parts:
-        if part and part.lower() not in seen:
-            seen.add(part.lower())
-            names.append(part)
-    return names
-
-
-def normalize_custom_block_entry(raw: object, idx: int = 0) -> Dict:
-    data = raw if isinstance(raw, dict) else {}
-    return {
-        "label": str(data.get("label") or f"Custom {idx + 1}").strip() or f"Custom {idx + 1}",
-        "value": str(data.get("value") or ""),
-        "print": normalize_bool(data.get("print"), True),
-        "alignment": normalize_alignment(data.get("alignment"), "center"),
-        "font_family": normalize_font_family(data.get("font_family"), "sans"),
-        "font_size_mm": normalize_float(data.get("font_size_mm"), CUSTOM_BLOCK_DEFAULT_FONT_SIZE_MM, 2.0, 30.0),
-        "bold": normalize_bool(data.get("bold"), False),
-        "italic": normalize_bool(data.get("italic"), False),
-        "underline": normalize_bool(data.get("underline"), False),
-    }
-
-
-def parse_custom_blocks(raw: object) -> List[Dict]:
-    if raw in (None, "", []):
-        return []
-    data = raw
-    if isinstance(raw, str):
-        try:
-            data = json.loads(raw)
-        except Exception:
-            LOGGER.warning("Failed to parse custom block JSON; ignoring value")
-            return []
-    if not isinstance(data, list):
-        return []
-    blocks: List[Dict] = []
-    for idx, item in enumerate(data[:CUSTOM_BLOCK_MAX]):
-        blocks.append(normalize_custom_block_entry(item, idx))
-    return blocks
-
-
-def custom_blocks_json_value(blocks: List[Dict]) -> str:
-    return json.dumps(blocks or [], ensure_ascii=False, separators=(",", ":"))
+def validate_field_forms(field_forms: List[Dict], language: str) -> List[Dict]:
+    validated: List[Dict] = []
+    for field in field_forms:
+        value = str(field.get("value") or "").strip()
+        if field.get("number_only") and value and not value.isdigit():
+            raise ValueError(ui_text(language, "field_numbers_only", field=field["name"]))
+        if field.get("required") and field.get("print_enabled"):
+            value = validate_required_text(value, field["name"], language)
+        validated.append({**field, "value": value})
+    return validated
 
 
 def current_label_date_str() -> str:
@@ -1846,11 +817,125 @@ def current_label_date_str() -> str:
     return now.strftime("%d.%m.%Y")
 
 
-def compose_footer_text(footer: str) -> str:
-    footer_text = (footer or "").strip()
-    if not footer_text:
+def apply_field_text_transform(field: Dict) -> str:
+    text = str(field.get("value") or "").strip()
+    if not text:
         return ""
-    return f"{footer_text} - {current_label_date_str()}"
+    suffix = str(field.get("suffix") or "").strip()
+    if suffix:
+        text = f"{text} {suffix}"
+    if field.get("append_current_date"):
+        text = f"{text} - {current_label_date_str()}"
+    return text
+
+
+def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+    body: List[Dict] = []
+    footer: List[Dict] = []
+    for field in field_forms:
+        if not field.get("print_enabled"):
+            continue
+        text = apply_field_text_transform(field)
+        if not text:
+            continue
+        block = {
+            "value": text,
+            "alignment": field["alignment"],
+            "font_family": field["font_family"],
+            "font_size_mm": field["font_size_mm"],
+            "bold": field["bold"],
+            "italic": field["italic"],
+            "underline": field["underline"],
+            "max_lines": field["max_lines"],
+        }
+        if field.get("position") == "footer":
+            footer.append(block)
+        else:
+            body.append(block)
+    return body, footer
+
+
+def mm_to_dots(mm_value: float) -> int:
+    return max(1, int(round(float(mm_value) * DOTS_PER_MM)))
+
+
+def dots_to_mm(dots: int) -> float:
+    return round(dots / DOTS_PER_MM, 1)
+
+
+def effective_layout(profile: Dict) -> Dict:
+    requested_width_dots = mm_to_dots(profile["label_width_mm"])
+    requested_height_dots = mm_to_dots(profile["label_height_mm"])
+    qr_size_dots = mm_to_dots(profile["qr_size_mm"])
+    top_margin_dots = mm_to_dots(profile["top_margin_mm"])
+    footer_bottom_margin_dots = mm_to_dots(profile.get("footer_bottom_margin_mm", 0.0))
+    effective_width_dots = min(requested_width_dots, PRINTER_MAX_WIDTH_DOTS)
+    return {
+        "requested_width_dots": requested_width_dots,
+        "requested_height_dots": requested_height_dots,
+        "qr_size_dots": qr_size_dots,
+        "top_margin_dots": top_margin_dots,
+        "footer_bottom_margin_dots": footer_bottom_margin_dots,
+        "effective_width_dots": effective_width_dots,
+        "width_warning": requested_width_dots > PRINTER_MAX_WIDTH_DOTS,
+    }
+
+
+def qr_error_correction_constant(profile: Dict) -> int:
+    return QR_ERROR_CORRECTION_MAP.get(profile.get("qr_error_correction", "M"), QR_ERROR_CORRECTION_MAP["M"])
+
+
+@lru_cache(maxsize=128)
+def load_font(family: str, bold: bool, italic: bool, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    family = family if family in FONT_FAMILIES else "sans"
+    size = max(10, int(size))
+    style = "bolditalic" if bold and italic else "bold" if bold else "italic" if italic else "regular"
+    fallback_order = [style, "bold" if bold else "regular", "italic" if italic else "regular", "regular"]
+    tried = set()
+    for style_name in fallback_order:
+        if style_name in tried:
+            continue
+        tried.add(style_name)
+        for path in FONT_PATHS[family][style_name]:
+            if os.path.exists(path):
+                return ImageFont.truetype(path, size=size)
+    return ImageFont.load_default()
+
+
+def build_qr_image(data: str, size_dots: int, profile: Dict) -> Image.Image:
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qr_error_correction_constant(profile),
+        box_size=10,
+        border=normalize_int(profile.get("qr_quiet_zone_modules"), 3, 0, 20),
+    )
+    qr.add_data(data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white").convert("1")
+    return img.resize((size_dots, size_dots), Image.Resampling.NEAREST)
+
+
+def image_to_gfa(img: Image.Image) -> Tuple[int, int, str]:
+    if img.mode != "1":
+        img = img.convert("1")
+    width, height = img.size
+    bytes_per_row = (width + 7) // 8
+    total_bytes = bytes_per_row * height
+    pixels = img.load()
+    rows: List[str] = []
+    for y in range(height):
+        row_bytes: List[int] = []
+        for byte_idx in range(bytes_per_row):
+            value = 0
+            for bit in range(8):
+                x = (byte_idx * 8) + bit
+                value <<= 1
+                if x < width and pixels[x, y] == 0:
+                    value |= 1
+            row_bytes.append(value)
+        rows.append("".join(f"{item:02X}" for item in row_bytes))
+    return total_bytes, bytes_per_row, "".join(rows)
+
 
 def text_line_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
     bbox = draw.textbbox((0, 0), "Ag", font=font)
@@ -1861,7 +946,6 @@ def wrap_text_lines(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageF
     text = (text or "").strip()
     if not text:
         return [""]
-
     raw_parts: List[str] = []
     for paragraph in text.splitlines() or [text]:
         paragraph = paragraph.strip()
@@ -1882,15 +966,10 @@ def wrap_text_lines(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageF
                 raw_parts.append(current)
                 current = word
         raw_parts.append(current)
-
     if len(raw_parts) <= max_lines:
         return raw_parts
-
     trimmed = raw_parts[:max_lines]
     overflow = " ".join(raw_parts[max_lines - 1:]).strip()
-    if not overflow:
-        return trimmed
-
     ellipsis = "..."
     last = overflow
     while last:
@@ -1903,47 +982,30 @@ def wrap_text_lines(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageF
     return trimmed
 
 
-def fit_field_lines(draw: ImageDraw.ImageDraw, text: str, cfg: Dict, max_width: int) -> Tuple[ImageFont.ImageFont, List[str], int]:
-    start_size = max(10, mm_to_dots(cfg["font_size_mm"]))
+def fit_block_lines(draw: ImageDraw.ImageDraw, text: str, block: Dict, max_width: int) -> Tuple[ImageFont.ImageFont, List[str], int]:
+    start_size = max(10, mm_to_dots(block["font_size_mm"]))
     min_size = max(10, int(start_size * 0.6))
-    best_font = load_font(cfg["font_family"], cfg["bold"], cfg["italic"], start_size)
-    best_lines = wrap_text_lines(draw, text, best_font, max_width, cfg["max_lines"])
+    best_font = load_font(block["font_family"], block["bold"], block["italic"], start_size)
+    best_lines = wrap_text_lines(draw, text, best_font, max_width, normalize_int(block.get("max_lines"), 3, 1, 8))
     best_size = start_size
-
     for size in range(start_size, min_size - 1, -1):
-        font = load_font(cfg["font_family"], cfg["bold"], cfg["italic"], size)
-        lines = wrap_text_lines(draw, text, font, max_width, cfg["max_lines"])
-        if len(lines) < len(best_lines):
-            best_font, best_lines, best_size = font, lines, size
-            continue
-        if len(lines) == len(best_lines):
-            best_font, best_lines, best_size = font, lines, size
-            widths = []
-            for line in lines:
-                bbox = draw.textbbox((0, 0), line, font=font)
-                widths.append(bbox[2] - bbox[0])
-            if widths and max(widths) <= max_width:
-                break
+        font = load_font(block["font_family"], block["bold"], block["italic"], size)
+        lines = wrap_text_lines(draw, text, font, max_width, normalize_int(block.get("max_lines"), 3, 1, 8))
+        best_font, best_lines, best_size = font, lines, size
+        widths = []
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            widths.append(bbox[2] - bbox[0])
+        if widths and max(widths) <= max_width:
+            break
     return best_font, best_lines, best_size
 
 
-def draw_aligned_text_lines(
-    draw: ImageDraw.ImageDraw,
-    lines: List[str],
-    y: int,
-    box_left: int,
-    box_width: int,
-    font: ImageFont.ImageFont,
-    alignment: str,
-    underline: bool,
-    fill: Tuple[int, int, int],
-    line_spacing: int,
-) -> int:
+def draw_aligned_lines(draw: ImageDraw.ImageDraw, lines: List[str], y: int, box_left: int, box_width: int, font: ImageFont.ImageFont, alignment: str, underline: bool, line_spacing: int) -> int:
     current_y = y
     line_h = text_line_height(draw, font)
     underline_thickness = max(1, line_h // 18)
     underline_offset = max(2, line_h // 12)
-
     for idx, line in enumerate(lines):
         bbox = draw.textbbox((0, 0), line, font=font)
         text_w = bbox[2] - bbox[0]
@@ -1953,47 +1015,42 @@ def draw_aligned_text_lines(
             x = box_left + box_width - text_w
         else:
             x = box_left + (box_width - text_w) / 2
-        draw.text((x, current_y), line, font=font, fill=fill)
+        draw.text((x, current_y), line, font=font, fill=(0, 0, 0))
         if underline:
             underline_y = current_y + line_h + underline_offset
-            draw.line((x, underline_y, x + text_w, underline_y), fill=fill, width=underline_thickness)
+            draw.line((x, underline_y, x + text_w, underline_y), fill=(0, 0, 0), width=underline_thickness)
         current_y += line_h
         if idx < len(lines) - 1:
             current_y += line_spacing
     return current_y
 
 
-def text_block_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont, line_count: int, line_spacing: int) -> int:
-    if line_count <= 0:
-        return 0
-    line_h = text_line_height(draw, font)
-    return (line_count * line_h) + (max(0, line_count - 1) * line_spacing)
-
-
-def render_custom_blocks_sequence(draw: ImageDraw.ImageDraw, current_y: int, box_left: int, box_width: int, custom_blocks: List[Dict]) -> int:
-    for block in custom_blocks or []:
-        if not normalize_bool(block.get("print"), True):
-            continue
-        block_value = str(block.get("value") or "").strip()
-        if not block_value:
-            continue
-        cfg = get_custom_block_config(block)
-        font, lines, resolved_font_size = fit_field_lines(draw, block_value, cfg, box_width)
-        line_spacing = max(4, resolved_font_size // 7)
-        current_y = draw_aligned_text_lines(
-            draw,
-            lines,
-            current_y,
-            box_left,
-            box_width,
-            font,
-            cfg["alignment"],
-            cfg["underline"],
-            fill=(0, 0, 0),
-            line_spacing=line_spacing,
-        )
-        current_y += cfg["gap_after_dots"]
+def draw_body_blocks(draw: ImageDraw.ImageDraw, start_y: int, box_left: int, box_width: int, body_blocks: List[Dict]) -> int:
+    current_y = start_y
+    for block in body_blocks:
+        font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
+        spacing = max(4, resolved // 7)
+        current_y = draw_aligned_lines(draw, lines, current_y, box_left, box_width, font, block["alignment"], block["underline"], spacing)
+        current_y += mm_to_dots(FIELD_GAP_MM)
     return current_y
+
+
+def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int) -> Tuple[int, ImageFont.ImageFont, List[str], int]:
+    font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
+    spacing = max(4, resolved // 7)
+    line_h = text_line_height(draw, font)
+    total = (line_h * len(lines)) + (max(0, len(lines) - 1) * spacing)
+    return total, font, lines, spacing
+
+
+def draw_footer_blocks(draw: ImageDraw.ImageDraw, bottom_y: int, box_left: int, box_width: int, footer_blocks: List[Dict]) -> int:
+    current_bottom = bottom_y
+    for block in reversed(footer_blocks):
+        total_h, font, lines, spacing = block_height(draw, block, box_width)
+        top_y = current_bottom - total_h
+        draw_aligned_lines(draw, lines, top_y, box_left, box_width, font, block["alignment"], block["underline"], spacing)
+        current_bottom = top_y - mm_to_dots(FOOTER_GAP_MM)
+    return current_bottom
 
 
 def draw_background_for_preview(img: Image.Image, requested_w: int, requested_h: int, printable_left: int, printable_w: int) -> None:
@@ -2008,254 +1065,51 @@ def draw_background_for_preview(img: Image.Image, requested_w: int, requested_h:
     draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=(205, 205, 205), width=2)
 
 
-def render_portrait_content(printable_w: int, canvas_h: int, text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, custom_blocks: List[Dict], opts: Dict, preview: bool, print_toggles: Dict[str, bool]) -> Image.Image:
-    layout = effective_layout(opts)
-    qr_payload = build_qr_payload(text1, text2, text3, opts)
+def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body_blocks: List[Dict], footer_blocks: List[Dict], profile: Dict, preview: bool) -> Image.Image:
+    layout = effective_layout(profile)
     img = Image.new("RGB", (printable_w, canvas_h), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
-
     qr_size = min(layout["qr_size_dots"], printable_w)
     qr_left = max((printable_w - qr_size) // 2, 0)
     qr_top = layout["top_margin_dots"]
-    qr_img = build_qr_image(qr_payload, qr_size, opts).convert("RGB")
+    qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
     img.paste(qr_img, (qr_left, qr_top))
-
     if preview:
         preview_border_width = max(2, int(round(DOTS_PER_MM * 0.5)))
-        draw.rectangle(
-            (qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1),
-            outline=(220, 38, 38),
-            width=preview_border_width,
-        )
-
+        draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
     margin_x = max((printable_w - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM))
     text_width = max(1, printable_w - (margin_x * 2))
     current_y = qr_top + qr_size + mm_to_dots(8)
-
-    weight_text = (weight or "").strip()
-
-    text_values = {1: text1, 2: text2, 3: text3}
-    field_enabled = {1: True, 2: print_toggles.get("print_text2", True), 3: print_toggles.get("print_text3", True)}
-    for idx in range(1, FIELD_COUNT + 1):
-        if not field_enabled.get(idx, True):
-            continue
-
-        field_value = text_values[idx]
-
-        cfg = get_field_config(opts, idx)
-        font, lines, resolved_font_size = fit_field_lines(draw, field_value, cfg, text_width)
-        line_spacing = max(4, resolved_font_size // 7)
-        current_y = draw_aligned_text_lines(
-            draw,
-            lines,
-            current_y,
-            margin_x,
-            text_width,
-            font,
-            cfg["alignment"],
-            cfg["underline"],
-            fill=(0, 0, 0),
-            line_spacing=line_spacing,
-        )
-        current_y += cfg["gap_after_dots"]
-
-    sign_off_text = (sign_off or "").strip()
-    if sign_off_text:
-        sign_off_cfg = get_optional_block_config(opts, "sign_off")
-        font, lines, resolved_font_size = fit_field_lines(draw, sign_off_text, sign_off_cfg, text_width)
-        line_spacing = max(4, resolved_font_size // 7)
-        current_y = draw_aligned_text_lines(
-            draw,
-            lines,
-            current_y,
-            margin_x,
-            text_width,
-            font,
-            sign_off_cfg["alignment"],
-            sign_off_cfg["underline"],
-            fill=(0, 0, 0),
-            line_spacing=line_spacing,
-        )
-        current_y += sign_off_cfg["gap_after_dots"]
-
-    if weight_text and print_toggles.get("print_weight", False):
-        weight_cfg = get_optional_block_config(opts, "weight")
-        font, lines, resolved_font_size = fit_field_lines(draw, f"{weight_text} kg", weight_cfg, text_width)
-        line_spacing = max(4, resolved_font_size // 7)
-        current_y = draw_aligned_text_lines(
-            draw,
-            lines,
-            current_y,
-            margin_x,
-            text_width,
-            font,
-            weight_cfg["alignment"],
-            weight_cfg["underline"],
-            fill=(0, 0, 0),
-            line_spacing=line_spacing,
-        )
-        current_y += weight_cfg["gap_after_dots"]
-
-    current_y = render_custom_blocks_sequence(draw, current_y, margin_x, text_width, custom_blocks)
-
-    footer_text = compose_footer_text(footer)
-    if footer_text and print_toggles.get("print_footer", True):
-        footer_cfg = get_footer_config(opts)
-        font, lines, resolved_font_size = fit_field_lines(draw, footer_text, footer_cfg, text_width)
-        line_spacing = max(4, resolved_font_size // 7)
-        footer_height = text_block_height(draw, font, len(lines), line_spacing)
-        footer_bottom_margin_dots = mm_to_dots(footer_cfg.get("bottom_margin_mm", 0.0)) if footer_cfg.get("bottom_margin_mm", 0.0) > 0 else 0
-        footer_y = max(0, canvas_h - footer_height - footer_bottom_margin_dots)
-        if footer_y < current_y:
-            LOGGER.warning(
-                "Footer overlaps content: footer_y=%s current_y=%s footer_height=%s label_height=%s",
-                footer_y,
-                current_y,
-                footer_height,
-                canvas_h,
-            )
-        draw_aligned_text_lines(
-            draw,
-            lines,
-            footer_y,
-            margin_x,
-            text_width,
-            font,
-            footer_cfg["alignment"],
-            footer_cfg["underline"],
-            fill=(0, 0, 0),
-            line_spacing=line_spacing,
-        )
-
+    draw_body_blocks(draw, current_y, margin_x, text_width, body_blocks)
+    if footer_blocks:
+        footer_bottom = canvas_h - layout["footer_bottom_margin_dots"]
+        draw_footer_blocks(draw, footer_bottom, margin_x, text_width, footer_blocks)
     return img
 
 
-def render_rotated_content(printable_w: int, canvas_h: int, text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, custom_blocks: List[Dict], opts: Dict, preview: bool, print_toggles: Dict[str, bool], rotation_degrees: int) -> Image.Image:
-    layout = effective_layout(opts)
-    qr_payload = build_qr_payload(text1, text2, text3, opts)
+def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_blocks: List[Dict], footer_blocks: List[Dict], profile: Dict, preview: bool, rotation_degrees: int) -> Image.Image:
+    layout = effective_layout(profile)
     logical_w = canvas_h
     logical_h = printable_w
     landscape = Image.new("RGB", (logical_w, logical_h), color=(255, 255, 255))
     draw = ImageDraw.Draw(landscape)
-
     qr_size = min(layout["qr_size_dots"], logical_h)
     qr_left = min(max(layout["top_margin_dots"], 0), max(0, logical_w - qr_size))
     qr_top = max((logical_h - qr_size) // 2, 0)
-    qr_img = build_qr_image(qr_payload, qr_size, opts).convert("RGB")
+    qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
     landscape.paste(qr_img, (qr_left, qr_top))
-
     if preview:
         preview_border_width = max(2, int(round(DOTS_PER_MM * 0.5)))
-        draw.rectangle(
-            (qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1),
-            outline=(220, 38, 38),
-            width=preview_border_width,
-        )
-
+        draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
     inter_block_gap = mm_to_dots(8)
-    left_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
     right_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
     text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
-    text_right_margin = right_margin
-    text_width = max(1, logical_w - text_left - text_right_margin)
-    text_box_top = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
-    text_box_bottom = logical_h - mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
-    current_y = text_box_top
-
-    weight_text = (weight or "").strip()
-
-    text_values = {1: text1, 2: text2, 3: text3}
-    field_enabled = {1: True, 2: print_toggles.get("print_text2", True), 3: print_toggles.get("print_text3", True)}
-    for idx in range(1, FIELD_COUNT + 1):
-        if not field_enabled.get(idx, True):
-            continue
-        field_value = text_values[idx]
-
-        cfg = get_field_config(opts, idx)
-        font, lines, resolved_font_size = fit_field_lines(draw, field_value, cfg, text_width)
-        line_spacing = max(4, resolved_font_size // 7)
-        current_y = draw_aligned_text_lines(
-            draw,
-            lines,
-            current_y,
-            text_left,
-            text_width,
-            font,
-            cfg["alignment"],
-            cfg["underline"],
-            fill=(0, 0, 0),
-            line_spacing=line_spacing,
-        )
-        current_y += cfg["gap_after_dots"]
-
-    sign_off_text = (sign_off or "").strip()
-    if sign_off_text:
-        sign_off_cfg = get_optional_block_config(opts, "sign_off")
-        font, lines, resolved_font_size = fit_field_lines(draw, sign_off_text, sign_off_cfg, text_width)
-        line_spacing = max(4, resolved_font_size // 7)
-        current_y = draw_aligned_text_lines(
-            draw,
-            lines,
-            current_y,
-            text_left,
-            text_width,
-            font,
-            sign_off_cfg["alignment"],
-            sign_off_cfg["underline"],
-            fill=(0, 0, 0),
-            line_spacing=line_spacing,
-        )
-        current_y += sign_off_cfg["gap_after_dots"]
-
-    if weight_text and print_toggles.get("print_weight", False):
-        weight_cfg = get_optional_block_config(opts, "weight")
-        font, lines, resolved_font_size = fit_field_lines(draw, f"{weight_text} kg", weight_cfg, text_width)
-        line_spacing = max(4, resolved_font_size // 7)
-        current_y = draw_aligned_text_lines(
-            draw,
-            lines,
-            current_y,
-            text_left,
-            text_width,
-            font,
-            weight_cfg["alignment"],
-            weight_cfg["underline"],
-            fill=(0, 0, 0),
-            line_spacing=line_spacing,
-        )
-        current_y += weight_cfg["gap_after_dots"]
-
-    current_y = render_custom_blocks_sequence(draw, current_y, text_left, text_width, custom_blocks)
-
-    footer_text = compose_footer_text(footer)
-    if footer_text and print_toggles.get("print_footer", True):
-        footer_cfg = get_footer_config(opts)
-        font, lines, resolved_font_size = fit_field_lines(draw, footer_text, footer_cfg, text_width)
-        line_spacing = max(4, resolved_font_size // 7)
-        footer_height = text_block_height(draw, font, len(lines), line_spacing)
-        footer_bottom_margin_dots = mm_to_dots(footer_cfg.get("bottom_margin_mm", 0.0)) if footer_cfg.get("bottom_margin_mm", 0.0) > 0 else 0
-        footer_y = max(text_box_top, text_box_bottom - footer_height - footer_bottom_margin_dots)
-        if footer_y < current_y:
-            LOGGER.warning(
-                "Footer overlaps rotated content: footer_y=%s current_y=%s footer_height=%s logical_height=%s",
-                footer_y,
-                current_y,
-                footer_height,
-                logical_h,
-            )
-        draw_aligned_text_lines(
-            draw,
-            lines,
-            footer_y,
-            text_left,
-            text_width,
-            font,
-            footer_cfg["alignment"],
-            footer_cfg["underline"],
-            fill=(0, 0, 0),
-            line_spacing=line_spacing,
-        )
-
+    text_width = max(1, logical_w - text_left - right_margin)
+    text_top = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
+    draw_body_blocks(draw, text_top, text_left, text_width, body_blocks)
+    if footer_blocks:
+        footer_bottom = logical_h - layout["footer_bottom_margin_dots"]
+        draw_footer_blocks(draw, footer_bottom, text_left, text_width, footer_blocks)
     if rotation_degrees == 90:
         return landscape.transpose(Image.Transpose.ROTATE_270)
     return landscape.transpose(Image.Transpose.ROTATE_90)
@@ -2269,26 +1123,18 @@ def orient_preview_for_display(img: Image.Image, rotation_degrees: int) -> Image
     return img
 
 
-def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, custom_blocks: List[Dict], opts: Dict, preview: bool, print_toggles: Dict[str, bool] | None = None) -> Image.Image:
-    layout = effective_layout(opts)
+def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, preview: bool) -> Image.Image:
+    layout = effective_layout(profile)
     requested_w = layout["requested_width_dots"]
     requested_h = layout["requested_height_dots"]
     printable_w = layout["effective_width_dots"]
-    rotation_degrees = normalize_rotation_degrees(opts.get("print_rotation_degrees"), DEFAULT_OPTIONS["print_rotation_degrees"])
-    print_toggles = print_toggles or {"print_text2": True, "print_text3": True, "print_weight": False, "print_footer": True}
-
-    printable_image = (
-        render_portrait_content(printable_w, requested_h, text1, text2, text3, sign_off, weight, footer, custom_blocks, opts, preview, print_toggles)
-        if rotation_degrees == 0
-        else render_rotated_content(printable_w, requested_h, text1, text2, text3, sign_off, weight, footer, custom_blocks, opts, preview, print_toggles, rotation_degrees)
-    )
-
+    rotation_degrees = profile["print_rotation_degrees"]
+    body_blocks, footer_blocks = fields_to_blocks(field_forms)
+    printable_image = render_portrait_content(printable_w, requested_h, qr_value, body_blocks, footer_blocks, profile, preview) if rotation_degrees == 0 else render_rotated_content(printable_w, requested_h, qr_value, body_blocks, footer_blocks, profile, preview, rotation_degrees)
     if not preview:
         return printable_image
-
     if requested_w <= printable_w:
         return orient_preview_for_display(printable_image, rotation_degrees)
-
     canvas = Image.new("RGB", (requested_w, requested_h), color=(255, 255, 255))
     printable_left = max((requested_w - printable_w) // 2, 0)
     draw_background_for_preview(canvas, requested_w, requested_h, printable_left, printable_w)
@@ -2296,11 +1142,11 @@ def render_label_image(text1: str, text2: str, text3: str, sign_off: str, weight
     return orient_preview_for_display(canvas, rotation_degrees)
 
 
-def build_zpl(text1: str, text2: str, text3: str, sign_off: str, weight: str, footer: str, custom_blocks: List[Dict], copies: int, opts: Dict, print_toggles: Dict[str, bool] | None = None) -> str:
-    layout = effective_layout(opts)
+def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
+    layout = effective_layout(profile)
     pw = layout["effective_width_dots"]
     ll = layout["requested_height_dots"]
-    label_img = render_label_image(text1, text2, text3, sign_off, weight, footer, custom_blocks, opts, preview=False, print_toggles=print_toggles).convert("1")
+    label_img = render_label_image(qr_value, field_forms, profile, preview=False).convert("1")
     total_bytes, bytes_per_row, graphic_hex = image_to_gfa(label_img)
     return f"""^XA
 ^CI28
@@ -2320,93 +1166,86 @@ def send_to_printer(host: str, port: int, payload: str) -> None:
     LOGGER.info("Finished sending label payload to printer %s:%s", host, port)
 
 
-def render_page(form: Dict[str, str], opts: Dict, result: Dict | None = None) -> str:
-    layout = effective_layout(opts)
-    sign_off_names = parse_sign_off_options(opts)
-    custom_blocks = parse_custom_blocks(form.get("custom_blocks_json", "[]"))
-    custom_blocks_json = custom_blocks_json_value(custom_blocks)
+def preview_query_from_form(form: Dict[str, str], field_forms: List[Dict]) -> str:
+    params = {
+        "profile_id": form.get("profile_id", ""),
+        "qr_value": form.get("qr_value", ""),
+        "copies": form.get("copies", "1"),
+    }
+    for field in field_forms:
+        params[field_value_name(field["id"])] = field.get("value", "")
+        if field.get("print_enabled"):
+            params[field_print_name(field["id"])] = "1"
+    return urlencode(params)
+
+
+def render_page(form: Dict[str, str], opts: Dict, field_forms: List[Dict], result: Dict | None = None) -> str:
+    profile = opts.get("active_profile") or {}
+    layout = effective_layout(profile)
     ui = get_ui_strings(opts.get("ui_language"))
+    preview_display_width_mm = profile.get("label_width_mm", 170.0)
+    preview_display_height_mm = profile.get("label_height_mm", 305.0)
+    if profile.get("print_rotation_degrees") in (90, 270):
+        preview_display_width_mm, preview_display_height_mm = preview_display_height_mm, preview_display_width_mm
     try:
-        qr_preview = build_qr_payload(form.get("text1", ""), form.get("text2", ""), form.get("text3", ""), opts)
+        qr_preview = validate_required_text(form.get("qr_value", ""), ui["qr_value_label"], opts["ui_language"])
     except Exception as exc:
         qr_preview = ui_text(opts, "configuration_error", error=exc)
-
-    preview_display_width_mm = opts["label_width_mm"]
-    preview_display_height_mm = opts["label_height_mm"]
-    if normalize_rotation_degrees(opts.get("print_rotation_degrees"), DEFAULT_OPTIONS["print_rotation_degrees"]) in (90, 270):
-        preview_display_width_mm, preview_display_height_mm = preview_display_height_mm, preview_display_width_mm
-
     return render_template_string(
         HTML,
         ui=ui,
-        form=form,
         result=result,
-        printer_host=opts["printer_host"],
-        printer_port=opts["printer_port"],
-        field1_label=opts["field1_label"],
-        field2_label=opts["field2_label"],
-        field3_label=opts["field3_label"],
-        field1_default_value=opts["field1_default_value"],
-        field2_default_value=opts["field2_default_value"],
-        field3_default_value=opts["field3_default_value"],
-        field1_style_summary=field_style_summary(opts, 1),
-        field2_style_summary=field_style_summary(opts, 2),
-        field3_style_summary=field_style_summary(opts, 3),
-        sign_off_label=opts["sign_off_label"],
-        sign_off_default_value=opts["sign_off_default_value"],
-        sign_off_options=sign_off_names,
-        sign_off_options_display=", ".join(sign_off_names) if sign_off_names else ui["none"],
-        custom_blocks_json=custom_blocks_json,
-        custom_block_count_text=ui_text(opts, "custom_block_count_value", count=len(custom_blocks)),
-        custom_block_ui={
-            "label": ui["custom_block_label"],
-            "value": ui["custom_block_value"],
-            "print": ui["custom_block_print"],
-            "fontFamily": ui["custom_block_font_family"],
-            "fontSize": ui["custom_block_font_size"],
-            "alignment": ui["custom_block_alignment"],
-            "bold": ui["custom_block_bold"],
-            "italic": ui["custom_block_italic"],
-            "underline": ui["custom_block_underline"],
-            "remove": ui["custom_block_remove"],
-            "defaultLabel": ui["default_custom_block_label"],
-            "fontSans": ui["font_family_sans"],
-            "fontSerif": ui["font_family_serif"],
-            "fontMono": ui["font_family_mono"],
-            "alignmentLeft": ui["alignment_left"],
-            "alignmentCenter": ui["alignment_center"],
-            "alignmentRight": ui["alignment_right"],
-        },
-        custom_block_max=CUSTOM_BLOCK_MAX,
-        intro_text=ui_text(opts, "intro_text", field1_label=opts["field1_label"], weight_label=opts["weight_label"]),
-        sign_off_style_summary=option_style_summary(opts, "sign_off"),
-        weight_label=opts["weight_label"],
-        weight_default_value=opts["weight_default_value"],
-        weight_style_summary=option_style_summary(opts, "weight"),
-        footer_label=opts["footer_label"],
-        footer_default_value=opts["footer_default_value"],
-        footer_preview_text=compose_footer_text(form.get("footer", opts["footer_default_value"])),
-        footer_style_summary=footer_style_summary(opts),
-        qr_value_template=opts["qr_value_template"],
-        qr_quiet_zone_modules=opts["qr_quiet_zone_modules"],
-        qr_error_correction=opts["qr_error_correction"],
-        qr_preview=qr_preview,
-        requested_width_mm=opts["label_width_mm"],
-        requested_height_mm=opts["label_height_mm"],
-        preview_display_width_mm=preview_display_width_mm,
-        preview_display_height_mm=preview_display_height_mm,
-        requested_qr_mm=opts["qr_size_mm"],
-        effective_width_mm=dots_to_mm(layout["effective_width_dots"]),
-        effective_width_dots=layout["effective_width_dots"],
-        width_warning=layout["width_warning"],
-        footer_bottom_margin_mm=opts["footer_bottom_margin_mm"],
-        print_rotation_degrees=opts["print_rotation_degrees"],
-        ingress_base=ingress_base_path(),
+        form=form,
+        field_forms=field_forms,
         label_profiles=opts.get("label_profiles", []),
         active_profile_id=opts.get("active_profile_id", ""),
         active_profile_name=opts.get("active_profile_name", ""),
-        label_profile_exports=opts.get("label_profile_exports", []),
+        printer_host=profile.get("printer_host", ""),
+        printer_port=profile.get("printer_port", ""),
+        qr_preview=qr_preview,
+        requested_width_mm=profile.get("label_width_mm", 0),
+        requested_height_mm=profile.get("label_height_mm", 0),
+        requested_qr_mm=profile.get("qr_size_mm", 0),
+        qr_quiet_zone_modules=profile.get("qr_quiet_zone_modules", 0),
+        qr_error_correction=profile.get("qr_error_correction", "M"),
+        print_rotation_degrees=profile.get("print_rotation_degrees", 0),
+        effective_width_mm=dots_to_mm(layout["effective_width_dots"]),
+        effective_width_dots=layout["effective_width_dots"],
+        width_warning=layout["width_warning"],
+        preview_display_width_mm=preview_display_width_mm,
+        preview_display_height_mm=preview_display_height_mm,
+        ingress_base=ingress_base_path(),
+        preview_query=preview_query_from_form(form, field_forms),
     )
+
+
+def api_field_forms_from_payload(profile: Dict, payload: Dict) -> List[Dict]:
+    values = payload.get("field_values") if isinstance(payload.get("field_values"), dict) else {}
+    print_values = payload.get("print_fields") if isinstance(payload.get("print_fields"), dict) else {}
+    field_list = payload.get("fields") if isinstance(payload.get("fields"), list) else []
+    lookup = {}
+    for item in field_list:
+        if isinstance(item, dict):
+            item_id = sanitize_id(str(item.get("id") or item.get("name") or ""), "")
+            if item_id:
+                lookup[item_id] = item
+    forms: List[Dict] = []
+    for field in profile.get("fields", []):
+        current = dict(field)
+        if field["id"] in values:
+            current["value"] = str(values[field["id"]])
+        elif field["id"] in lookup:
+            current["value"] = str(lookup[field["id"]].get("value") or "")
+        else:
+            current["value"] = field["default_value"]
+        if field["id"] in print_values:
+            current["print_enabled"] = normalize_bool(print_values[field["id"]], field["print_by_default"])
+        elif field["id"] in lookup and "print" in lookup[field["id"]]:
+            current["print_enabled"] = normalize_bool(lookup[field["id"]].get("print"), field["print_by_default"])
+        else:
+            current["print_enabled"] = field["print_by_default"]
+        forms.append(current)
+    return forms
 
 
 @APP.before_request
@@ -2422,95 +1261,43 @@ def restrict_ingress():
 @APP.route("/", methods=["GET"])
 def index():
     opts = load_runtime_options()
-    form = form_data_from_request(opts)
-    LOGGER.info("Opened UI for printer %s:%s", opts["printer_host"], opts["printer_port"])
-    return render_page(form, opts, result=None)
+    form, field_forms = form_data_from_request(opts)
+    profile = opts.get("active_profile") or {}
+    LOGGER.info("Opened UI for printer %s:%s", profile.get("printer_host"), profile.get("printer_port"))
+    return render_page(form, opts, field_forms, result=None)
 
 
 @APP.route("/print", methods=["POST"])
 def print_label():
     opts = load_runtime_options()
-    defaults = default_form_from_options(opts)
-    form = {
-        "profile_id": request.form.get("profile_id", defaults["profile_id"]),
-        "text1": digits_only(request.form.get("text1", defaults["text1"]), defaults["text1"]),
-        "text2": request.form.get("text2", defaults["text2"]).strip(),
-        "text3": request.form.get("text3", defaults["text3"]).strip(),
-        "sign_off": request.form.get("sign_off", defaults["sign_off"]).strip(),
-        "weight": digits_only(request.form.get("weight", defaults["weight"]), defaults["weight"]),
-        "footer": request.form.get("footer", defaults["footer"]).strip(),
-        "custom_blocks_json": request.form.get("custom_blocks_json", defaults["custom_blocks_json"]),
-        "copies": request.form.get("copies", DEFAULT_FORM["copies"]).strip() or DEFAULT_FORM["copies"],
-        "print_text2": normalize_form_checkbox(request.form.get("print_text2"), defaults["print_text2"]),
-        "print_text3": normalize_form_checkbox(request.form.get("print_text3"), defaults["print_text3"]),
-        "print_weight": normalize_form_checkbox(request.form.get("print_weight"), defaults["print_weight"]),
-        "print_footer": normalize_form_checkbox(request.form.get("print_footer"), defaults["print_footer"]),
-    }
-
+    profile = opts.get("active_profile") or {}
+    form, field_forms = form_data_from_request(opts)
     result = {"success": False, "message": ui_text(opts, "unknown_error")}
     try:
-        raw_text1 = request.form.get("text1", defaults["text1"])
-        text1 = validate_text1_numeric(raw_text1, opts["field1_label"], opts["ui_language"])
-        form["text1"] = text1
-        text2 = form["text2"]
-        text3 = form["text3"]
-        sign_off = form["sign_off"]
-        weight = validate_optional_numeric(form["weight"], opts["weight_label"], opts["ui_language"])
-        form["weight"] = weight
-        footer = form["footer"]
-        custom_blocks = parse_custom_blocks(form.get("custom_blocks_json", "[]"))
-        form["custom_blocks_json"] = custom_blocks_json_value(custom_blocks)
-        copies = max(1, min(50, int(form["copies"])))
-        print_toggles = parse_print_toggles(form)
-        zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, custom_blocks, copies, opts, print_toggles=print_toggles)
-        qr_payload = build_qr_payload(text1, text2, text3, opts)
-        LOGGER.info(
-            "Print request received: copies=%s qr_payload=%r sign_off=%r weight=%r custom_blocks=%s print_text2=%s print_text3=%s print_weight=%s print_footer=%s",
-            copies,
-            qr_payload,
-            sign_off,
-            weight,
-            len(custom_blocks),
-            print_toggles["print_text2"],
-            print_toggles["print_text3"],
-            print_toggles["print_weight"],
-            print_toggles["print_footer"],
-        )
-        send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
-        result = {
-            "success": True,
-            "message": ui_text(opts, "sent_labels_message", copies=copies, host=opts["printer_host"], port=opts["printer_port"], qr_payload=qr_payload),
-        }
+        qr_value = validate_required_text(form.get("qr_value", ""), ui_text(opts, "qr_value_label"), opts["ui_language"])
+        field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        copies = max(1, min(50, int(form.get("copies", "1"))))
+        zpl = build_zpl(qr_value, field_forms, copies, profile)
+        LOGGER.info("Print request received: profile=%s copies=%s qr_payload=%r", profile.get("id"), copies, qr_value)
+        send_to_printer(profile["printer_host"], int(profile["printer_port"]), zpl)
+        result = {"success": True, "message": ui_text(opts, "sent_labels_message", copies=copies, host=profile["printer_host"], port=profile["printer_port"], qr_payload=qr_value)}
     except Exception as exc:
         LOGGER.exception("Print failed")
         result = {"success": False, "message": ui_text(opts, "print_failed_message", error=exc)}
-
-    return render_page(form, opts, result=result)
+    return render_page(form, opts, field_forms, result=result)
 
 
 @APP.route("/preview", methods=["GET"])
 def preview():
     opts = load_runtime_options()
-    defaults = default_form_from_options(opts)
-    raw_text1 = request.args.get("text1", defaults["text1"])
-    text2 = request.args.get("text2", defaults["text2"])
-    text3 = request.args.get("text3", defaults["text3"])
-    sign_off = request.args.get("sign_off", defaults["sign_off"])
-    weight = request.args.get("weight", defaults["weight"])
-    footer = request.args.get("footer", defaults["footer"])
-    custom_blocks = parse_custom_blocks(request.args.get("custom_blocks_json", defaults["custom_blocks_json"]))
+    profile = opts.get("active_profile") or {}
+    form, field_forms = form_data_from_request(opts)
     try:
-        text1 = validate_text1_numeric(raw_text1, opts["field1_label"], opts["ui_language"])
-        copies = max(1, min(50, int(request.args.get("copies", DEFAULT_FORM["copies"]))))
-        print_toggles = parse_print_toggles({
-            "print_text2": request.args.get("print_text2", defaults["print_text2"]),
-            "print_text3": request.args.get("print_text3", defaults["print_text3"]),
-            "print_weight": request.args.get("print_weight", defaults["print_weight"]),
-            "print_footer": request.args.get("print_footer", defaults["print_footer"]),
-        })
-        weight = validate_optional_numeric(weight, opts["weight_label"], opts["ui_language"])
-        zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, custom_blocks, copies, opts, print_toggles=print_toggles)
-        LOGGER.info("Generated ZPL preview for copies=%s with toggles=%s and custom_blocks=%s", copies, print_toggles, len(custom_blocks))
+        qr_value = validate_required_text(form.get("qr_value", ""), ui_text(opts, "qr_value_label"), opts["ui_language"])
+        field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        copies = max(1, min(50, int(form.get("copies", "1"))))
+        zpl = build_zpl(qr_value, field_forms, copies, profile)
+        LOGGER.info("Generated ZPL preview for profile=%s copies=%s", profile.get("id"), copies)
         return Response(zpl, mimetype="text/plain; charset=utf-8")
     except Exception as exc:
         LOGGER.exception("ZPL preview failed")
@@ -2520,25 +1307,12 @@ def preview():
 @APP.route("/preview.png", methods=["GET"])
 def preview_png():
     opts = load_runtime_options()
-    defaults = default_form_from_options(opts)
-    raw_text1 = request.args.get("text1", defaults["text1"])
-    text2 = request.args.get("text2", defaults["text2"])
-    text3 = request.args.get("text3", defaults["text3"])
-    sign_off = request.args.get("sign_off", defaults["sign_off"])
-    weight = request.args.get("weight", defaults["weight"])
-    footer = request.args.get("footer", defaults["footer"])
-    custom_blocks = parse_custom_blocks(request.args.get("custom_blocks_json", defaults["custom_blocks_json"]))
+    form, field_forms = form_data_from_request(opts)
     try:
-        text1 = validate_text1_numeric(raw_text1, opts["field1_label"], opts["ui_language"])
-        print_toggles = parse_print_toggles({
-            "print_text2": request.args.get("print_text2", defaults["print_text2"]),
-            "print_text3": request.args.get("print_text3", defaults["print_text3"]),
-            "print_weight": request.args.get("print_weight", defaults["print_weight"]),
-            "print_footer": request.args.get("print_footer", defaults["print_footer"]),
-        })
-        weight = validate_optional_numeric(weight, opts["weight_label"], opts["ui_language"])
-        LOGGER.info("Generating PNG preview for payload inputs text1=%r text2=%r text3=%r sign_off=%r weight=%r footer=%r custom_blocks=%s toggles=%s", text1, text2, text3, sign_off, weight, footer, len(custom_blocks), print_toggles)
-        img = render_label_image(text1, text2, text3, sign_off, weight, footer, custom_blocks, opts, preview=True, print_toggles=print_toggles)
+        qr_value = validate_required_text(form.get("qr_value", ""), ui_text(opts, "qr_value_label"), opts["ui_language"])
+        field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("active_profile_id"), qr_value)
+        img = render_label_image(qr_value, field_forms, opts["active_profile"], preview=True)
         bio = BytesIO()
         img.save(bio, format="PNG", dpi=(203, 203), optimize=True)
         bio.seek(0)
@@ -2552,36 +1326,21 @@ def preview_png():
 def api_print():
     payload = request.get_json(force=True, silent=False) or {}
     opts = load_runtime_options(str(payload.get("profile_id") or "") or None)
-    defaults = default_form_from_options(opts)
-    raw_text1 = payload.get("text1", defaults["text1"])
-    text2 = str(payload.get("text2", defaults["text2"])).strip()
-    text3 = str(payload.get("text3", defaults["text3"])).strip()
-    sign_off = str(payload.get("sign_off", defaults["sign_off"])).strip()
-    weight = digits_only(payload.get("weight", defaults["weight"]), defaults["weight"])
-    footer = str(payload.get("footer", defaults["footer"])).strip()
-    custom_blocks = parse_custom_blocks(payload.get("custom_blocks", payload.get("custom_blocks_json", [])))
-    copies = max(1, min(50, int(payload.get("copies", 1))))
-    print_toggles = parse_print_toggles({
-        "print_text2": normalize_form_checkbox(payload.get("print_text2"), "1"),
-        "print_text3": normalize_form_checkbox(payload.get("print_text3"), "1"),
-        "print_weight": normalize_form_checkbox(payload.get("print_weight"), "0"),
-        "print_footer": normalize_form_checkbox(payload.get("print_footer"), "1"),
-    })
+    profile = opts.get("active_profile") or {}
     try:
-        text1 = validate_text1_numeric(raw_text1, opts["field1_label"], opts["ui_language"])
-        weight = validate_optional_numeric(weight, opts["weight_label"], opts["ui_language"])
-        zpl = build_zpl(text1, text2, text3, sign_off, weight, footer, custom_blocks, copies, opts, print_toggles=print_toggles)
-        LOGGER.info("API print request received: copies=%s sign_off=%r weight=%r footer=%r custom_blocks=%s toggles=%s", copies, sign_off, weight, footer, len(custom_blocks), print_toggles)
-        send_to_printer(opts["printer_host"], int(opts["printer_port"]), zpl)
+        qr_value = validate_required_text(payload.get("qr_value", profile.get("qr_default_value", "")), ui_text(opts, "qr_value_label"), opts["ui_language"])
+        field_forms = validate_field_forms(api_field_forms_from_payload(profile, payload), opts["ui_language"])
+        copies = max(1, min(50, int(payload.get("copies", 1))))
+        zpl = build_zpl(qr_value, field_forms, copies, profile)
+        LOGGER.info("API print request received: profile=%s copies=%s qr_value=%r", profile.get("id"), copies, qr_value)
+        send_to_printer(profile["printer_host"], int(profile["printer_port"]), zpl)
         return jsonify({
             "ok": True,
-            "printer": opts["printer_host"],
+            "profile_id": profile.get("id", ""),
+            "printer": profile.get("printer_host", ""),
             "copies": copies,
-            "qr_payload": build_qr_payload(text1, text2, text3, opts),
-            "print_toggles": print_toggles,
-            "custom_block_count": len(custom_blocks),
+            "qr_payload": qr_value,
             "language": opts["ui_language"],
-            "profile_id": opts.get("active_profile_id", ""),
         })
     except ValueError as exc:
         LOGGER.info("API print rejected: %s", exc)
@@ -2593,5 +1352,4 @@ def api_print():
 
 if __name__ == "__main__":
     from waitress import serve
-
     serve(APP, host="0.0.0.0", port=8099)
