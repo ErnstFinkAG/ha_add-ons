@@ -2,7 +2,7 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.42
+## What changed in v0.1.43
 
 This version splits the configuration into two layers:
 
@@ -77,6 +77,7 @@ Field settings supported in the UI:
 - `number_only`
 - `suffix`
 - `position`: `body` or `footer`
+- `footer_text` (bottom-anchored footer text)
 - `append_current_date`
 - `always_use_for_qr`
 - `value_options` (suggested values, free text still allowed)
@@ -84,7 +85,7 @@ Field settings supported in the UI:
 
 ## Web UI
 
-Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, and field inputs can offer suggested values while still accepting free text.
+Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, field inputs can offer suggested values while still accepting free text, and fields can be marked as footer text so their values stay anchored at the bottom of the label.
 
 In the add-on web UI you can:
 

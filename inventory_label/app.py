@@ -135,6 +135,7 @@ DEFAULT_PROFILE_FIELDS = {
             "underline": False,
             "print_by_default": True,
             "position": "footer",
+            "footer_text": True,
             "append_current_date": True,
         },
     ]
@@ -290,6 +291,7 @@ UI_STRINGS = {
         "suffix_label": "Suffix",
         "append_current_date_label": "Append current date",
         "always_use_for_qr_label": "Always use for QR code",
+        "footer_text_label": "Footer text (bottom anchored)",
         "value_options_label": "Value list",
         "value_options_help": "Optional suggestions, one value per line. Users can still enter any text.",
         "value_options_summary": "Choices",
@@ -373,6 +375,7 @@ UI_STRINGS = {
         "suffix_label": "Suffix",
         "append_current_date_label": "Aktuelles Datum anhängen",
         "always_use_for_qr_label": "Immer für QR-Code verwenden",
+        "footer_text_label": "Footer-Text (unten verankert)",
         "value_options_label": "Werteliste",
         "value_options_help": "Optionale Vorschläge, ein Wert pro Zeile. Freitext bleibt weiterhin möglich.",
         "value_options_summary": "Auswahlwerte",
@@ -616,6 +619,7 @@ HTML = """
             {% if field.number_only %}<span class="tag">{{ ui.numeric_only }}</span>{% endif %}
             {% if field.suffix %}<span class="tag">{{ field.suffix }}</span>{% endif %}
             {% if field.always_use_for_qr %}<span class="tag">QR</span>{% endif %}
+            {% if field.footer_text %}<span class="tag">{{ ui.footer_text_label }}</span>{% endif %}
             {% if field.value_options %}<span class="tag">{{ ui.value_options_summary }}: {{ field.value_options|length }}</span>{% endif %}
             {% if field.append_current_date %}<span class="tag">Date</span>{% endif %}
           </div>
@@ -716,6 +720,7 @@ HTML = """
             <label class="checkline"><input id="editor_number_only" name="number_only" type="checkbox" value="1" {% if editor_form.number_only %}checked{% endif %}> {{ ui.number_only_label }}</label>
             <label class="checkline"><input id="editor_append_current_date" name="append_current_date" type="checkbox" value="1" {% if editor_form.append_current_date %}checked{% endif %}> {{ ui.append_current_date_label }}</label>
             <label class="checkline"><input id="editor_always_use_for_qr" name="always_use_for_qr" type="checkbox" value="1" {% if editor_form.always_use_for_qr %}checked{% endif %}> {{ ui.always_use_for_qr_label }}</label>
+            <label class="checkline"><input id="editor_footer_text" name="footer_text" type="checkbox" value="1" {% if editor_form.footer_text %}checked{% endif %}> {{ ui.footer_text_label }}</label>
           </div>
 
           <div class="btns">
@@ -856,6 +861,8 @@ HTML = """
         setCheckbox("editor_required", false);
         setCheckbox("editor_number_only", false);
         setCheckbox("editor_append_current_date", false);
+        setCheckbox("editor_always_use_for_qr", false);
+        setCheckbox("editor_footer_text", false);
       }
 
       function loadFieldIntoEditor(fieldId) {
@@ -880,6 +887,7 @@ HTML = """
         setCheckbox("editor_number_only", data.number_only);
         setCheckbox("editor_append_current_date", data.append_current_date);
         setCheckbox("editor_always_use_for_qr", data.always_use_for_qr);
+        setCheckbox("editor_footer_text", data.footer_text);
       }
 
       if (profileSelect) {
@@ -908,6 +916,17 @@ HTML = """
           input.addEventListener("change", applyPreviewUpdate);
         }
       });
+
+      const footerTextCheckbox = document.getElementById("editor_footer_text");
+      const editorPositionSelect = document.getElementById("editor_position");
+      if (footerTextCheckbox && editorPositionSelect) {
+        footerTextCheckbox.addEventListener("change", () => {
+          editorPositionSelect.value = footerTextCheckbox.checked ? "footer" : "body";
+        });
+        editorPositionSelect.addEventListener("change", () => {
+          footerTextCheckbox.checked = editorPositionSelect.value === "footer";
+        });
+      }
 
       document.querySelectorAll(".edit-field-button").forEach((button) => {
         button.addEventListener("click", () => {
@@ -1047,6 +1066,10 @@ def normalize_profile_field(raw: object, idx: int) -> Dict:
     data = raw if isinstance(raw, dict) else {}
     name = normalize_string(data.get("name"), f"Field {idx}")
     field_id = sanitize_id(str(data.get("id") or name), f"field_{idx}")
+    position = normalize_position(data.get("position"), "body")
+    footer_text = normalize_bool(data.get("footer_text"), position == "footer")
+    if footer_text:
+        position = "footer"
     return {
         "id": field_id,
         "name": name,
@@ -1061,7 +1084,8 @@ def normalize_profile_field(raw: object, idx: int) -> Dict:
         "required": normalize_bool(data.get("required"), False),
         "number_only": normalize_bool(data.get("number_only"), False),
         "suffix": str(data.get("suffix") or "").strip(),
-        "position": normalize_position(data.get("position"), "body"),
+        "position": position,
+        "footer_text": footer_text,
         "append_current_date": normalize_bool(data.get("append_current_date"), False),
         "always_use_for_qr": normalize_bool(data.get("always_use_for_qr"), False),
         "value_options": normalize_value_options(data.get("value_options")),
@@ -1830,6 +1854,7 @@ def blank_editor_form() -> Dict:
         "number_only": False,
         "suffix": "",
         "position": "body",
+        "footer_text": False,
         "append_current_date": False,
         "always_use_for_qr": False,
         "value_options": [],
@@ -1857,6 +1882,7 @@ def editor_form_from_field(field: Dict | None) -> Dict:
         "number_only": field.get("number_only", False),
         "suffix": field.get("suffix", ""),
         "position": field.get("position", "body"),
+        "footer_text": normalize_bool(field.get("footer_text"), field.get("position") == "footer"),
         "append_current_date": field.get("append_current_date", False),
         "always_use_for_qr": field.get("always_use_for_qr", False),
         "value_options": normalize_value_options(field.get("value_options", [])),
@@ -1890,6 +1916,7 @@ def validate_and_normalize_editor_payload(source: Dict, language: str) -> Tuple[
             "number_only": source.get("number_only"),
             "suffix": source.get("suffix", ""),
             "position": source.get("position", "body"),
+            "footer_text": source.get("footer_text"),
             "append_current_date": source.get("append_current_date"),
             "always_use_for_qr": source.get("always_use_for_qr"),
             "value_options": normalize_value_options(source.get("value_options_text", source.get("value_options", []))),
@@ -2125,6 +2152,7 @@ def save_field():
             "number_only": normalize_bool(request.form.get("number_only"), False),
             "suffix": request.form.get("suffix", ""),
             "position": request.form.get("position", "body"),
+            "footer_text": normalize_bool(request.form.get("footer_text"), False),
             "append_current_date": normalize_bool(request.form.get("append_current_date"), False),
             "always_use_for_qr": normalize_bool(request.form.get("always_use_for_qr"), False),
             "value_options": normalize_value_options(request.form.get("value_options_text", "")),
