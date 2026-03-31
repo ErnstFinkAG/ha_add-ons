@@ -8,6 +8,7 @@ from datetime import datetime
 from functools import lru_cache
 from io import BytesIO
 from typing import Dict, List, Tuple
+from uuid import uuid4
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
@@ -39,7 +40,10 @@ INGRESS_ALLOWED_IP = "172.30.32.2"
 LOCAL_ALLOWED_IPS = {"127.0.0.1", "::1", None}
 OPTIONS_PATH = "/data/options.json"
 FIELD_STORE_PATH = "/data/label_fields.json"
+ASSET_ROOT_PATH = "/data/field_assets"
+LOGO_ASSET_PATH = os.path.join(ASSET_ROOT_PATH, "logos")
 DEFAULT_TEXT_BLOCK_MARGIN_MM = 8.0
+DEFAULT_LOGO_HEIGHT_MM = 20.0
 FIELD_GAP_MM = 4.0
 FOOTER_GAP_MM = 3.0
 SUPPORTED_UI_LANGUAGES = {"en", "de"}
@@ -297,6 +301,17 @@ UI_STRINGS = {
         "value_options_label": "Value list",
         "value_options_help": "Optional suggestions, one value per line. Users can still enter any text.",
         "value_options_summary": "Choices",
+        "logo_field_label": "Logo field",
+        "logo_height_label": "Logo height (mm)",
+        "logo_upload_label": "Upload PNG logo(s)",
+        "logo_upload_help": "Upload one or more PNG files. They will be shown as selectable checkboxes in the label form.",
+        "logo_options_summary": "Logos",
+        "existing_logos_label": "Existing logos",
+        "no_logos_uploaded": "No logos uploaded for this field yet.",
+        "remove_logo_label": "Remove",
+        "logo_png_only": "Only PNG logo files are supported.",
+        "logo_upload_invalid": "Logo upload failed: {error}",
+        "logo_choices_label": "Logos",
         "max_lines_label": "Max lines",
         "field_summary_default": "Default",
         "field_summary_style": "Style",
@@ -382,6 +397,17 @@ UI_STRINGS = {
         "value_options_label": "Werteliste",
         "value_options_help": "Optionale Vorschläge, ein Wert pro Zeile. Freitext bleibt weiterhin möglich.",
         "value_options_summary": "Auswahlwerte",
+        "logo_field_label": "Logo-Feld",
+        "logo_height_label": "Logo-Höhe (mm)",
+        "logo_upload_label": "PNG-Logo(s) hochladen",
+        "logo_upload_help": "Ein oder mehrere PNG-Dateien hochladen. Sie werden im Label-Formular als auswählbare Checkboxen angezeigt.",
+        "logo_options_summary": "Logos",
+        "existing_logos_label": "Vorhandene Logos",
+        "no_logos_uploaded": "Für dieses Feld sind noch keine Logos hochgeladen.",
+        "remove_logo_label": "Entfernen",
+        "logo_png_only": "Es werden nur PNG-Logodateien unterstützt.",
+        "logo_upload_invalid": "Logo-Upload fehlgeschlagen: {error}",
+        "logo_choices_label": "Logos",
         "max_lines_label": "Max. Zeilen",
         "field_summary_default": "Standard",
         "field_summary_style": "Stil",
@@ -448,6 +474,11 @@ HTML = """
     .field-card h3 { margin-bottom: 10px; font-size: 1rem; }
     .field-meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 0.92rem; margin-bottom: 12px; }
     .checkline { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .logo-option-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+    .logo-option-card { display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #0f172a; }
+    .logo-option-card img, .logo-thumb { max-width: 100%; max-height: 70px; object-fit: contain; background: white; border-radius: 8px; padding: 4px; box-sizing: border-box; }
+    .logo-manager { display: grid; gap: 10px; }
+    .logo-manager-item { display: grid; grid-template-columns: 90px 1fr auto; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #111827; }
     .two-col { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(360px, 0.9fr); gap: 20px; }
     .editor { background: #111827; border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
     .editor .btns { margin-top: 4px; }
@@ -526,11 +557,26 @@ HTML = """
               <span>{{ ui.position }}: {{ ui.position_footer if field.position == 'footer' else ui.position_body }}</span>
               {% if field.required %}<span>{{ ui.required }}</span>{% endif %}
               {% if field.number_only %}<span>{{ ui.numeric_only }}</span>{% endif %}
+              {% if field.logo_field %}<span>{{ ui.logo_field_label }}</span>{% endif %}
             </div>
             <div class="checkline">
               <input id="print_{{ field.id }}" name="print_{{ field.id }}" type="checkbox" value="1" data-field-id="{{ field.id }}" {% if field.print_enabled %}checked{% endif %}>
               <label for="print_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.print_field }}</label>
             </div>
+            {% if field.logo_field %}
+            <input type="hidden" name="field_{{ field.id }}__present" value="1">
+            <div class="logo-option-grid">
+              {% for option in field.logo_options %}
+              <label class="logo-option-card">
+                <input type="checkbox" name="field_{{ field.id }}" value="{{ option.id }}" {% if option.selected %}checked{% endif %}>
+                <img src="{{ option.asset_url }}" alt="{{ option.name }}">
+                <span class="muted small">{{ option.name }}</span>
+              </label>
+              {% else %}
+              <div class="muted small">{{ ui.no_logos_uploaded }}</div>
+              {% endfor %}
+            </div>
+            {% else %}
             <input
               id="field_{{ field.id }}"
               name="field_{{ field.id }}"
@@ -545,6 +591,7 @@ HTML = """
               <option value="{{ option }}"></option>
               {% endfor %}
             </datalist>
+            {% endif %}
             {% endif %}
           </div>
           {% else %}
@@ -625,8 +672,20 @@ HTML = """
             {% if field.footer_text %}<span class="tag">{{ ui.footer_text_label }}</span>{% endif %}
             {% if field.footer_bottom_margin_mm %}<span class="tag">{{ ui.footer_bottom_margin_label }}: {{ field.footer_bottom_margin_mm }} mm</span>{% endif %}
             {% if field.value_options %}<span class="tag">{{ ui.value_options_summary }}: {{ field.value_options|length }}</span>{% endif %}
+            {% if field.logo_field %}<span class="tag">{{ ui.logo_field_label }}</span>{% endif %}
+            {% if field.logo_options %}<span class="tag">{{ ui.logo_options_summary }}: {{ field.logo_options|length }}</span>{% endif %}
             {% if field.append_current_date %}<span class="tag">Date</span>{% endif %}
           </div>
+          {% if field.logo_options %}
+          <div class="logo-option-grid" style="margin-bottom:12px;">
+            {% for option in field.logo_options %}
+            <div class="logo-option-card">
+              <img src="{{ option.asset_url }}" alt="{{ option.name }}">
+              <span class="muted small">{{ option.name }}</span>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
           <div class="field-actions">
             <button type="button" class="secondary edit-field-button" data-field-id="{{ field.id }}">{{ ui.edit_field_button }}</button>
             <form method="post" action="{{ ingress_base }}/fields/delete" style="margin:0;">
@@ -642,7 +701,7 @@ HTML = """
       </div>
 
       <div class="editor" style="margin-top: 18px;">
-        <form id="field-editor-form" method="post" action="{{ ingress_base }}/fields/save">
+        <form id="field-editor-form" method="post" action="{{ ingress_base }}/fields/save" enctype="multipart/form-data">
           <input type="hidden" name="profile_id" value="{{ active_profile_id }}">
           <input type="hidden" id="original_field_id" name="original_field_id" value="{{ editor_form.original_field_id }}">
 
@@ -678,6 +737,37 @@ HTML = """
             <label for="editor_value_options_text">{{ ui.value_options_label }}</label>
             <textarea id="editor_value_options_text" name="value_options_text">{{ editor_form.value_options_text }}</textarea>
             <p class="muted small">{{ ui.value_options_help }}</p>
+          </div>
+
+          <div class="row-compact">
+            <label class="checkline"><input id="editor_logo_field" name="logo_field" type="checkbox" value="1" {% if editor_form.logo_field %}checked{% endif %}> {{ ui.logo_field_label }}</label>
+            <div>
+              <label for="editor_logo_height_mm">{{ ui.logo_height_label }}</label>
+              <input id="editor_logo_height_mm" name="logo_height_mm" type="number" min="2" max="100" step="0.5" value="{{ editor_form.logo_height_mm }}">
+            </div>
+          </div>
+
+          <div>
+            <label for="editor_logo_files">{{ ui.logo_upload_label }}</label>
+            <input id="editor_logo_files" name="logo_files" type="file" accept=".png,image/png" multiple>
+            <p class="muted small">{{ ui.logo_upload_help }}</p>
+          </div>
+
+          <div>
+            <label>{{ ui.existing_logos_label }}</label>
+            <div id="existing-logos" class="logo-manager">
+              {% if editor_form.logo_options %}
+                {% for option in editor_form.logo_options %}
+                <label class="logo-manager-item">
+                  <img class="logo-thumb" src="{{ option.asset_url }}" alt="{{ option.name }}">
+                  <span>{{ option.name }}</span>
+                  <span class="checkline"><input type="checkbox" name="remove_logo_ids" value="{{ option.id }}"> {{ ui.remove_logo_label }}</span>
+                </label>
+                {% endfor %}
+              {% else %}
+                <div class="muted small">{{ ui.no_logos_uploaded }}</div>
+              {% endif %}
+            </div>
           </div>
 
           <div class="row-compact">
@@ -759,6 +849,8 @@ HTML = """
       const ingressBase = {{ ingress_base|tojson }};
       const portraitWidthMm = {{ preview_display_width_mm|tojson }};
       const portraitHeightMm = {{ preview_display_height_mm|tojson }};
+      const noLogosUploadedText = {{ ui.no_logos_uploaded|tojson }};
+      const removeLogoLabelText = {{ ui.remove_logo_label|tojson }};
 
       function sanitizeNumericInput(input) {
         if (!input || input.dataset.numberOnly !== "1") return;
@@ -849,6 +941,23 @@ HTML = """
         if (el) el.value = value == null ? "" : String(value);
       }
 
+      function renderExistingLogos(logos) {
+        const container = document.getElementById("existing-logos");
+        if (!container) return;
+        const items = Array.isArray(logos) ? logos : [];
+        if (!items.length) {
+          container.innerHTML = `<div class="muted small">${noLogosUploadedText}</div>`;
+          return;
+        }
+        container.innerHTML = items.map((logo) => `
+          <label class="logo-manager-item">
+            <img class="logo-thumb" src="${logo.asset_url || ''}" alt="${logo.name || ''}">
+            <span>${logo.name || ''}</span>
+            <span class="checkline"><input type="checkbox" name="remove_logo_ids" value="${logo.id || ''}"> ${removeLogoLabelText}</span>
+          </label>
+        `).join("");
+      }
+
       function resetFieldEditor() {
         if (!fieldEditorForm) return;
         setValue("original_field_id", "");
@@ -863,6 +972,7 @@ HTML = """
         setValue("editor_max_lines", "3");
         setValue("editor_footer_bottom_margin_mm", "0.0");
         setValue("editor_value_options_text", "");
+        setValue("editor_logo_height_mm", "20.0");
         setCheckbox("editor_bold", false);
         setCheckbox("editor_italic", false);
         setCheckbox("editor_underline", false);
@@ -872,6 +982,10 @@ HTML = """
         setCheckbox("editor_append_current_date", false);
         setCheckbox("editor_always_use_for_qr", false);
         setCheckbox("editor_footer_text", false);
+        setCheckbox("editor_logo_field", false);
+        const logoFilesInput = document.getElementById("editor_logo_files");
+        if (logoFilesInput) logoFilesInput.value = "";
+        renderExistingLogos([]);
       }
 
       function loadFieldIntoEditor(fieldId) {
@@ -889,6 +1003,7 @@ HTML = """
         setValue("editor_max_lines", data.max_lines || "3");
         setValue("editor_footer_bottom_margin_mm", data.footer_bottom_margin_mm ?? "0.0");
         setValue("editor_value_options_text", data.value_options_text || "");
+        setValue("editor_logo_height_mm", data.logo_height_mm || "20.0");
         setCheckbox("editor_bold", data.bold);
         setCheckbox("editor_italic", data.italic);
         setCheckbox("editor_underline", data.underline);
@@ -898,6 +1013,10 @@ HTML = """
         setCheckbox("editor_append_current_date", data.append_current_date);
         setCheckbox("editor_always_use_for_qr", data.always_use_for_qr);
         setCheckbox("editor_footer_text", data.footer_text);
+        setCheckbox("editor_logo_field", data.logo_field);
+        const logoFilesInput = document.getElementById("editor_logo_files");
+        if (logoFilesInput) logoFilesInput.value = "";
+        renderExistingLogos(data.logo_options || []);
       }
 
       if (profileSelect) {
@@ -1056,6 +1175,29 @@ def sanitize_id(value: str, fallback: str) -> str:
     return normalized or fallback
 
 
+def ensure_asset_directories() -> None:
+    os.makedirs(LOGO_ASSET_PATH, exist_ok=True)
+
+
+def sanitize_storage_name(value: object) -> str:
+    filename = os.path.basename(str(value or "").strip())
+    filename = re.sub(r"[^A-Za-z0-9._-]+", "_", filename)
+    if not filename.lower().endswith('.png'):
+        return ''
+    return filename
+
+
+def logo_asset_path(storage_name: object) -> str:
+    return os.path.join(LOGO_ASSET_PATH, sanitize_storage_name(storage_name))
+
+
+def logo_asset_url(storage_name: object) -> str:
+    safe_name = sanitize_storage_name(storage_name)
+    if not safe_name:
+        return ''
+    return f"{ingress_base_path()}/assets/logos/{safe_name}"
+
+
 def get_ui_strings(language: object) -> Dict[str, str]:
     lang = normalize_ui_language(language, DEFAULT_OPTIONS["ui_language"])
     ui = dict(UI_STRINGS["en"])
@@ -1078,12 +1220,13 @@ def normalize_profile_field(raw: object, idx: int) -> Dict:
     field_id = sanitize_id(str(data.get("id") or name), f"field_{idx}")
     position = normalize_position(data.get("position"), "body")
     footer_text = normalize_bool(data.get("footer_text"), position == "footer")
+    logo_field = normalize_bool(data.get("logo_field"), False)
     if footer_text:
         position = "footer"
     return {
         "id": field_id,
         "name": name,
-        "default_value": "" if data.get("default_value") is None else str(data.get("default_value")),
+        "default_value": data.get("default_value", ""),
         "alignment": normalize_alignment(data.get("alignment"), "center"),
         "font_family": normalize_font_family(data.get("font_family"), "sans"),
         "font_size_mm": normalize_float(data.get("font_size_mm"), 7.0, 2.0, 30.0),
@@ -1100,6 +1243,9 @@ def normalize_profile_field(raw: object, idx: int) -> Dict:
         "append_current_date": normalize_bool(data.get("append_current_date"), False),
         "always_use_for_qr": normalize_bool(data.get("always_use_for_qr"), False),
         "value_options": normalize_value_options(data.get("value_options")),
+        "logo_field": logo_field,
+        "logo_height_mm": normalize_float(data.get("logo_height_mm"), DEFAULT_LOGO_HEIGHT_MM, 2.0, 100.0),
+        "logo_options": normalize_logo_options(data.get("logo_options")),
         "max_lines": normalize_int(data.get("max_lines"), 3, 1, 8),
     }
 
@@ -1303,11 +1449,24 @@ def build_field_forms(profile: Dict, source: Dict | None = None) -> List[Dict]:
     for field in profile.get("fields", []):
         value_key = field_value_name(field["id"])
         print_key = field_print_name(field["id"])
+        print_raw = source.get(print_key)
+        print_enabled = field["print_by_default"] if print_raw is None else normalize_bool(print_raw, field["print_by_default"])
+
+        if field.get("logo_field"):
+            if hasattr(source, "getlist"):
+                has_submission = source.get(f"{value_key}__present") is not None or value_key in source
+                selected_values = normalize_multi_value_ids(source.getlist(value_key)) if has_submission else normalize_multi_value_ids(field.get("default_value", []))
+            else:
+                has_submission = isinstance(source, dict) and (f"{value_key}__present" in source or value_key in source)
+                selected_values = normalize_multi_value_ids(source.get(value_key, [])) if has_submission else normalize_multi_value_ids(field.get("default_value", []))
+            selected_lookup = set(selected_values)
+            logo_options = [{**option, "selected": option.get("id") in selected_lookup, "asset_url": logo_asset_url(option.get("storage_name"))} for option in field.get("logo_options", [])]
+            forms.append({**field, "value": selected_values, "selected_logo_ids": selected_values, "logo_options": logo_options, "print_enabled": print_enabled})
+            continue
+
         value = source.get(value_key)
         if value is None:
             value = field["default_value"]
-        print_raw = source.get(print_key)
-        print_enabled = field["print_by_default"] if print_raw is None else normalize_bool(print_raw, field["print_by_default"])
         forms.append({**field, "value": str(value), "print_enabled": print_enabled})
     return forms
 
@@ -1382,6 +1541,34 @@ def normalize_value_options(value: object) -> List[str]:
     return result
 
 
+def normalize_logo_options(value: object) -> List[Dict[str, str]]:
+    raw_items = value if isinstance(value, list) else []
+    result: List[Dict[str, str]] = []
+    seen = set()
+    for idx, item in enumerate(raw_items, start=1):
+        if isinstance(item, dict):
+            storage_name = sanitize_storage_name(item.get("storage_name") or item.get("filename") or item.get("path"))
+            if not storage_name:
+                continue
+            option_id_base = sanitize_id(str(item.get("id") or os.path.splitext(storage_name)[0]), f"logo_{idx}")
+            option_id = option_id_base
+            counter = 2
+            while option_id in seen:
+                option_id = sanitize_id(f"{option_id_base}_{counter}", f"logo_{idx}_{counter}")
+                counter += 1
+            seen.add(option_id)
+            result.append({
+                "id": option_id,
+                "name": normalize_string(item.get("name"), os.path.splitext(storage_name)[0]),
+                "storage_name": storage_name,
+            })
+    return result
+
+
+def normalize_multi_value_ids(values: object) -> List[str]:
+    return normalize_qr_field_ids(values)
+
+
 def value_options_text(value: object) -> str:
     return "\n".join(normalize_value_options(value))
 
@@ -1419,7 +1606,7 @@ def selected_qr_field_ids_from_source(profile: Dict, source: object) -> List[str
     selected = normalize_qr_field_ids(values)
     if not selected:
         selected = [field.get("id") for field in profile.get("fields", []) if normalize_bool(field.get("always_use_for_qr"), False)]
-    valid_ids = {field.get("id") for field in profile.get("fields", [])}
+    valid_ids = {field.get("id") for field in profile.get("fields", []) if not field.get("logo_field")}
     return [field_id for field_id in selected if field_id in valid_ids]
 
 
@@ -1456,6 +1643,12 @@ def resolve_printer_target(profile: Dict, language_or_options: object) -> Tuple[
 def validate_field_forms(field_forms: List[Dict], language: str) -> List[Dict]:
     validated: List[Dict] = []
     for field in field_forms:
+        if field.get("logo_field"):
+            value = normalize_multi_value_ids(field.get("value", []))
+            if field.get("required") and field.get("print_enabled") and not value:
+                raise ValueError(ui_text(language, "field_required", field=field["name"]))
+            validated.append({**field, "value": value, "selected_logo_ids": value})
+            continue
         value = str(field.get("value") or "").strip()
         if field.get("number_only") and value and not value.isdigit():
             raise ValueError(ui_text(language, "field_numbers_only", field=field["name"]))
@@ -1492,10 +1685,29 @@ def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     for field in field_forms:
         if not field.get("print_enabled"):
             continue
+        if field.get("logo_field"):
+            selected_lookup = set(normalize_multi_value_ids(field.get("value", [])))
+            for option in field.get("logo_options", []):
+                if option.get("id") not in selected_lookup:
+                    continue
+                block = {
+                    "type": "logo",
+                    "alignment": field["alignment"],
+                    "storage_name": option.get("storage_name", ""),
+                    "value": option.get("name", ""),
+                    "logo_height_mm": field.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
+                    "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
+                }
+                if field.get("position") == "footer":
+                    footer.append(block)
+                else:
+                    body.append(block)
+            continue
         text = apply_field_text_transform(field)
         if not text:
             continue
         block = {
+            "type": "text",
             "value": text,
             "alignment": field["alignment"],
             "font_family": field["font_family"],
@@ -1683,17 +1895,62 @@ def draw_aligned_lines(draw: ImageDraw.ImageDraw, lines: List[str], y: int, box_
     return current_y
 
 
-def draw_body_blocks(draw: ImageDraw.ImageDraw, start_y: int, box_left: int, box_width: int, body_blocks: List[Dict]) -> int:
+def load_logo_image(storage_name: object) -> Image.Image:
+    safe_name = sanitize_storage_name(storage_name)
+    if not safe_name:
+        raise FileNotFoundError("Logo not found")
+    path = logo_asset_path(safe_name)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Logo not found: {safe_name}")
+    with Image.open(path) as img:
+        return img.convert("RGBA").copy()
+
+
+def fit_logo_image(block: Dict, max_width: int) -> Image.Image:
+    logo = load_logo_image(block.get("storage_name"))
+    target_h = max(1, mm_to_dots(block.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM)))
+    scale = target_h / max(1, logo.height)
+    width = max(1, int(round(logo.width * scale)))
+    height = max(1, int(round(logo.height * scale)))
+    if width > max_width:
+        scale = max_width / max(1, logo.width)
+        width = max(1, int(round(logo.width * scale)))
+        height = max(1, int(round(logo.height * scale)))
+    return logo.resize((width, height), Image.Resampling.LANCZOS)
+
+
+def draw_aligned_logo(img: Image.Image, logo: Image.Image, y: int, box_left: int, box_width: int, alignment: str) -> int:
+    logo_w, logo_h = logo.size
+    if alignment == "left":
+        x = box_left
+    elif alignment == "right":
+        x = box_left + box_width - logo_w
+    else:
+        x = box_left + (box_width - logo_w) / 2
+    x = int(round(x))
+    y = int(round(y))
+    img.alpha_composite(logo, (x, y))
+    return y + logo_h
+
+
+def draw_body_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, start_y: int, box_left: int, box_width: int, body_blocks: List[Dict]) -> int:
     current_y = start_y
     for block in body_blocks:
-        font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
-        spacing = max(4, resolved // 7)
-        current_y = draw_aligned_lines(draw, lines, current_y, box_left, box_width, font, block["alignment"], block["underline"], spacing)
+        if block.get("type") == "logo":
+            logo = fit_logo_image(block, box_width)
+            current_y = draw_aligned_logo(img, logo, current_y, box_left, box_width, block["alignment"])
+        else:
+            font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
+            spacing = max(4, resolved // 7)
+            current_y = draw_aligned_lines(draw, lines, current_y, box_left, box_width, font, block["alignment"], block["underline"], spacing)
         current_y += mm_to_dots(FIELD_GAP_MM)
     return current_y
 
 
-def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int) -> Tuple[int, ImageFont.ImageFont, List[str], int]:
+def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int) -> Tuple[int, object, object, int]:
+    if block.get("type") == "logo":
+        logo = fit_logo_image(block, box_width)
+        return logo.height, logo, None, 0
     font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
     spacing = max(4, resolved // 7)
     line_h = text_line_height(draw, font)
@@ -1701,13 +1958,16 @@ def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int) -> Tupl
     return total, font, lines, spacing
 
 
-def draw_footer_blocks(draw: ImageDraw.ImageDraw, bottom_y: int, box_left: int, box_width: int, footer_blocks: List[Dict]) -> int:
+def draw_footer_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, bottom_y: int, box_left: int, box_width: int, footer_blocks: List[Dict]) -> int:
     current_bottom = bottom_y
     for block in reversed(footer_blocks):
         current_bottom -= max(0, int(round(float(block.get("footer_bottom_margin_mm", 0.0)) * DOTS_PER_MM)))
-        total_h, font, lines, spacing = block_height(draw, block, box_width)
+        total_h, payload, lines, spacing = block_height(draw, block, box_width)
         top_y = current_bottom - total_h
-        draw_aligned_lines(draw, lines, top_y, box_left, box_width, font, block["alignment"], block["underline"], spacing)
+        if block.get("type") == "logo":
+            draw_aligned_logo(img, payload, top_y, box_left, box_width, block["alignment"])
+        else:
+            draw_aligned_lines(draw, lines, top_y, box_left, box_width, payload, block["alignment"], block["underline"], spacing)
         current_bottom = top_y - mm_to_dots(FOOTER_GAP_MM)
     return current_bottom
 
@@ -1726,7 +1986,7 @@ def draw_background_for_preview(img: Image.Image, requested_w: int, requested_h:
 
 def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body_blocks: List[Dict], footer_blocks: List[Dict], profile: Dict, preview: bool) -> Image.Image:
     layout = effective_layout(profile)
-    img = Image.new("RGB", (printable_w, canvas_h), color=(255, 255, 255))
+    img = Image.new("RGBA", (printable_w, canvas_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(img)
     has_qr = bool(normalize_qr_value(qr_value))
     margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
@@ -1744,10 +2004,10 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
         margin_x = max((printable_w - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM))
         text_width = max(1, printable_w - (margin_x * 2))
         current_y = qr_top + qr_size + mm_to_dots(8)
-    draw_body_blocks(draw, current_y, margin_x, text_width, body_blocks)
+    draw_body_blocks(img, draw, current_y, margin_x, text_width, body_blocks)
     if footer_blocks:
         footer_bottom = canvas_h - layout["footer_bottom_margin_dots"]
-        draw_footer_blocks(draw, footer_bottom, margin_x, text_width, footer_blocks)
+        draw_footer_blocks(img, draw, footer_bottom, margin_x, text_width, footer_blocks)
     return img
 
 
@@ -1755,7 +2015,7 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
     layout = effective_layout(profile)
     logical_w = canvas_h
     logical_h = printable_w
-    landscape = Image.new("RGB", (logical_w, logical_h), color=(255, 255, 255))
+    landscape = Image.new("RGBA", (logical_w, logical_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(landscape)
     has_qr = bool(normalize_qr_value(qr_value))
     left_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
@@ -1776,10 +2036,10 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
         text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
         text_width = max(1, logical_w - text_left - right_margin)
         text_top = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
-    draw_body_blocks(draw, text_top, text_left, text_width, body_blocks)
+    draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks)
     if footer_blocks:
         footer_bottom = logical_h - layout["footer_bottom_margin_dots"]
-        draw_footer_blocks(draw, footer_bottom, text_left, text_width, footer_blocks)
+        draw_footer_blocks(landscape, draw, footer_bottom, text_left, text_width, footer_blocks)
     if rotation_degrees == 90:
         return landscape.transpose(Image.Transpose.ROTATE_270)
     return landscape.transpose(Image.Transpose.ROTATE_90)
@@ -1805,10 +2065,10 @@ def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, pr
         return printable_image
     if requested_w <= printable_w:
         return orient_preview_for_display(printable_image, rotation_degrees)
-    canvas = Image.new("RGB", (requested_w, requested_h), color=(255, 255, 255))
+    canvas = Image.new("RGBA", (requested_w, requested_h), color=(255, 255, 255, 255))
     printable_left = max((requested_w - printable_w) // 2, 0)
     draw_background_for_preview(canvas, requested_w, requested_h, printable_left, printable_w)
-    canvas.paste(printable_image, (printable_left, 0))
+    canvas.alpha_composite(printable_image, (printable_left, 0))
     return orient_preview_for_display(canvas, rotation_degrees)
 
 
@@ -1873,6 +2133,9 @@ def blank_editor_form() -> Dict:
         "always_use_for_qr": False,
         "value_options": [],
         "value_options_text": "",
+        "logo_field": False,
+        "logo_height_mm": DEFAULT_LOGO_HEIGHT_MM,
+        "logo_options": [],
         "max_lines": 3,
     }
 
@@ -1902,6 +2165,9 @@ def editor_form_from_field(field: Dict | None) -> Dict:
         "always_use_for_qr": field.get("always_use_for_qr", False),
         "value_options": normalize_value_options(field.get("value_options", [])),
         "value_options_text": value_options_text(field.get("value_options", [])),
+        "logo_field": normalize_bool(field.get("logo_field"), False),
+        "logo_height_mm": field.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
+        "logo_options": [{**option, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))],
         "max_lines": field.get("max_lines", 3),
     }
 
@@ -1936,11 +2202,66 @@ def validate_and_normalize_editor_payload(source: Dict, language: str) -> Tuple[
             "append_current_date": source.get("append_current_date"),
             "always_use_for_qr": source.get("always_use_for_qr"),
             "value_options": normalize_value_options(source.get("value_options_text", source.get("value_options", []))),
+            "logo_field": source.get("logo_field"),
+            "logo_height_mm": source.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
+            "logo_options": source.get("logo_options", []),
             "max_lines": source.get("max_lines", 3),
         },
         1,
     )
     return original_field_id, normalized
+
+
+def remove_logo_assets(logo_options: List[Dict[str, str]]) -> None:
+    for option in normalize_logo_options(logo_options):
+        path = logo_asset_path(option.get("storage_name"))
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception as exc:
+                LOGGER.warning("Failed to remove logo asset %s: %s", path, exc)
+
+
+def save_uploaded_logo_options(files: List[object], language: str) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    ensure_asset_directories()
+    uploaded: List[Dict[str, str]] = []
+    created: List[Dict[str, str]] = []
+    for idx, file_storage in enumerate(files, start=1):
+        if not file_storage or not getattr(file_storage, 'filename', ''):
+            continue
+        filename = os.path.basename(str(file_storage.filename))
+        if not filename.lower().endswith('.png'):
+            raise ValueError(ui_text(language, 'logo_png_only'))
+        try:
+            file_storage.stream.seek(0)
+            with Image.open(file_storage.stream) as img:
+                if (img.format or '').upper() != 'PNG':
+                    raise ValueError(ui_text(language, 'logo_png_only'))
+                rendered = img.convert('RGBA')
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(ui_text(language, 'logo_upload_invalid', error=exc)) from exc
+        storage_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{uuid4().hex}.png"
+        rendered.save(logo_asset_path(storage_name), format='PNG', optimize=True)
+        option = {
+            'id': sanitize_id(os.path.splitext(filename)[0], f'logo_{idx}'),
+            'name': os.path.splitext(filename)[0] or f'Logo {idx}',
+            'storage_name': storage_name,
+        }
+        uploaded.append(option)
+        created.append(option)
+    return normalize_logo_options(uploaded), created
+
+
+def resolve_logo_options_for_save(profile: Dict, source: object, files: object, language: str) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    original_field_id = sanitize_id(str(getattr(source, 'get', lambda *_: '')('original_field_id') or ''), '')
+    existing_field = next((field for field in profile.get('fields', []) if field.get('id') == original_field_id), None)
+    existing_logo_options = normalize_logo_options(existing_field.get('logo_options', [])) if existing_field else []
+    remove_ids = set(normalize_multi_value_ids(getattr(source, 'getlist', lambda *_: [])('remove_logo_ids')))
+    kept = [option for option in existing_logo_options if option.get('id') not in remove_ids]
+    uploaded, created = save_uploaded_logo_options(getattr(files, 'getlist', lambda *_: [])('logo_files'), language)
+    return normalize_logo_options(kept + uploaded), created
 
 
 def save_profile_field(profile_id: str, original_field_id: str, field: Dict, profile_name: str, language: str) -> None:
@@ -1953,6 +2274,7 @@ def save_profile_field(profile_id: str, original_field_id: str, field: Dict, pro
     if collision:
         raise ValueError(ui_text(language, "field_duplicate_error", field_id=new_id))
 
+    previous_field = next((existing for existing in fields if existing["id"] == original_field_id and original_field_id), None)
     updated = False
     for idx, existing in enumerate(fields):
         if existing["id"] == original_field_id and original_field_id:
@@ -1963,6 +2285,10 @@ def save_profile_field(profile_id: str, original_field_id: str, field: Dict, pro
         fields.append(field)
     field_store[profile_id] = fields
     save_field_store(field_store)
+    if previous_field:
+        old_ids = {option.get('storage_name') for option in normalize_logo_options(previous_field.get('logo_options', []))}
+        new_ids = {option.get('storage_name') for option in normalize_logo_options(field.get('logo_options', []))}
+        remove_logo_assets([option for option in normalize_logo_options(previous_field.get('logo_options', [])) if option.get('storage_name') not in new_ids])
     LOGGER.info("Saved field %s for profile %s (%s)", field["id"], profile_id, profile_name)
 
 
@@ -1971,10 +2297,13 @@ def delete_profile_field(profile_id: str, field_id: str, profile_name: str) -> b
     profiles = parse_label_profiles(opts.get("label_profiles"))
     field_store = load_field_store(profiles)
     fields = list(field_store.get(profile_id, []))
+    removed = [field for field in fields if field.get("id") == field_id]
     remaining = [field for field in fields if field.get("id") != field_id]
     changed = len(remaining) != len(fields)
     field_store[profile_id] = remaining
     save_field_store(field_store)
+    for field in removed:
+        remove_logo_assets(field.get('logo_options', []))
     if changed:
         LOGGER.info("Deleted field %s from profile %s (%s)", field_id, profile_id, profile_name)
     return changed
@@ -2019,7 +2348,7 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
             "value": normalize_qr_value(field.get("value", "")),
             "selected": field["id"] in qr_selected_ids,
         }
-        for field in field_forms
+        for field in field_forms if not field.get("logo_field")
     ]
     editor_form = editor_form or blank_editor_form()
     return render_template_string(
@@ -2029,7 +2358,7 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         field_result=field_result,
         form=form,
         field_forms=field_forms,
-        active_profile_fields=profile.get("fields", []),
+        active_profile_fields=[{**field, "logo_options": [{**option, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))]} for field in profile.get("fields", [])],
         label_profiles=opts.get("label_profiles", []),
         active_profile_id=opts.get("active_profile_id", ""),
         active_profile_name=opts.get("active_profile_name", ""),
@@ -2051,7 +2380,7 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         ingress_base=ingress_base_path(),
         preview_query=preview_query_from_form(form, field_forms),
         editor_form=editor_form,
-        field_editor_json=field_store_map_for_profile(profile),
+            field_editor_json=field_store_map_for_profile(profile),
         qr_field_options=qr_field_options,
         qr_selected_ids=qr_selected_ids,
         alignments=sorted(ALIGNMENTS),
@@ -2073,12 +2402,22 @@ def api_field_forms_from_payload(profile: Dict, payload: Dict) -> List[Dict]:
     forms: List[Dict] = []
     for field in profile.get("fields", []):
         current = dict(field)
-        if field["id"] in values:
-            current["value"] = str(values[field["id"]])
-        elif field["id"] in lookup:
-            current["value"] = str(lookup[field["id"]].get("value") or "")
+        if field.get("logo_field"):
+            if field["id"] in values:
+                current["value"] = normalize_multi_value_ids(values[field["id"]])
+            elif field["id"] in lookup:
+                current["value"] = normalize_multi_value_ids(lookup[field["id"]].get("value") or lookup[field["id"]].get("values") or [])
+            else:
+                current["value"] = normalize_multi_value_ids(field.get("default_value", []))
+            selected_lookup = set(current["value"])
+            current["logo_options"] = [{**option, "selected": option.get("id") in selected_lookup} for option in field.get("logo_options", [])]
         else:
-            current["value"] = field["default_value"]
+            if field["id"] in values:
+                current["value"] = str(values[field["id"]])
+            elif field["id"] in lookup:
+                current["value"] = str(lookup[field["id"]].get("value") or "")
+            else:
+                current["value"] = field["default_value"]
         if field["id"] in print_values:
             current["print_enabled"] = normalize_bool(print_values[field["id"]], field["print_by_default"])
         elif field["id"] in lookup and "print" in lookup[field["id"]]:
@@ -2139,10 +2478,16 @@ def save_field():
     form, field_forms = form_data_from_request(opts)
     editor_form = blank_editor_form()
     result = None
+    original_field_id = sanitize_id(str(request.form.get("original_field_id") or ""), "")
+    existing_field = next((field for field in profile.get("fields", []) if field.get("id") == original_field_id), None)
+    merged_logo_options: List[Dict[str, str]] = normalize_logo_options(existing_field.get("logo_options", [])) if existing_field else []
+    created_logo_options: List[Dict[str, str]] = []
     try:
         if not profile:
             raise ValueError(ui_text(opts, "profile_not_found"))
-        original_field_id, normalized_field = validate_and_normalize_editor_payload(request.form, opts["ui_language"])
+        merged_logo_options, created_logo_options = resolve_logo_options_for_save(profile, request.form, request.files, opts["ui_language"])
+        payload = {**request.form.to_dict(flat=True), "logo_options": merged_logo_options}
+        original_field_id, normalized_field = validate_and_normalize_editor_payload(payload, opts["ui_language"])
         save_profile_field(profile["id"], original_field_id, normalized_field, profile.get("name", ""), opts["ui_language"])
         opts = load_runtime_options(profile["id"])
         form, field_forms = form_data_from_request(opts)
@@ -2152,6 +2497,10 @@ def save_field():
         }
         editor_form = blank_editor_form()
     except Exception as exc:
+        remove_logo_assets(created_logo_options)
+        if created_logo_options:
+            removed_ids = {option.get("id") for option in created_logo_options}
+            merged_logo_options = [option for option in merged_logo_options if option.get("id") not in removed_ids]
         LOGGER.exception("Field save failed")
         editor_form = editor_form_from_field({
             "id": request.form.get("id", ""),
@@ -2173,6 +2522,9 @@ def save_field():
             "append_current_date": normalize_bool(request.form.get("append_current_date"), False),
             "always_use_for_qr": normalize_bool(request.form.get("always_use_for_qr"), False),
             "value_options": normalize_value_options(request.form.get("value_options_text", "")),
+            "logo_field": normalize_bool(request.form.get("logo_field"), False),
+            "logo_height_mm": request.form.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
+            "logo_options": merged_logo_options,
             "max_lines": request.form.get("max_lines", 3),
         })
         editor_form["original_field_id"] = request.form.get("original_field_id", "")
@@ -2218,6 +2570,17 @@ def quick_update_field_setting():
     except Exception as exc:
         LOGGER.exception("Quick field update failed")
         return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@APP.route("/assets/logos/<path:storage_name>", methods=["GET"])
+def serve_logo_asset(storage_name: str):
+    safe_name = sanitize_storage_name(storage_name)
+    if not safe_name:
+        return Response("Not found", status=404)
+    path = logo_asset_path(safe_name)
+    if not os.path.exists(path):
+        return Response("Not found", status=404)
+    return send_file(path, mimetype="image/png")
 
 
 @APP.route("/preview", methods=["GET"])

@@ -2,7 +2,7 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.44
+## What changed in v0.1.45
 
 This version splits the configuration into two layers:
 
@@ -82,18 +82,21 @@ Field settings supported in the UI:
 - `append_current_date`
 - `always_use_for_qr`
 - `value_options` (suggested values, free text still allowed)
+- `logo_field` (render uploaded PNG logos instead of text)
+- `logo_height_mm`
 - `max_lines`
 
 ## Web UI
 
-Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, field inputs can offer suggested values while still accepting free text, and fields can be marked as footer text so their values stay anchored at the bottom of the label. Footer fields can also have their own additional bottom margin in mm.
+Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, field inputs can offer suggested values while still accepting free text, and fields can be marked as footer text so their values stay anchored at the bottom of the label. Footer fields can also have their own additional bottom margin in mm. Fields can now also be configured as logo fields with uploaded PNG choices that are shown as selectable checkboxes in the label form. Multiple logos can be selected and rendered on one label.
 
 In the add-on web UI you can:
 
 - choose the active label profile
 - build the QR content by selecting one or more defined fields
 - persist QR and print checkbox changes back into the label template when clicked
-- enter each configured field value with optional suggestion lists and free text
+- enter each configured text field value with optional suggestion lists and free text
+- choose one or more uploaded PNG logos for logo fields via checkboxes
 - turn each field on/off for the current label
 - preview PNG and ZPL
 - print to the printer configured inside the selected profile
@@ -115,7 +118,8 @@ Example payload:
     "project_name": "EFH Huggentobbler Biel",
     "element": "DE1",
     "weight": "1",
-    "footer": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil"
+    "footer": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
+    "brand_logos": ["fink_logo", "iso_logo"]
   },
   "print_fields": {
     "project_no": true,
