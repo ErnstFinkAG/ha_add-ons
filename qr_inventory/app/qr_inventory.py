@@ -320,6 +320,21 @@ MQTT_STATE_DETECTED_NO_VALUE = "detected_no_value"
 MQTT_AVAILABILITY_TOPIC = f"{MQTT_TOPIC_PREFIX}/status"
 MQTT_HA_BIRTH_TOPIC = f"{MQTT_DISCOVERY_PREFIX}/status"
 
+
+def _slugify_token(value: str, default: str = "item", lower: bool = False) -> str:
+    s = str(value or "").strip()
+    s = re.sub(r"[^A-Za-z0-9_-]+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    if lower:
+        s = s.lower()
+    return s or str(default or "item")
+
+
+def _mqtt_sensor_name(cam_name: str, zone_name: str) -> str:
+    cam = str(cam_name or "").strip() or "camera"
+    zone = str(zone_name or "").strip() or "zone"
+    return f"{cam}_{zone}"
+
 # ------------------------------------------------------------
 # Multi-camera config parsing
 # ------------------------------------------------------------
