@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.6.1.2"
+version: "0.6.2.0"
 slug: qr_inventory
 description: "Scan QR codes from one or more RTSPS/RTSP cameras, map them to storage zones, and serve per-camera overlay/debug endpoints via HTTP."
 arch:
@@ -31,6 +31,18 @@ options:
   overlay_http_port: 8099
   overlay_route_prefix: /overlays
   frame_route_prefix: /frames
+
+  mqtt:
+    enabled: false
+    host: ""
+    port: 1883
+    username: ""
+    password: ""
+    client_id: qr_inventory
+    topic_prefix: qr_inventory
+    discovery_prefix: homeassistant
+    retain: true
+    keepalive: 60
 
   # Multi-camera list (each camera has px zones; zones is JSON string mapping zone->rect_px)
   cameras: []
@@ -103,6 +115,18 @@ schema:
   overlay_http_port: port
   overlay_route_prefix: str
   frame_route_prefix: str
+
+  mqtt:
+    enabled: bool
+    host: str?
+    port: port
+    username: str?
+    password: str?
+    client_id: str
+    topic_prefix: str
+    discovery_prefix: str
+    retain: bool
+    keepalive: int
 
   cameras:
     - id: match(^[A-Za-z0-9_-]+$)

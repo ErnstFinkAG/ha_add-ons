@@ -4,6 +4,7 @@ import os
 import sys
 import base64
 import logging
+import re
 import subprocess
 import threading
 from collections import deque, defaultdict
@@ -12,6 +13,16 @@ from urllib.parse import urlparse, unquote
 
 import cv2
 import numpy as np
+
+# Optional MQTT
+try:
+    import paho.mqtt.client as mqtt
+    from paho.mqtt.client import CallbackAPIVersion
+    _MQTT_OK = True
+except Exception:
+    mqtt = None
+    CallbackAPIVersion = None
+    _MQTT_OK = False
 
 # Optional ZBar
 try:
@@ -287,6 +298,27 @@ _overlay_name = os.path.basename(_opt_str('overlay_png_name', 'overlay.png').str
 if not _overlay_name.lower().endswith('.png'):
     _overlay_name += ".png"
 OVERLAY_PNG_NAME = _overlay_name
+
+# ------------------------------------------------------------
+# MQTT settings
+# ------------------------------------------------------------
+_mqtt_opts = opts.get("mqtt") if isinstance(opts.get("mqtt"), dict) else {}
+
+MQTT_ENABLED = _parse_bool(_mqtt_opts.get("enabled", False), False)
+MQTT_HOST = str(_mqtt_opts.get("host") or "").strip()
+MQTT_PORT = max(1, _parse_int(_mqtt_opts.get("port", 1883), 1883))
+MQTT_USERNAME = str(_mqtt_opts.get("username") or "").strip()
+MQTT_PASSWORD = _mqtt_opts.get("password")
+MQTT_CLIENT_ID = str(_mqtt_opts.get("client_id") or "qr_inventory").strip() or "qr_inventory"
+MQTT_TOPIC_PREFIX = str(_mqtt_opts.get("topic_prefix") or "qr_inventory").strip().strip("/") or "qr_inventory"
+MQTT_DISCOVERY_PREFIX = str(_mqtt_opts.get("discovery_prefix") or "homeassistant").strip().strip("/") or "homeassistant"
+MQTT_RETAIN = _parse_bool(_mqtt_opts.get("retain", True), True)
+MQTT_KEEPALIVE = max(15, _parse_int(_mqtt_opts.get("keepalive", 60), 60))
+MQTT_QOS = 1
+MQTT_STATE_NONE = "none"
+MQTT_STATE_DETECTED_NO_VALUE = "detected_no_value"
+MQTT_AVAILABILITY_TOPIC = f"{MQTT_TOPIC_PREFIX}/status"
+MQTT_HA_BIRTH_TOPIC = f"{MQTT_DISCOVERY_PREFIX}/status"
 
 # ------------------------------------------------------------
 # Multi-camera config parsing
@@ -1778,6 +1810,246 @@ def draw_overlay(frame, detections, zones_dict):
 
     return out
 # ------------------------------------------------------------
+# MQTT publishing
+# ------------------------------------------------------------
+def _zone_status_to_mqtt_payload(cam_id: str, cam_name: str, zone_name: str, zone_state: dict | None):
+    zone_state = zone_state if isinstance(zone_state, dict) else {"kind": "none", "det": None}
+    kind = str(zone_state.get("kind") or "none")
+    det = zone_state.get("det") if isinstance(zone_state.get("det"), dict) else None
+
+    if kind == "decoded" and det and det.get("payload") is not None:
+        state = str(det.get("payload"))
+        status = "decoded"
+        decoded = True
+    elif kind == "candidate" and det and (det.get("reason") == "detected_unresolved" or (det.get("points") and not det.get("no_quad"))):
+        state = MQTT_STATE_DETECTED_NO_VALUE
+        status = MQTT_STATE_DETECTED_NO_VALUE
+        decoded = False
+    else:
+        det = None
+        state = MQTT_STATE_NONE
+        status = MQTT_STATE_NONE
+        decoded = False
+
+    payload = {
+        "state": state,
+        "attributes": {
+            "camera_id": str(cam_id),
+            "camera_name": str(cam_name),
+            "zone": str(zone_name),
+            "sensor_name": _mqtt_sensor_name(cam_name, zone_name),
+            "status": status,
+            "decoded": bool(decoded),
+            "qr_code": (str(det.get("payload")) if decoded and det is not None and det.get("payload") is not None else None),
+            "reason": (det.get("reason") if det else None),
+            "score": (float(det.get("score")) if det and det.get("score") is not None else None),
+            "centroid": (det.get("centroid") if det else None),
+            "points": (det.get("points") if det else None),
+            "edge_px": (float((det.get("diag") or {}).get("edge_px")) if det and (det.get("diag") or {}).get("edge_px") is not None else None),
+            "source": ((det.get("diag") or {}).get("src") if det else None),
+        },
+    }
+    return payload
+
+class MQTTManager:
+    def __init__(self, cameras: dict):
+        self.cameras = cameras if isinstance(cameras, dict) else {}
+        self.enabled = bool(MQTT_ENABLED and MQTT_HOST)
+        self.client = None
+        self.connected = False
+        self.lock = threading.Lock()
+        self.zone_cache = {}
+        self.discovery_payloads = {}
+        self._build_zone_cache()
+
+    def _build_zone_cache(self):
+        for cam_id, cam in self.cameras.items():
+            cam_name = str((cam or {}).get("name") or cam_id)
+            zones = (cam or {}).get("zones") or {}
+            if not isinstance(zones, dict):
+                continue
+            for zone_name in zones.keys():
+                key = self._sensor_key(cam_id, zone_name)
+                payload = _zone_status_to_mqtt_payload(cam_id, cam_name, str(zone_name), {"kind": "none", "det": None})
+                self.zone_cache[key] = payload
+                self.discovery_payloads[key] = self._discovery_payload(cam_id, cam_name, str(zone_name))
+
+    def _sensor_key(self, cam_id: str, zone_name: str) -> str:
+        return f"{str(cam_id)}::{str(zone_name)}"
+
+    def _node_id(self) -> str:
+        return _slugify_token(MQTT_CLIENT_ID, default="qr_inventory", lower=True)
+
+    def _entity_token(self, cam_name: str, zone_name: str) -> str:
+        return _slugify_token(_mqtt_sensor_name(cam_name, zone_name), default="zone", lower=True)
+
+    def _unique_id(self, cam_id: str, zone_name: str) -> str:
+        return f"qr_inventory_{_slugify_token(cam_id, default='cam', lower=True)}_{_slugify_token(zone_name, default='zone', lower=True)}"
+
+    def _state_topic(self, cam_id: str, zone_name: str) -> str:
+        return f"{MQTT_TOPIC_PREFIX}/zones/{_slugify_token(cam_id, default='cam')}/{_slugify_token(zone_name, default='zone')}/state"
+
+    def _attributes_topic(self, cam_id: str, zone_name: str) -> str:
+        return f"{MQTT_TOPIC_PREFIX}/zones/{_slugify_token(cam_id, default='cam')}/{_slugify_token(zone_name, default='zone')}/attributes"
+
+    def _discovery_topic(self, cam_name: str, zone_name: str) -> str:
+        return f"{MQTT_DISCOVERY_PREFIX}/sensor/{self._node_id()}/{self._entity_token(cam_name, zone_name)}/config"
+
+    def _device_payload(self, cam_id: str, cam_name: str) -> dict:
+        return {
+            "identifiers": [f"qr_inventory_{_slugify_token(cam_id, default='cam', lower=True)}"],
+            "name": str(cam_name),
+            "manufacturer": "QR Inventory",
+            "model": "QR Zone Scanner",
+            "sw_version": "0.6.2.0",
+        }
+
+    def _discovery_payload(self, cam_id: str, cam_name: str, zone_name: str) -> dict:
+        sensor_name = _mqtt_sensor_name(cam_name, zone_name)
+        entity_token = self._entity_token(cam_name, zone_name)
+        return {
+            "name": sensor_name,
+            "unique_id": self._unique_id(cam_id, zone_name),
+            "default_entity_id": f"sensor.{entity_token}",
+            "state_topic": self._state_topic(cam_id, zone_name),
+            "json_attributes_topic": self._attributes_topic(cam_id, zone_name),
+            "availability_topic": MQTT_AVAILABILITY_TOPIC,
+            "payload_available": "online",
+            "payload_not_available": "offline",
+            "icon": "mdi:qrcode-scan",
+            "device": self._device_payload(cam_id, cam_name),
+        }
+
+    def start(self):
+        if not MQTT_ENABLED:
+            logger.info("MQTT disabled")
+            return
+        if not MQTT_HOST:
+            logger.error("MQTT enabled but mqtt.host is empty")
+            return
+        if not _MQTT_OK:
+            logger.error("MQTT enabled but paho-mqtt is not installed")
+            return
+
+        cb_api = None
+        if CallbackAPIVersion is not None:
+            cb_api = getattr(CallbackAPIVersion, "API_VERSION2", None)
+            if cb_api is None:
+                cb_api = getattr(CallbackAPIVersion, "VERSION2", None)
+            if cb_api is None:
+                cb_api = getattr(CallbackAPIVersion, "VERSION1", None)
+        try:
+            if cb_api is not None:
+                self.client = mqtt.Client(callback_api_version=cb_api, client_id=MQTT_CLIENT_ID)
+            else:
+                self.client = mqtt.Client(client_id=MQTT_CLIENT_ID)
+        except Exception:
+            self.client = mqtt.Client(client_id=MQTT_CLIENT_ID)
+        if MQTT_USERNAME:
+            self.client.username_pw_set(MQTT_USERNAME, None if MQTT_PASSWORD in (None, "") else str(MQTT_PASSWORD))
+        self.client.enable_logger(logger)
+        self.client.on_connect = self._on_connect
+        self.client.on_disconnect = self._on_disconnect
+        self.client.on_message = self._on_message
+        self.client.reconnect_delay_set(min_delay=1, max_delay=30)
+        self.client.will_set(MQTT_AVAILABILITY_TOPIC, payload="offline", qos=MQTT_QOS, retain=True)
+        self.client.connect_async(MQTT_HOST, MQTT_PORT, MQTT_KEEPALIVE)
+        self.client.loop_start()
+        logger.info("MQTT enabled: broker=%s:%s topic_prefix=%s discovery_prefix=%s", MQTT_HOST, MQTT_PORT, MQTT_TOPIC_PREFIX, MQTT_DISCOVERY_PREFIX)
+
+    def stop(self):
+        try:
+            if self.client is not None:
+                self.client.publish(MQTT_AVAILABILITY_TOPIC, payload="offline", qos=MQTT_QOS, retain=True)
+                self.client.loop_stop()
+                self.client.disconnect()
+        except Exception:
+            pass
+
+    def _on_connect(self, client, userdata, flags, reason_code, properties=None):
+        self.connected = True
+        logger.info("MQTT connected: %s", reason_code)
+        try:
+            client.subscribe(MQTT_HA_BIRTH_TOPIC, qos=MQTT_QOS)
+        except Exception:
+            logger.exception("MQTT subscribe failed for %s", MQTT_HA_BIRTH_TOPIC)
+        self._publish_availability("online")
+        self.republish_all()
+
+    def _on_disconnect(self, client, userdata, disconnect_flags=None, reason_code=None, properties=None):
+        self.connected = False
+        logger.warning("MQTT disconnected: %s", reason_code)
+
+    def _on_message(self, client, userdata, msg):
+        try:
+            payload = (msg.payload.decode("utf-8", errors="ignore") or "").strip().lower()
+        except Exception:
+            payload = ""
+        if msg.topic == MQTT_HA_BIRTH_TOPIC and payload == "online":
+            logger.info("MQTT birth message received on %s; republishing discovery and states", MQTT_HA_BIRTH_TOPIC)
+            self.republish_all()
+
+    def _publish_availability(self, state: str):
+        if self.client is None:
+            return
+        try:
+            self.client.publish(MQTT_AVAILABILITY_TOPIC, payload=str(state), qos=MQTT_QOS, retain=True)
+        except Exception:
+            logger.exception("MQTT availability publish failed")
+
+    def _publish_sensor(self, cam_id: str, cam_name: str, zone_name: str, payload: dict):
+        if self.client is None or not self.connected:
+            return
+        key = self._sensor_key(cam_id, zone_name)
+        discovery_payload = self.discovery_payloads.get(key) or self._discovery_payload(cam_id, cam_name, zone_name)
+        try:
+            self.client.publish(
+                self._discovery_topic(cam_name, zone_name),
+                payload=json.dumps(discovery_payload, ensure_ascii=False),
+                qos=MQTT_QOS,
+                retain=True,
+            )
+            self.client.publish(
+                self._attributes_topic(cam_id, zone_name),
+                payload=json.dumps(payload.get("attributes") or {}, ensure_ascii=False),
+                qos=MQTT_QOS,
+                retain=MQTT_RETAIN,
+            )
+            self.client.publish(
+                self._state_topic(cam_id, zone_name),
+                payload=str(payload.get("state") or MQTT_STATE_NONE),
+                qos=MQTT_QOS,
+                retain=MQTT_RETAIN,
+            )
+        except Exception:
+            logger.exception("MQTT publish failed for camera=%s zone=%s", cam_id, zone_name)
+
+    def republish_all(self):
+        if self.client is None or not self.connected:
+            return
+        with self.lock:
+            items = list(self.zone_cache.items())
+        for key, payload in items:
+            cam_id, zone_name = key.split("::", 1)
+            cam = self.cameras.get(cam_id) or {}
+            cam_name = str(cam.get("name") or cam_id)
+            self._publish_sensor(cam_id, cam_name, zone_name, payload)
+
+    def publish_camera_zone_states(self, cam_id: str, cam_name: str, zones_dict: dict, zone_status: dict):
+        if not self.enabled or not isinstance(zones_dict, dict):
+            return
+        for zone_name in zones_dict.keys():
+            zone_state = zone_status.get(zone_name) if isinstance(zone_status, dict) else None
+            payload = _zone_status_to_mqtt_payload(cam_id, cam_name, str(zone_name), zone_state)
+            key = self._sensor_key(cam_id, str(zone_name))
+            with self.lock:
+                self.zone_cache[key] = payload
+                self.discovery_payloads[key] = self._discovery_payload(cam_id, cam_name, str(zone_name))
+            self._publish_sensor(cam_id, cam_name, str(zone_name), payload)
+
+MQTT_MANAGER = MQTTManager(CAMERAS)
+
+# ------------------------------------------------------------
 # HTTP server state + handler
 # ------------------------------------------------------------
 STATE_LOCK = threading.Lock()
@@ -2027,6 +2299,7 @@ class CameraWorker(threading.Thread):
                     continue
 
                 detections, zone_only_active = detect_qr(frame, self.cam_id, self.zones, self.restrict_to_zones)
+                zone_status = compute_zone_status(self.zones, detections)
 
                 # stamp camera id onto detections
                 for d in detections:
@@ -2060,6 +2333,8 @@ class CameraWorker(threading.Thread):
 
                     if len(self.history[payload]) >= max(1, self.required) and len(set(self.history[payload])) == 1:
                         persist_mapping(payload, loc)
+
+                MQTT_MANAGER.publish_camera_zone_states(self.cam_id, self.cam_name, self.zones, zone_status)
 
                 overlay = draw_overlay(frame, detections, self.zones)
 
@@ -2102,6 +2377,9 @@ class CameraWorker(threading.Thread):
                 logger.exception("Error in camera loop (%s): %s", self.cam_id, e)
 
             time.sleep(self.interval_s)
+
+# Start MQTT
+MQTT_MANAGER.start()
 
 # Start HTTP server
 threading.Thread(target=start_http_server, daemon=True).start()

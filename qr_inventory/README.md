@@ -51,3 +51,39 @@ cameras:
 - `/detections.json` – aggregiert über alle Kameras
 - `/{overlay_route_prefix}/{cam_id}.png` – Shortcut (Default: `/overlays/<cam_id>.png`)
 - `/{frame_route_prefix}/{cam_id}.png` – Shortcut (Default: `/frames/<cam_id>.png`)
+
+
+## MQTT
+
+Das Add-on kann den Status **aller definierten Zonen** per MQTT als Sensoren veröffentlichen.
+
+### Verhalten je Zone
+- Sensorname: `cameraname_zonename`
+- Bei erkanntem und dekodiertem QR-Code: Sensorzustand = QR-Inhalt
+- Wenn in der Zone **kein** QR-Code erkannt wurde: Sensorzustand = `none`
+- Wenn ein QR-Code/Kandidat erkannt wurde, aber **kein Wert dekodiert** werden konnte: Sensorzustand = `detected_no_value`
+
+Zusätzlich werden Attribute wie `camera_id`, `camera_name`, `zone`, `status`, `qr_code`, `reason` und `score` veröffentlicht.
+
+### MQTT-Konfiguration
+```yaml
+mqtt:
+  enabled: true
+  host: 192.168.1.10
+  port: 1883
+  username: mqtt_user
+  password: mqtt_pass
+  client_id: qr_inventory
+  topic_prefix: qr_inventory
+  discovery_prefix: homeassistant
+  retain: true
+  keepalive: 60
+```
+
+### Topics
+- Verfügbarkeit: `qr_inventory/status`
+- Zustand pro Zone: `qr_inventory/zones/<cam_id>/<zone>/state`
+- Attribute pro Zone: `qr_inventory/zones/<cam_id>/<zone>/attributes`
+- Discovery: `homeassistant/sensor/<client_id>/<sensor>/config`
+
+Die Discovery-Nachrichten werden beim Verbindungsaufbau und erneut nach einer Home-Assistant-Birth-Message auf `homeassistant/status` veröffentlicht.
