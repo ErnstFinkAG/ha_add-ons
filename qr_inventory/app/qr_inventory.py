@@ -197,6 +197,8 @@ overlay_alignment_direction = str(opts.get("overlay_alignment_direction", "both"
 if overlay_alignment_direction not in ("horizontal", "vertical", "both"):
     overlay_alignment_direction = "both"
 overlay_alignment_width = max(1, _opt_int("overlay_alignment_width", 2))
+overlay_margin_enabled = _opt_bool("overlay_margin_enabled", False)
+overlay_margin_px = max(0, _opt_int("overlay_margin_px", 10))
 OVERLAY_ALIGNMENT_COLOR_BGR = _hex_rgb_to_bgr_tuple(overlay_alignment_color)
 
 STREAM_INFO_INTERVAL_MINUTES_DEFAULT = max(0, _opt_int("stream_info_interval_minutes", 0))
@@ -1695,6 +1697,27 @@ def _draw_alignment_helper_lines(img: np.ndarray):
     return img
 
 
+def _draw_margin_helper_box(img: np.ndarray):
+    if img is None or img.size == 0 or not overlay_margin_enabled:
+        return img
+
+    h, w = img.shape[:2]
+    if h <= 1 or w <= 1:
+        return img
+
+    color = OVERLAY_ALIGNMENT_COLOR_BGR
+    thickness = max(1, int(overlay_alignment_width))
+    max_margin = max(0, min((w - 2) // 2, (h - 2) // 2))
+    margin = max(0, min(int(overlay_margin_px), max_margin))
+    x1, y1 = margin, margin
+    x2, y2 = max(x1, w - 1 - margin), max(y1, h - 1 - margin)
+    if x2 <= x1 or y2 <= y1:
+        return img
+
+    cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness, cv2.LINE_AA)
+    return img
+
+
 def draw_overlay(frame, detections, zones_dict):
     out = frame.copy()
     h, w = out.shape[:2]
@@ -1866,6 +1889,7 @@ def draw_overlay(frame, detections, zones_dict):
         cv2.rectangle(out, (x1, y1), (x2, y2), color, -1)
         cv2.putText(out, label, (x + pad, y - pad), font, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
 
+    _draw_margin_helper_box(out)
     _draw_alignment_helper_lines(out)
     return out
 # ------------------------------------------------------------

@@ -48,6 +48,8 @@ cameras:
 - Richtung: `horizontal`, `vertical` oder `both`.
 - Farbe als 6-stelliger Hex-Wert, z.B. `FFFFFF`.
 - Breite über `overlay_alignment_width`.
+- Optional zusätzlich ein **Margin-Rahmen** mit Abstand vom Bildrand über `overlay_margin_px`.
+- Der Margin-Rahmen nutzt dieselbe Farbe und Linienbreite wie die Alignment-Hilfslinie.
 
 Beispiel:
 ```yaml
@@ -55,6 +57,8 @@ overlay_alignment_enabled: true
 overlay_alignment_color: FF00AA
 overlay_alignment_direction: both
 overlay_alignment_width: 2
+overlay_margin_enabled: true
+overlay_margin_px: 10
 ```
 
 ## HTTP Endpoints
