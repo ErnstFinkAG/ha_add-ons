@@ -199,6 +199,14 @@ if overlay_alignment_direction not in ("horizontal", "vertical", "both"):
 overlay_alignment_width = max(1, _opt_int("overlay_alignment_width", 2))
 overlay_margin_enabled = _opt_bool("overlay_margin_enabled", False)
 overlay_margin_px = max(0, _opt_int("overlay_margin_px", 10))
+overlay_detected_list_enabled = _opt_bool("detected_list_enabled", False)
+detected_list_regex = str(opts.get("detected_list_regex") or "").strip()
+DETECTED_LIST_REGEX_TEXT = detected_list_regex
+try:
+    DETECTED_LIST_REGEX = re.compile(detected_list_regex) if detected_list_regex else None
+except re.error as e:
+    logger.error("Invalid detected_list_regex %r: %s", detected_list_regex, e)
+    DETECTED_LIST_REGEX = None
 OVERLAY_ALIGNMENT_COLOR_BGR = _hex_rgb_to_bgr_tuple(overlay_alignment_color)
 
 STREAM_INFO_INTERVAL_MINUTES_DEFAULT = max(0, _opt_int("stream_info_interval_minutes", 0))
@@ -358,6 +366,110 @@ def _mqtt_sensor_name(cam_name: str, zone_name: str) -> str:
     cam = str(cam_name or "").strip() or "camera"
     zone = str(zone_name or "").strip() or "zone"
     return f"{cam}_{zone}"
+
+
+def _natural_sort_key(value: str):
+    s = str(value or "")
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", s)]
+
+
+def _extract_detected_list_key(payload: str) -> str:
+    payload = str(payload or "").strip()
+    if not payload:
+        return ""
+    rx = DETECTED_LIST_REGEX
+    if rx is None:
+        return payload
+    try:
+        m = rx.search(payload)
+    except Exception:
+        return payload
+    if not m:
+        return payload
+    groups = [g for g in m.groups() if g is not None and str(g).strip()]
+    if groups:
+        return str(groups[0]).strip()
+    matched = (m.group(0) or "").strip()
+    return matched or payload
+
+
+def _choose_detected_list_label(group_key: str, payloads) -> str:
+    vals = sorted({str(p).strip() for p in (payloads or []) if str(p).strip()}, key=_natural_sort_key)
+    if not vals:
+        return str(group_key or "")
+    gk = str(group_key or "").strip()
+    starts = [p for p in vals if gk and p.lower().startswith(gk.lower())]
+    if starts:
+        return sorted(starts, key=lambda s: (len(s), _natural_sort_key(s)))[0]
+    contains = [p for p in vals if gk and gk.lower() in p.lower()]
+    if contains:
+        return sorted(contains, key=lambda s: (len(s), _natural_sort_key(s)))[0]
+    return vals[0]
+
+
+def build_detected_list_summary(states: dict):
+    groups = {}
+    if isinstance(states, dict):
+        for cam_id, st in states.items():
+            detections = (st or {}).get("detections") or []
+            for det in detections:
+                if not isinstance(det, dict):
+                    continue
+                if not bool(det.get("decoded", False)):
+                    continue
+                payload = str(det.get("payload") or "").strip()
+                zone = str(det.get("zone") or "").strip()
+                if not payload or not zone:
+                    continue
+                det_cam_id = str(det.get("camera") or cam_id or "").strip() or str(cam_id or "cam")
+                group_key = _extract_detected_list_key(payload)
+                if not group_key:
+                    group_key = payload
+                item = groups.setdefault(group_key, {
+                    "group_key": group_key,
+                    "payloads": set(),
+                    "zones": set(),
+                    "locations": set(),
+                    "camera_ids": set(),
+                })
+                item["payloads"].add(payload)
+                item["zones"].add(zone)
+                item["locations"].add(_camera_location(det_cam_id, zone))
+                item["camera_ids"].add(det_cam_id)
+
+    items = []
+    for group_key, item in groups.items():
+        payloads = sorted(item.get("payloads") or [], key=_natural_sort_key)
+        zones = sorted(item.get("zones") or [], key=_natural_sort_key)
+        locations = sorted(item.get("locations") or [], key=_natural_sort_key)
+        camera_ids = sorted(item.get("camera_ids") or [], key=_natural_sort_key)
+        label = _choose_detected_list_label(group_key, payloads)
+        items.append({
+            "group_key": str(group_key),
+            "label": label,
+            "members": zones,
+            "locations": locations,
+            "camera_ids": camera_ids,
+            "payloads": payloads,
+            "member_count": len(zones),
+            "location_count": len(locations),
+        })
+
+    items.sort(key=lambda x: (_natural_sort_key(x.get("group_key") or ""), _natural_sort_key(x.get("label") or "")))
+    lines = []
+    for item in items:
+        members = item.get("members") or []
+        label = str(item.get("label") or item.get("group_key") or "")
+        lines.append(f"{label} : {', '.join(members)}" if members else label)
+
+    return {
+        "ts": int(time.time()),
+        "count": len(items),
+        "regex": DETECTED_LIST_REGEX_TEXT or None,
+        "items": items,
+        "lines": lines,
+        "text": "\n".join(lines),
+    }
 
 # ------------------------------------------------------------
 # Multi-camera config parsing
@@ -1943,6 +2055,7 @@ class MQTTManager:
         self.lock = threading.Lock()
         self.zone_cache = {}
         self.discovery_payloads = {}
+        self.detected_list_cache = build_detected_list_summary({})
         self._build_zone_cache()
 
     def _build_zone_cache(self):
@@ -2002,6 +2115,68 @@ class MQTTManager:
             "icon": "mdi:qrcode-scan",
             "device": self._device_payload(cam_id, cam_name),
         }
+
+    def _detected_list_discovery_topic(self) -> str:
+        return f"{MQTT_DISCOVERY_PREFIX}/sensor/{self._node_id()}/detected_list/config"
+
+    def _detected_list_state_topic(self) -> str:
+        return f"{MQTT_TOPIC_PREFIX}/detected_list/state"
+
+    def _detected_list_attributes_topic(self) -> str:
+        return f"{MQTT_TOPIC_PREFIX}/detected_list/attributes"
+
+    def _detected_list_discovery_payload(self) -> dict:
+        return {
+            "name": "qr_inventory_detected_list",
+            "unique_id": f"{self._node_id()}_detected_list",
+            "default_entity_id": "sensor.qr_inventory_detected_list",
+            "state_topic": self._detected_list_state_topic(),
+            "json_attributes_topic": self._detected_list_attributes_topic(),
+            "availability_topic": MQTT_AVAILABILITY_TOPIC,
+            "payload_available": "online",
+            "payload_not_available": "offline",
+            "icon": "mdi:format-list-bulleted",
+            "device": {
+                "identifiers": [f"{self._node_id()}_summary"],
+                "name": "QR Inventory Summary",
+                "manufacturer": "QR Inventory",
+                "model": "Detected List",
+                "sw_version": "0.6.4.0",
+            },
+        }
+
+    def _publish_detected_list_sensor(self, summary: dict):
+        if self.client is None or not self.connected or not overlay_detected_list_enabled:
+            return
+        attrs = {
+            "count": int(summary.get("count") or 0),
+            "regex": summary.get("regex"),
+            "items": summary.get("items") or [],
+            "lines": summary.get("lines") or [],
+            "text": summary.get("text") or "",
+            "ts": int(summary.get("ts") or time.time()),
+        }
+        try:
+            self.client.publish(
+                self._detected_list_discovery_topic(),
+                payload=json.dumps(self._detected_list_discovery_payload(), ensure_ascii=False),
+                qos=MQTT_QOS,
+                retain=True,
+            )
+            self.client.publish(
+                self._detected_list_attributes_topic(),
+                payload=json.dumps(attrs, ensure_ascii=False),
+                qos=MQTT_QOS,
+                retain=False,
+            )
+            self.client.publish(
+                self._detected_list_state_topic(),
+                payload=str(int(summary.get("count") or 0)),
+                qos=MQTT_QOS,
+                retain=False,
+            )
+        except Exception:
+            logger.exception("MQTT publish failed for detected list")
 
     def start(self):
         if not MQTT_ENABLED:
@@ -2133,11 +2308,13 @@ class MQTTManager:
             return
         with self.lock:
             items = list(self.zone_cache.items())
+            detected_list_cache = dict(self.detected_list_cache or {})
         for key, payload in items:
             cam_id, zone_name = key.split("::", 1)
             cam = self.cameras.get(cam_id) or {}
             cam_name = str(cam.get("name") or cam_id)
             self._publish_sensor(cam_id, cam_name, zone_name, payload)
+        self._publish_detected_list_sensor(detected_list_cache)
 
     def publish_camera_zone_states(self, cam_id: str, cam_name: str, zones_dict: dict, zone_status: dict):
         if not self.enabled or not isinstance(zones_dict, dict):
@@ -2150,6 +2327,14 @@ class MQTTManager:
                 self.zone_cache[key] = payload
                 self.discovery_payloads[key] = self._discovery_payload(cam_id, cam_name, str(zone_name))
             self._publish_sensor(cam_id, cam_name, str(zone_name), payload)
+
+    def publish_detected_list(self, states: dict):
+        if not self.enabled or not overlay_detected_list_enabled:
+            return
+        summary = build_detected_list_summary(states if isinstance(states, dict) else {})
+        with self.lock:
+            self.detected_list_cache = summary
+        self._publish_detected_list_sensor(summary)
 
 MQTT_MANAGER = MQTTManager(CAMERAS)
 
@@ -2213,6 +2398,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
   <p>Cameras:</p>
   <ul>{cams_html}</ul>
   <p>Aggregate: <a href="/detections.json">/detections.json</a></p>
+  <p>Detected list: <a href="/detected-list.json">/detected-list.json</a></p>
   <p>Debug zones: <code>{dz}</code></p>
   <p>Debug index: <a href="/debug/index.json">/debug/index.json</a></p>
 </body></html>""".encode("utf-8")
@@ -2230,6 +2416,9 @@ class OverlayHandler(BaseHTTPRequestHandler):
                     "camera": {"id": cid, "name": (CAMERAS.get(cid) or {}).get("name") or cid},
                 }
             return _send_json(self, {"ts": int(time.time()), "cameras": cams})
+
+        if path == "/detected-list.json":
+            return _send_json(self, build_detected_list_summary(_get_all_states()))
 
         # Legacy single-camera endpoints
         if PRIMARY_CAMERA_ID:
@@ -2476,6 +2665,9 @@ class CameraWorker(threading.Thread):
                         "detections": detections,
                         "frame_info": fi,
                     }
+                    states_snapshot = {k: (v or {}).copy() for k, v in STATE.items()}
+
+                MQTT_MANAGER.publish_detected_list(states_snapshot)
 
             except Exception as e:
                 logger.exception("Error in camera loop (%s): %s", self.cam_id, e)

@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.6.3.1"
+version: "0.6.4.0"
 slug: qr_inventory
 description: "Scan QR codes from one or more RTSPS/RTSP cameras, map them to storage zones, and serve per-camera overlay/debug endpoints via HTTP."
 arch:
@@ -107,6 +107,9 @@ options:
   overlay_alignment_width: 2
   overlay_margin_enabled: false
   overlay_margin_px: 10
+
+  detected_list_enabled: false
+  detected_list_regex: ""
 
   stream_info_interval_minutes: 0
 

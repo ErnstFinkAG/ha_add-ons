@@ -105,3 +105,26 @@ mqtt:
 - Discovery: `homeassistant/sensor/<client_id>/<sensor>/config`
 
 Die Discovery-Nachrichten werden beim Verbindungsaufbau und erneut nach einer Home-Assistant-Birth-Message auf `homeassistant/status` veröffentlicht.
+
+
+## Erkannte Payload-Liste
+
+Optional kann das Add-on eine **dynamische Live-Liste** aller aktuell erkannten QR-Payloads bereitstellen.
+Dabei werden gleiche Payloads gruppiert und ihre erkannten Zonen als Mitglieder ausgegeben.
+Die Liste ist **nicht persistent** und basiert nur auf den aktuell erkannten Werten aus den letzten Kamerazyklen.
+
+Beispiel:
+
+```yaml
+detected_list_enabled: true
+detected_list_regex: "(\\d{6})"
+```
+
+Mit `detected_list_regex` kann ein Gruppierungsschlüssel aus der Payload extrahiert werden, z. B. nur die Projektnummer `260001`.
+Wenn kein Regex gesetzt ist, wird die komplette Payload als Gruppierungsschlüssel verwendet.
+
+HTTP Endpoint:
+- `/detected-list.json` – gruppierte Live-Liste aller aktuell erkannten Payloads
+
+Wenn MQTT aktiviert ist, wird zusätzlich ein Discovery-Sensor `sensor.qr_inventory_detected_list` veröffentlicht.
+Sein Zustand ist die Anzahl aktiver Gruppen; die eigentliche Liste steht in den Attributen `items`, `lines` und `text`.
