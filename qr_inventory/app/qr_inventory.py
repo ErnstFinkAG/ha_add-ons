@@ -3,13 +3,14 @@ import json
 import os
 import sys
 import base64
+import html
 import logging
 import re
 import subprocess
 import threading
 from collections import deque, defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, parse_qs, quote
 
 import cv2
 import numpy as np
@@ -489,6 +490,137 @@ def build_detected_list_summary(states: dict):
         "lines": lines,
         "text": "\n".join(lines),
     }
+
+def _print_styles_css() -> str:
+    return """
+:root { color-scheme: light; }
+body { font-family: Arial, Helvetica, sans-serif; margin: 24px; color: #111; }
+h1, h2, h3 { margin: 0 0 12px 0; }
+.meta { color: #555; margin-bottom: 16px; }
+.controls { margin-bottom: 18px; }
+.controls a, .controls button { display: inline-block; margin-right: 8px; margin-bottom: 8px; padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; background: #f7f7f7; color: #111; text-decoration: none; cursor: pointer; }
+.controls a:hover, .controls button:hover { background: #eee; }
+table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; vertical-align: top; }
+th { background: #f0f0f0; }
+.group { page-break-inside: avoid; margin: 0 0 20px 0; padding: 0 0 12px 0; border-bottom: 1px solid #ddd; }
+.members { font-size: 1.05rem; }
+.small { color: #666; font-size: 0.92rem; }
+ul.project-links { columns: 2; -webkit-columns: 2; -moz-columns: 2; padding-left: 18px; }
+ul.project-links li { margin-bottom: 6px; }
+@media print {
+  .controls { display: none !important; }
+  body { margin: 12mm; }
+  a { color: #111; text-decoration: none; }
+}
+"""
+
+def _print_shell_html(title: str, body_html: str, auto_print: bool = False) -> bytes:
+    auto_js = '<script>window.addEventListener("load", function(){ window.print(); });</script>' if auto_print else ''
+    doc = f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{html.escape(title)}</title>
+  <style>{_print_styles_css()}</style>
+  {auto_js}
+</head>
+<body>
+{body_html}
+</body>
+</html>"""
+    return doc.encode('utf-8')
+
+def _build_detected_list_print_home(summary: dict, auto_print: bool = False) -> bytes:
+    items = summary.get('items') or []
+    links = []
+    for item in items:
+        gk = str(item.get('group_key') or '').strip()
+        label = str(item.get('label') or gk)
+        if not gk:
+            continue
+        href = f"/print/project/{quote(gk, safe='')}"
+        links.append(f'<li><a href="{href}">{html.escape(label)}</a></li>')
+    body = f"""
+<h1>QR Inventory Print</h1>
+<div class="meta">Active groups: {int(summary.get('count') or 0)}</div>
+<div class="controls">
+  <a href="/print/all">Open printable list</a>
+  <a href="/print/all?autoprint=1">Print all now</a>
+</div>
+<h2>Projects</h2>
+<ul class="project-links">{''.join(links) if links else '<li>No active groups</li>'}</ul>
+"""
+    return _print_shell_html('QR Inventory Print', body, auto_print=auto_print)
+
+def _build_detected_list_print_all(summary: dict, auto_print: bool = False) -> bytes:
+    items = summary.get('items') or []
+    rows = []
+    for item in items:
+        label = html.escape(str(item.get('label') or item.get('group_key') or ''))
+        members = ', '.join([str(x) for x in (item.get('members') or [])])
+        locations = ', '.join([str(x) for x in (item.get('locations') or [])])
+        rows.append(f"<tr><td>{label}</td><td>{html.escape(members)}</td><td class=\"small\">{html.escape(locations)}</td></tr>")
+    body = f"""
+<h1>QR Inventory</h1>
+<div class=\"meta\">Detected groups: {int(summary.get('count') or 0)} | sort: {html.escape(str(summary.get('sort_order') or 'asc'))}</div>
+<div class=\"controls\">
+  <a href=\"/print\">Back</a>
+  <button onclick=\"window.print()\">Print</button>
+</div>
+<table>
+  <thead><tr><th>Project</th><th>Members</th><th>Locations</th></tr></thead>
+  <tbody>{''.join(rows) if rows else '<tr><td colspan="3">No active groups</td></tr>'}</tbody>
+</table>
+"""
+    return _print_shell_html('QR Inventory - Print All', body, auto_print=auto_print)
+
+def _build_detected_list_print_group(summary: dict, group_key: str, auto_print: bool = False) -> bytes:
+    target = None
+    for item in (summary.get('items') or []):
+        if str(item.get('group_key') or '') == str(group_key or ''):
+            target = item
+            break
+    if target is None:
+        body = f"""
+<h1>QR Inventory</h1>
+<div class=\"controls\">
+  <a href=\"/print\">Back</a>
+</div>
+<p>Project not found: <b>{html.escape(str(group_key or ''))}</b></p>
+"""
+        return _print_shell_html('QR Inventory - Project not found', body, auto_print=False)
+
+    label = str(target.get('label') or target.get('group_key') or '')
+    members = target.get('members') or []
+    locations = target.get('locations') or []
+    payloads = target.get('payloads') or []
+    member_items = ''.join([f'<li>{html.escape(str(m))}</li>' for m in members]) or '<li>-</li>'
+    payload_items = ''.join([f'<li>{html.escape(str(p))}</li>' for p in payloads]) or '<li>-</li>'
+    location_items = ''.join([f'<li>{html.escape(str(loc))}</li>' for loc in locations]) or '<li>-</li>'
+    body = f"""
+<h1>QR Inventory</h1>
+<h2>{html.escape(label)}</h2>
+<div class=\"meta\">Group key: {html.escape(str(target.get('group_key') or ''))} | members: {len(members)}</div>
+<div class=\"controls\">
+  <a href=\"/print\">Back</a>
+  <a href=\"/print/all\">All projects</a>
+  <button onclick=\"window.print()\">Print</button>
+</div>
+<div class=\"group\">
+  <h3>Children / Members</h3>
+  <ul class=\"members\">{member_items}</ul>
+</div>
+<div class=\"group\">
+  <h3>Locations</h3>
+  <ul>{location_items}</ul>
+</div>
+<div class=\"group\">
+  <h3>Payload variants</h3>
+  <ul>{payload_items}</ul>
+</div>
+"""
+    return _print_shell_html(f'QR Inventory - {label}', body, auto_print=auto_print)
 
 # ------------------------------------------------------------
 # Multi-camera config parsing
@@ -2418,6 +2550,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
   <ul>{cams_html}</ul>
   <p>Aggregate: <a href="/detections.json">/detections.json</a></p>
   <p>Detected list: <a href="/detected-list.json">/detected-list.json</a></p>
+  <p>Print view: <a href="/print">/print</a> | <a href="/print/all">/print/all</a></p>
   <p>Debug zones: <code>{dz}</code></p>
   <p>Debug index: <a href="/debug/index.json">/debug/index.json</a></p>
 </body></html>""".encode("utf-8")
@@ -2438,6 +2571,22 @@ class OverlayHandler(BaseHTTPRequestHandler):
 
         if path == "/detected-list.json":
             return _send_json(self, build_detected_list_summary(_get_all_states()))
+
+        if path.startswith('/print'):
+            parsed = urlparse(self.path)
+            q = parse_qs(parsed.query or '')
+            auto_print = str((q.get('autoprint') or ['0'])[0]).strip().lower() in ('1', 'true', 'yes', 'on')
+            summary = build_detected_list_summary(_get_all_states())
+            clean_path = unquote(parsed.path or '/print')
+            if clean_path in ('/print', '/print/', '/print/index.html'):
+                return self._send(200, 'text/html; charset=utf-8', _build_detected_list_print_home(summary, auto_print=auto_print))
+            if clean_path in ('/print/all', '/print/all.html'):
+                return self._send(200, 'text/html; charset=utf-8', _build_detected_list_print_all(summary, auto_print=auto_print))
+            if clean_path.startswith('/print/project/'):
+                gk = clean_path[len('/print/project/'):].strip('/')
+                if gk.endswith('.html'):
+                    gk = gk[:-5]
+                return self._send(200, 'text/html; charset=utf-8', _build_detected_list_print_group(summary, gk, auto_print=auto_print))
 
         # Legacy single-camera endpoints
         if PRIMARY_CAMERA_ID:
