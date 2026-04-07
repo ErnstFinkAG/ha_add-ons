@@ -177,6 +177,28 @@ overlay_show_unresolved_quads = _opt_bool("overlay_show_unresolved_quads", True)
 overlay_fill_unresolved_gap = _opt_bool("overlay_fill_unresolved_gap", True)
 overlay_fill_unresolved_alpha = _opt_float("overlay_fill_unresolved_alpha", 0.22)
 
+
+def _normalize_hex_color(v, default="FFFFFF"):
+    s = str(v or default).strip()
+    if s.startswith("#"):
+        s = s[1:]
+    s = s.upper()
+    return s if re.fullmatch(r"[0-9A-F]{6}", s or "") else str(default).strip().lstrip("#").upper()
+
+
+def _hex_rgb_to_bgr_tuple(hex_rgb: str):
+    s = _normalize_hex_color(hex_rgb, "FFFFFF")
+    return (int(s[4:6], 16), int(s[2:4], 16), int(s[0:2], 16))
+
+
+overlay_alignment_enabled = _opt_bool("overlay_alignment_enabled", False)
+overlay_alignment_color = _normalize_hex_color(opts.get("overlay_alignment_color", "FFFFFF"), "FFFFFF")
+overlay_alignment_direction = str(opts.get("overlay_alignment_direction", "both") or "both").strip().lower()
+if overlay_alignment_direction not in ("horizontal", "vertical", "both"):
+    overlay_alignment_direction = "both"
+overlay_alignment_width = max(1, _opt_int("overlay_alignment_width", 2))
+OVERLAY_ALIGNMENT_COLOR_BGR = _hex_rgb_to_bgr_tuple(overlay_alignment_color)
+
 STREAM_INFO_INTERVAL_MINUTES_DEFAULT = max(0, _opt_int("stream_info_interval_minutes", 0))
 
 abs_raw = opts.get("adaptive_block_sizes", None)
@@ -1652,6 +1674,27 @@ def compute_zone_status(zones_dict: dict, detections: list):
 # ------------------------------------------------------------
 # Overlay rendering
 # ------------------------------------------------------------
+def _draw_alignment_helper_lines(img: np.ndarray):
+    if img is None or img.size == 0 or not overlay_alignment_enabled:
+        return img
+
+    h, w = img.shape[:2]
+    if h <= 0 or w <= 0:
+        return img
+
+    color = OVERLAY_ALIGNMENT_COLOR_BGR
+    thickness = max(1, int(overlay_alignment_width))
+    cx = int(round((w - 1) / 2.0))
+    cy = int(round((h - 1) / 2.0))
+
+    if overlay_alignment_direction in ("horizontal", "both"):
+        cv2.line(img, (0, cy), (w - 1, cy), color, thickness, cv2.LINE_AA)
+    if overlay_alignment_direction in ("vertical", "both"):
+        cv2.line(img, (cx, 0), (cx, h - 1), color, thickness, cv2.LINE_AA)
+
+    return img
+
+
 def draw_overlay(frame, detections, zones_dict):
     out = frame.copy()
     h, w = out.shape[:2]
@@ -1823,6 +1866,7 @@ def draw_overlay(frame, detections, zones_dict):
         cv2.rectangle(out, (x1, y1), (x2, y2), color, -1)
         cv2.putText(out, label, (x + pad, y - pad), font, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
 
+    _draw_alignment_helper_lines(out)
     return out
 # ------------------------------------------------------------
 # MQTT publishing
@@ -1964,13 +2008,19 @@ class MQTTManager:
             self.client.username_pw_set(MQTT_USERNAME, None if MQTT_PASSWORD in (None, "") else str(MQTT_PASSWORD))
         self.client.enable_logger(logger)
         self.client.on_connect = self._on_connect
+        self.client.on_connect_fail = self._on_connect_fail
         self.client.on_disconnect = self._on_disconnect
         self.client.on_message = self._on_message
+        self.client.on_log = self._on_log
         self.client.reconnect_delay_set(min_delay=1, max_delay=30)
         self.client.will_set(MQTT_AVAILABILITY_TOPIC, payload="offline", qos=MQTT_QOS, retain=True)
-        self.client.connect_async(MQTT_HOST, MQTT_PORT, MQTT_KEEPALIVE)
-        self.client.loop_start()
         logger.info("MQTT enabled: broker=%s:%s topic_prefix=%s discovery_prefix=%s", MQTT_HOST, MQTT_PORT, MQTT_TOPIC_PREFIX, MQTT_DISCOVERY_PREFIX)
+        try:
+            self.client.connect(MQTT_HOST, MQTT_PORT, MQTT_KEEPALIVE)
+        except Exception as e:
+            logger.error("MQTT initial connect failed to %s:%s: %s", MQTT_HOST, MQTT_PORT, e)
+            return
+        self.client.loop_start()
 
     def stop(self):
         try:
@@ -1991,9 +2041,24 @@ class MQTTManager:
         self._publish_availability("online")
         self.republish_all()
 
+    def _on_connect_fail(self, client, userdata):
+        self.connected = False
+        logger.error("MQTT connect failed to %s:%s", MQTT_HOST, MQTT_PORT)
+
     def _on_disconnect(self, client, userdata, disconnect_flags=None, reason_code=None, properties=None):
         self.connected = False
         logger.warning("MQTT disconnected: %s", reason_code)
+
+    def _on_log(self, client, userdata, level, buf):
+        try:
+            msg = str(buf or "").strip()
+        except Exception:
+            msg = ""
+        if not msg:
+            return
+        low = msg.lower()
+        if ("failed" in low) or ("refused" in low) or ("error" in low) or ("unreachable" in low):
+            logger.warning("MQTT log: %s", msg)
 
     def _on_message(self, client, userdata, msg):
         try:

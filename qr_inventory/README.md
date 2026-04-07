@@ -43,6 +43,20 @@ cameras:
 - `debug_zones` ist **global**: wenn z.B. `A1` gesetzt ist, wird Debug für jede Kamera erzeugt, die eine Zone `A1` definiert.
 - Sonderfall: `debug_zones: ["*"]` aktiviert Debug für alle Zonen.
 
+### Alignment Helper
+- Optional einblendbare **zentrierte** Hilfslinie im Overlay.
+- Richtung: `horizontal`, `vertical` oder `both`.
+- Farbe als 6-stelliger Hex-Wert, z.B. `FFFFFF`.
+- Breite über `overlay_alignment_width`.
+
+Beispiel:
+```yaml
+overlay_alignment_enabled: true
+overlay_alignment_color: FF00AA
+overlay_alignment_direction: both
+overlay_alignment_width: 2
+```
+
 ## HTTP Endpoints
 
 - `/{cam_id}/overlay.png` – aktuelles Overlay (falls verfügbar)
