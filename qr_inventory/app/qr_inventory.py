@@ -1,5 +1,6 @@
 import time
 import json
+import copy
 import os
 import sys
 import base64
@@ -426,7 +427,7 @@ def build_detected_list_summary(states: dict):
     groups = {}
     if isinstance(states, dict):
         for cam_id, st in states.items():
-            detections = (st or {}).get("detections") or []
+            detections = (st or {}).get("propagated_detections") or (st or {}).get("detections") or []
             for det in detections:
                 if not isinstance(det, dict):
                     continue
@@ -1936,6 +1937,51 @@ def compute_zone_status(zones_dict: dict, detections: list):
                     status[z] = {"kind": "candidate", "det": d}
     return status
 
+
+
+def _zone_state_signature(zone_state: dict | None):
+    zone_state = zone_state if isinstance(zone_state, dict) else {"kind": "none", "det": None}
+    kind = str(zone_state.get("kind") or "none")
+    det = zone_state.get("det") if isinstance(zone_state.get("det"), dict) else None
+    if kind == "decoded" and det and det.get("payload") is not None:
+        return ("decoded", str(det.get("payload")))
+    if kind == "candidate" and det and (det.get("reason") == "detected_unresolved" or (det.get("points") and not det.get("no_quad"))):
+        return ("candidate", MQTT_STATE_DETECTED_NO_VALUE)
+    return ("none", MQTT_STATE_NONE)
+
+
+def _clone_zone_status(zone_state: dict | None):
+    zone_state = zone_state if isinstance(zone_state, dict) else {"kind": "none", "det": None}
+    try:
+        return copy.deepcopy(zone_state)
+    except Exception:
+        det = zone_state.get("det") if isinstance(zone_state.get("det"), dict) else None
+        return {"kind": str(zone_state.get("kind") or "none"), "det": dict(det) if det else None}
+
+
+def _decoded_detections_from_zone_status(zone_status: dict, cam_id: str | None = None):
+    out = []
+    if not isinstance(zone_status, dict):
+        return out
+    for zone_name, zone_state in zone_status.items():
+        if not isinstance(zone_state, dict):
+            continue
+        if str(zone_state.get("kind") or "none") != "decoded":
+            continue
+        det = zone_state.get("det")
+        if not isinstance(det, dict):
+            continue
+        payload = str(det.get("payload") or "").strip()
+        if not payload:
+            continue
+        item = copy.deepcopy(det)
+        item["zone"] = str(zone_name)
+        item["decoded"] = True
+        if cam_id is not None:
+            item["camera"] = str(cam_id)
+        out.append(item)
+    return out
+
 # ------------------------------------------------------------
 # Overlay rendering
 # ------------------------------------------------------------
@@ -2564,6 +2610,8 @@ class OverlayHandler(BaseHTTPRequestHandler):
                 cams[cid] = {
                     "ts": st.get("ts") or 0,
                     "detections": st.get("detections") or [],
+                    "propagated_detections": st.get("propagated_detections") or [],
+                    "propagated_zone_status": st.get("propagated_zone_status") or {},
                     "frame_info": st.get("frame_info") or {},
                     "camera": {"id": cid, "name": (CAMERAS.get(cid) or {}).get("name") or cid},
                 }
@@ -2625,6 +2673,8 @@ class OverlayHandler(BaseHTTPRequestHandler):
                         "ts": st.get("ts") or 0,
                         "camera": {"id": cid, "name": (CAMERAS.get(cid) or {}).get("name") or cid},
                         "detections": st.get("detections") or [],
+                        "propagated_detections": st.get("propagated_detections") or [],
+                        "propagated_zone_status": st.get("propagated_zone_status") or {},
                         "frame_info": st.get("frame_info") or {},
                     })
 
@@ -2730,6 +2780,45 @@ class CameraWorker(threading.Thread):
         self.stream_info_interval_minutes = int(self.cam.get("stream_info_interval_minutes") or STREAM_INFO_INTERVAL_MINUTES_DEFAULT)
         self.last_stream_info_ts = 0.0
         self.history = defaultdict(lambda: deque(maxlen=max(1, self.required)))
+        self.zone_history = defaultdict(lambda: deque(maxlen=max(1, self.required)))
+        self.propagated_zone_status = {
+            str(zone_name): {"kind": "none", "det": None}
+            for zone_name in ((self.zones.keys() if isinstance(self.zones, dict) else []) or [])
+        }
+
+    def _apply_zone_retention(self, raw_zone_status: dict):
+        stable = {}
+        required_n = max(1, int(self.required or 1))
+        zone_names = set()
+        if isinstance(self.zones, dict):
+            zone_names.update(str(z) for z in self.zones.keys())
+        if isinstance(raw_zone_status, dict):
+            zone_names.update(str(z) for z in raw_zone_status.keys())
+        zone_names.update(str(z) for z in (self.propagated_zone_status or {}).keys())
+
+        for zone_name in sorted(zone_names):
+            raw_state = raw_zone_status.get(zone_name) if isinstance(raw_zone_status, dict) else None
+            if not isinstance(raw_state, dict):
+                raw_state = {"kind": "none", "det": None}
+            sig = _zone_state_signature(raw_state)
+            hist = self.zone_history[zone_name]
+            hist.append(sig)
+
+            prev_state = self.propagated_zone_status.get(zone_name, {"kind": "none", "det": None})
+            if required_n <= 1 or (len(hist) >= required_n and len(set(hist)) == 1):
+                next_state = _clone_zone_status(raw_state)
+                prev_sig = _zone_state_signature(prev_state)
+                if prev_sig != sig:
+                    logger.info(
+                        "Zone propagation updated: cam=%s zone=%s value=%s history=%s",
+                        self.cam_id, zone_name, sig[1], list(hist)
+                    )
+                self.propagated_zone_status[zone_name] = next_state
+                stable[zone_name] = _clone_zone_status(next_state)
+            else:
+                stable[zone_name] = _clone_zone_status(prev_state)
+
+        return stable
 
     def run(self):
         if not self.url:
@@ -2760,7 +2849,8 @@ class CameraWorker(threading.Thread):
                     continue
 
                 detections, zone_only_active = detect_qr(frame, self.cam_id, self.zones, self.restrict_to_zones)
-                zone_status = compute_zone_status(self.zones, detections)
+                raw_zone_status = compute_zone_status(self.zones, detections)
+                zone_status = self._apply_zone_retention(raw_zone_status)
 
                 # stamp camera id onto detections
                 for d in detections:
@@ -2817,10 +2907,14 @@ class CameraWorker(threading.Thread):
                 ts = int(time.time())
 
                 # Persist detections for this camera
+                propagated_detections = _decoded_detections_from_zone_status(zone_status, self.cam_id)
+
                 _write_camera_detections(self.cam_id, {
                     "ts": ts,
                     "camera": {"id": self.cam_id, "name": self.cam_name},
                     "detections": detections,
+                    "propagated_detections": propagated_detections,
+                    "propagated_zone_status": zone_status,
                     "frame_info": fi,
                 })
 
@@ -2831,6 +2925,8 @@ class CameraWorker(threading.Thread):
                         "frame_png": frame_png,
                         "overlay_png": overlay_png,
                         "detections": detections,
+                        "propagated_detections": propagated_detections,
+                        "propagated_zone_status": zone_status,
                         "frame_info": fi,
                     }
                     states_snapshot = {k: (v or {}).copy() for k, v in STATE.items()}
