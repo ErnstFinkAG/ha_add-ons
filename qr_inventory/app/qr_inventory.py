@@ -202,6 +202,10 @@ overlay_margin_px = max(0, _opt_int("overlay_margin_px", 10))
 overlay_detected_list_enabled = _opt_bool("detected_list_enabled", False)
 detected_list_regex = str(opts.get("detected_list_regex") or "").strip()
 DETECTED_LIST_REGEX_TEXT = detected_list_regex
+detected_list_sort_order = str(opts.get("detected_list_sort_order") or "asc").strip().lower()
+if detected_list_sort_order not in ("asc", "desc"):
+    detected_list_sort_order = "asc"
+DETECTED_LIST_SORT_ORDER = detected_list_sort_order
 try:
     DETECTED_LIST_REGEX = re.compile(detected_list_regex) if detected_list_regex else None
 except re.error as e:
@@ -373,6 +377,14 @@ def _natural_sort_key(value: str):
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", s)]
 
 
+def _sort_naturally(values, reverse: bool = False):
+    return sorted(values, key=_natural_sort_key, reverse=bool(reverse))
+
+
+def _detected_list_reverse_sort() -> bool:
+    return str(DETECTED_LIST_SORT_ORDER or "asc").lower() == "desc"
+
+
 def _extract_detected_list_key(payload: str) -> str:
     payload = str(payload or "").strip()
     if not payload:
@@ -394,16 +406,18 @@ def _extract_detected_list_key(payload: str) -> str:
 
 
 def _choose_detected_list_label(group_key: str, payloads) -> str:
-    vals = sorted({str(p).strip() for p in (payloads or []) if str(p).strip()}, key=_natural_sort_key)
+    vals = _sort_naturally({str(p).strip() for p in (payloads or []) if str(p).strip()}, reverse=_detected_list_reverse_sort())
     if not vals:
         return str(group_key or "")
     gk = str(group_key or "").strip()
     starts = [p for p in vals if gk and p.lower().startswith(gk.lower())]
     if starts:
-        return sorted(starts, key=lambda s: (len(s), _natural_sort_key(s)))[0]
+        starts = sorted(starts, key=lambda s: (len(s), _natural_sort_key(s)), reverse=_detected_list_reverse_sort())
+        return starts[0]
     contains = [p for p in vals if gk and gk.lower() in p.lower()]
     if contains:
-        return sorted(contains, key=lambda s: (len(s), _natural_sort_key(s)))[0]
+        contains = sorted(contains, key=lambda s: (len(s), _natural_sort_key(s)), reverse=_detected_list_reverse_sort())
+        return contains[0]
     return vals[0]
 
 
@@ -437,12 +451,13 @@ def build_detected_list_summary(states: dict):
                 item["locations"].add(_camera_location(det_cam_id, zone))
                 item["camera_ids"].add(det_cam_id)
 
+    reverse_sort = _detected_list_reverse_sort()
     items = []
     for group_key, item in groups.items():
-        payloads = sorted(item.get("payloads") or [], key=_natural_sort_key)
-        zones = sorted(item.get("zones") or [], key=_natural_sort_key)
-        locations = sorted(item.get("locations") or [], key=_natural_sort_key)
-        camera_ids = sorted(item.get("camera_ids") or [], key=_natural_sort_key)
+        payloads = _sort_naturally(item.get("payloads") or [], reverse=reverse_sort)
+        zones = _sort_naturally(item.get("zones") or [], reverse=reverse_sort)
+        locations = _sort_naturally(item.get("locations") or [], reverse=reverse_sort)
+        camera_ids = _sort_naturally(item.get("camera_ids") or [], reverse=reverse_sort)
         label = _choose_detected_list_label(group_key, payloads)
         items.append({
             "group_key": str(group_key),
@@ -455,7 +470,10 @@ def build_detected_list_summary(states: dict):
             "location_count": len(locations),
         })
 
-    items.sort(key=lambda x: (_natural_sort_key(x.get("group_key") or ""), _natural_sort_key(x.get("label") or "")))
+    items.sort(
+        key=lambda x: (_natural_sort_key(x.get("group_key") or ""), _natural_sort_key(x.get("label") or "")),
+        reverse=reverse_sort,
+    )
     lines = []
     for item in items:
         members = item.get("members") or []
@@ -466,6 +484,7 @@ def build_detected_list_summary(states: dict):
         "ts": int(time.time()),
         "count": len(items),
         "regex": DETECTED_LIST_REGEX_TEXT or None,
+        "sort_order": DETECTED_LIST_SORT_ORDER,
         "items": items,
         "lines": lines,
         "text": "\n".join(lines),
