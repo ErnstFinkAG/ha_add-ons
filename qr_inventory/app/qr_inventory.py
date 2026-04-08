@@ -628,15 +628,55 @@ def _build_detected_list_print_group(summary: dict, group_key: str, auto_print: 
 # ------------------------------------------------------------
 def _parse_zones(zones_raw):
     """
-    Accepts:
+    Accepts zone definitions in either legacy rectangle form or 4-corner polygon form.
+
+    Supported examples:
+      - dict of {"A1": [x1,y1,x2,y2], ...}  # legacy rectangle
+      - dict of {"A1": [[x1,y1],[x2,y2],[x3,y3],[x4,y4]], ...}  # quadrilateral
       - list of {zone: "A1", rect_px: [x1,y1,x2,y2]}
-      - dict of {"A1": [x1,y1,x2,y2], ...}
-      - legacy dict of {"Z01": [..], ...}
-    Returns dict: zone_name -> [x1,y1,x2,y2] (ints)
+      - list of {zone: "A1", points_px: [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]}
+
+    Returns dict: zone_name -> [[x1,y1],[x2,y2],[x3,y3],[x4,y4]] (ints, ordered clockwise)
     """
     out = {}
     if zones_raw is None:
         return out
+
+    if isinstance(zones_raw, str):
+        try:
+            zones_raw = json.loads(zones_raw) if zones_raw.strip() else {}
+        except Exception:
+            return out
+
+    if isinstance(zones_raw, dict):
+        for k, v in zones_raw.items():
+            pts = _normalize_zone_shape(v)
+            if pts is not None:
+                out[str(k)] = pts
+        return out
+
+    if isinstance(zones_raw, list):
+        for item in zones_raw:
+            if not isinstance(item, dict):
+                continue
+            z = item.get("zone") or item.get("id") or item.get("name")
+            raw_shape = (
+                item.get("points_px")
+                or item.get("points")
+                or item.get("quad_px")
+                or item.get("quad")
+                or item.get("rect_px")
+                or item.get("rect")
+                or item.get("box")
+            )
+            if not z:
+                continue
+            pts = _normalize_zone_shape(raw_shape)
+            if pts is not None:
+                out[str(z)] = pts
+        return out
+
+    return out
 
     if isinstance(zones_raw, str):
         # allow JSON string (legacy)
@@ -971,21 +1011,128 @@ def _pct(score):
     except Exception:
         return None
 
+def _is_number(v):
+    return isinstance(v, (int, float, np.integer, np.floating))
+
+def _order_zone_points(points):
+    try:
+        pts = np.array(points, dtype=np.float32).reshape(-1, 2)
+        if pts.shape[0] != 4:
+            return None
+        center = np.mean(pts, axis=0)
+        angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+        order = np.argsort(angles)
+        pts = pts[order]
+        start = int(np.argmin(np.sum(pts, axis=1)))
+        pts = np.roll(pts, -start, axis=0)
+        return [[int(round(float(x))), int(round(float(y)))] for x, y in pts]
+    except Exception:
+        return None
+
+def _normalize_zone_shape(raw_shape):
+    """
+    Normalize a zone definition to 4 ordered corner points.
+
+    Supported inputs:
+      - [x1,y1,x2,y2]  -> legacy axis-aligned rectangle
+      - [[x1,y1],[x2,y2],[x3,y3],[x4,y4]] -> arbitrary quadrilateral
+    """
+    try:
+        if raw_shape is None:
+            return None
+
+        if isinstance(raw_shape, dict):
+            raw_shape = (
+                raw_shape.get("points_px")
+                or raw_shape.get("points")
+                or raw_shape.get("quad_px")
+                or raw_shape.get("quad")
+                or raw_shape.get("rect_px")
+                or raw_shape.get("rect")
+                or raw_shape.get("box")
+            )
+
+        if isinstance(raw_shape, (list, tuple)) and len(raw_shape) == 4 and all(_is_number(v) for v in raw_shape):
+            x1, y1, x2, y2 = [int(round(float(v))) for v in raw_shape]
+            xmin, xmax = sorted((x1, x2))
+            ymin, ymax = sorted((y1, y2))
+            return [[xmin, ymin], [xmax, ymin], [xmax, ymax], [xmin, ymax]]
+
+        if isinstance(raw_shape, (list, tuple)) and len(raw_shape) == 4:
+            pts = []
+            for p in raw_shape:
+                if not isinstance(p, (list, tuple)) or len(p) != 2:
+                    return None
+                pts.append([int(round(float(p[0]))), int(round(float(p[1])))])
+            return _order_zone_points(pts)
+
+        return None
+    except Exception:
+        return None
+
+def _zone_points(zone_shape):
+    pts = _normalize_zone_shape(zone_shape)
+    return pts if pts is not None else None
+
+def _zone_bbox(zone_shape):
+    pts = _zone_points(zone_shape)
+    if not pts:
+        return None
+    arr = np.array(pts, dtype=np.float32).reshape(-1, 2)
+    x1 = int(np.floor(np.min(arr[:, 0])))
+    y1 = int(np.floor(np.min(arr[:, 1])))
+    x2 = int(np.ceil(np.max(arr[:, 0])))
+    y2 = int(np.ceil(np.max(arr[:, 1])))
+    return [x1, y1, x2, y2]
+
+def _zone_centroid(zone_shape):
+    pts = _zone_points(zone_shape)
+    if not pts:
+        return None
+    arr = np.array(pts, dtype=np.float32).reshape(-1, 2)
+    c = np.mean(arr, axis=0)
+    return [int(round(float(c[0]))), int(round(float(c[1])))]
+
+def _point_in_zone(x: float, y: float, zone_shape) -> bool:
+    pts = _zone_points(zone_shape)
+    if not pts:
+        return False
+    try:
+        contour = np.array(pts, dtype=np.float32).reshape(-1, 1, 2)
+        return cv2.pointPolygonTest(contour, (float(x), float(y)), False) >= 0
+    except Exception:
+        return False
+
 def _bbox_overlap_ratio_with_zone(pts_full: np.ndarray, zone_box):
     try:
-        pts = np.array(pts_full, dtype=np.float32).reshape(-1, 2)
-        if pts.shape[0] != 4:
+        det_pts = np.array(pts_full, dtype=np.float32).reshape(-1, 2)
+        zone_pts = _zone_points(zone_box)
+        if det_pts.shape[0] != 4 or not zone_pts:
             return 0.0
-        x1, y1, x2, y2 = map(float, zone_box)
-        minx = float(np.min(pts[:, 0])); maxx = float(np.max(pts[:, 0]))
-        miny = float(np.min(pts[:, 1])); maxy = float(np.max(pts[:, 1]))
-        bw = max(1.0, maxx - minx)
-        bh = max(1.0, maxy - miny)
-        bbox_area = bw * bh
-        ix1 = max(minx, x1); iy1 = max(miny, y1)
-        ix2 = min(maxx, x2); iy2 = min(maxy, y2)
-        inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
-        return float(inter / bbox_area) if bbox_area > 0 else 0.0
+
+        zone_pts = np.array(zone_pts, dtype=np.float32).reshape(-1, 2)
+
+        minx = int(np.floor(min(np.min(det_pts[:, 0]), np.min(zone_pts[:, 0])))) - 1
+        miny = int(np.floor(min(np.min(det_pts[:, 1]), np.min(zone_pts[:, 1])))) - 1
+        maxx = int(np.ceil(max(np.max(det_pts[:, 0]), np.max(zone_pts[:, 0])))) + 1
+        maxy = int(np.ceil(max(np.max(det_pts[:, 1]), np.max(zone_pts[:, 1])))) + 1
+
+        w = max(1, maxx - minx + 1)
+        h = max(1, maxy - miny + 1)
+
+        det_local = np.round(det_pts - np.array([minx, miny], dtype=np.float32)).astype(np.int32).reshape(-1, 1, 2)
+        zone_local = np.round(zone_pts - np.array([minx, miny], dtype=np.float32)).astype(np.int32).reshape(-1, 1, 2)
+
+        det_mask = np.zeros((h, w), dtype=np.uint8)
+        zone_mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.fillPoly(det_mask, [det_local], 255)
+        cv2.fillPoly(zone_mask, [zone_local], 255)
+
+        det_area = int(np.count_nonzero(det_mask))
+        if det_area <= 0:
+            return 0.0
+        inter = int(np.count_nonzero((det_mask > 0) & (zone_mask > 0)))
+        return float(inter) / float(det_area)
     except Exception:
         return 0.0
 
@@ -1607,8 +1754,13 @@ def _set_debug(cam_id: str, zone: str, debug_json: dict, roi: np.ndarray,
 # ------------------------------------------------------------
 def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
     H, W = frame_gray.shape[:2]
+    zone_pts = _zone_points(box)
+    zone_bbox = _zone_bbox(zone_pts)
+    if not zone_pts or not zone_bbox:
+        return None, None
+
     try:
-        zx1, zy1, zx2, zy2 = map(int, box)
+        zx1, zy1, zx2, zy2 = map(int, zone_bbox)
     except Exception:
         return None, None
 
@@ -1621,6 +1773,8 @@ def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int,
 
     zone_w = max(1, zx2 - zx1)
     zone_h = max(1, zy2 - zy1)
+    zone_center = _zone_centroid(zone_pts) or [int((zx1 + zx2) / 2), int((zy1 + zy2) / 2)]
+
     roi = frame_gray[y1p:y2p, x1p:x2p]
     if roi.size == 0:
         return None, None
@@ -1631,7 +1785,6 @@ def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int,
 
     clip_analysis_roi = _roi_clip_analysis(roi, margin_px=6)
 
-    # Cut out QR-like component and add a white "quiet zone" border before decoding.
     if enable_cutout:
         roi_decode, cutout = _qr_cutout_with_border(roi)
     else:
@@ -1654,13 +1807,8 @@ def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int,
     cutout["crop_box"] = [x0, y0, x1, y1]
     border = int(cutout.get("border_px") or 0)
 
-    # Clipping analysis:
-    # - For overlay/debug, analyze the *decode image* (includes added white border),
-    #   so we don't falsely flag "clipped" just because there was no quiet zone.
     clip_analysis = _roi_clip_analysis(roi_decode, margin_px=6) if roi_decode is not None and roi_decode.size else clip_analysis_roi
 
-    # More meaningful "clipped" signal when cutout is used:
-    # If the cutout bbox touches the *original ROI* edge, we likely cropped the QR.
     touch_roi_edge = False
     try:
         mpx = 6
@@ -1672,14 +1820,11 @@ def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int,
 
     clipped = (bool(touch_roi_edge) if bool(cutout.get("used_candidate")) else False) if enable_cutout else bool(clip_analysis_roi.get("clipped"))
 
-    # If we have a detected quad (blue border), ZBar can sometimes decode best at 1.0x.
-    # Many configs start at 2.0x; prepend 1.0x only for detected-quads to avoid extra work everywhere.
     scales_eff = list(scales) if isinstance(scales, (list, tuple)) else [float(scales)]
     try:
         if enable_cutout and (cutout.get("detect_quad") is not None):
             if 1.0 not in scales_eff:
                 scales_eff = [1.0] + scales_eff
-        # de-dup while keeping order
         _seen = set()
         scales_eff = [float(s) for s in scales_eff if not (float(s) in _seen or _seen.add(float(s)))]
     except Exception:
@@ -1688,6 +1833,8 @@ def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int,
     dbg = {
         "camera": str(cam_id),
         "zone": zname,
+        "zone_points": zone_pts,
+        "zone_bbox": zone_bbox,
         "roi_shape": list(roi.shape),
         "roi_pad_px": pad_px,
         "roi_stats": {"lap_var": lap, "contrast": con, "bright_clip": bright, "dark_clip": dark},
@@ -1704,7 +1851,6 @@ def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int,
 
     best_pre = None
 
-    # ZBar first
     for sc in scales_eff:
         for scale_tag, roi_s in _scaled_versions(roi_decode, sc):
             for pre_name, v in _preprocess_gray_variants(roi_s):
@@ -1752,10 +1898,10 @@ def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int,
                 pts_full = pts_roi + np.array([x1p, y1p], dtype=np.float32)
                 cx = int(np.mean(pts_full[:, 0])); cy = int(np.mean(pts_full[:, 1]))
 
-                if not (zx1 <= cx <= zx2 and zy1 <= cy <= zy2):
+                if not _point_in_zone(cx, cy, zone_pts):
                     continue
 
-                ov = _bbox_overlap_ratio_with_zone(pts_full, (zx1, zy1, zx2, zy2))
+                ov = _bbox_overlap_ratio_with_zone(pts_full, zone_pts)
                 if ov < float(zone_quad_in_zone_min_ratio):
                     continue
 
@@ -1777,13 +1923,11 @@ def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int,
                 _set_debug(cam_id, zname, dbg, roi, best_pre, marked_roi, marked_best)
                 return det, None
 
-    # fallback
     reason = _failure_reason(zone_w, zone_h, lap, con, bright, dark, clipped)
     if enable_cutout and (not bool(cutout.get("used_candidate"))) and reason == "decode_failed":
         reason = "no_candidate"
     score = _certainty_score(float(min(zone_w, zone_h)), lap, con)
 
-    # If OpenCV localization found a QR quad (even if decoding failed), keep it as a candidate.
     cand_pts_full = None
     cand_edge_px = None
     cand_ov = None
@@ -1792,24 +1936,21 @@ def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int,
         if dq is not None:
             pts_roi = np.array(dq, dtype=np.float32).reshape(-1, 2)
             if pts_roi.shape[0] == 4:
-                # Clamp to ROI bounds
                 pts_roi[:, 0] = np.clip(pts_roi[:, 0], 0, roi.shape[1] - 1)
                 pts_roi[:, 1] = np.clip(pts_roi[:, 1], 0, roi.shape[0] - 1)
                 pts_full = pts_roi + np.array([x1p, y1p], dtype=np.float32)
 
                 cx_det = int(np.mean(pts_full[:, 0])); cy_det = int(np.mean(pts_full[:, 1]))
-                ov_det = _bbox_overlap_ratio_with_zone(pts_full, (zx1, zy1, zx2, zy2))
-                if (zx1 <= cx_det <= zx2 and zy1 <= cy_det <= zy2) and (ov_det >= float(zone_quad_in_zone_min_ratio)):
+                ov_det = _bbox_overlap_ratio_with_zone(pts_full, zone_pts)
+                if _point_in_zone(cx_det, cy_det, zone_pts) and (ov_det >= float(zone_quad_in_zone_min_ratio)):
                     cand_pts_full = pts_full
                     cand_edge_px = _edge_px_from_quad(pts_full)
                     cand_ov = ov_det
                     score = _certainty_score(cand_edge_px, lap, con)
-                    # If we have a quad but no decode, label it clearly.
                     if reason in ("decode_failed", "no_candidate", "too_small", "roi_clipped"):
                         reason = "detected_unresolved"
     except Exception:
         pass
-
 
     if opencv_subprocess_fallback and reason in ("decode_failed", "roi_clipped", "no_candidate", "detected_unresolved"):
         tries = 0
@@ -1833,9 +1974,9 @@ def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int,
                         pts_roi[:, 1] = pts_roi[:, 1] - float(border) + float(y0)
                         pts_full = pts_roi + np.array([x1p, y1p], dtype=np.float32)
                         cx = int(np.mean(pts_full[:, 0])); cy = int(np.mean(pts_full[:, 1]))
-                        if not (zx1 <= cx <= zx2 and zy1 <= cy <= zy2):
+                        if not _point_in_zone(cx, cy, zone_pts):
                             continue
-                        ov = _bbox_overlap_ratio_with_zone(pts_full, (zx1, zy1, zx2, zy2))
+                        ov = _bbox_overlap_ratio_with_zone(pts_full, zone_pts)
                         if ov < float(zone_quad_in_zone_min_ratio):
                             continue
 
@@ -1869,7 +2010,7 @@ def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int,
         miss_no_quad = False
         miss_diag = {"lap_var": lap, "contrast": con, "src": "qrdetect", "clipped": clipped, "edge_px": cand_edge_px, "zone_ov": cand_ov}
     else:
-        miss_centroid = [int((zx1 + zx2) / 2), int((zy1 + zy2) / 2)]
+        miss_centroid = zone_center
         miss_points = None
         miss_no_quad = True
         miss_diag = {"lap_var": lap, "contrast": con, "src": "miss", "clipped": clipped}
@@ -1890,7 +2031,6 @@ def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int,
     marked_best = _mark_clipping(best_pre, _roi_clip_analysis(best_pre, margin_px=6)) if best_pre is not None else None
     _set_debug(cam_id, zname, dbg, roi, best_pre, marked_roi, marked_best)
     return None, miss
-
 # ------------------------------------------------------------
 # Detection entrypoint
 # ------------------------------------------------------------
@@ -2043,8 +2183,6 @@ def draw_overlay(frame, detections, zones_dict):
 
     zone_status = compute_zone_status(zones_dict, detections) if overlay_show_zone_status else {}
 
-    # Fill the "gap" between the zone rectangle and an unresolved detected quad.
-    # This is purely visual: it helps confirm how much non-QR area is inside the scan zone.
     if overlay_fill_unresolved_gap and overlay_show_unresolved_quads and isinstance(zones_dict, dict) and zones_dict and isinstance(zone_status, dict) and zone_status:
         alpha = float(overlay_fill_unresolved_alpha)
         alpha = max(0.0, min(0.85, alpha))
@@ -2061,12 +2199,16 @@ def draw_overlay(frame, detections, zones_dict):
             if not pts_list or zname not in zones_dict:
                 continue
 
+            zone_pts = _zone_points(zones_dict.get(zname))
+            zone_bbox = _zone_bbox(zone_pts)
+            if not zone_pts or not zone_bbox:
+                continue
+
             try:
-                x1, y1, x2, y2 = map(int, zones_dict[zname])
+                x1, y1, x2, y2 = map(int, zone_bbox)
             except Exception:
                 continue
 
-            # Clamp and slice the zone region (avoid allocating full-frame masks on 16k frames).
             x1c = max(0, min(w - 1, x1))
             y1c = max(0, min(h - 1, y1))
             x2c = max(0, min(w - 1, x2))
@@ -2074,8 +2216,9 @@ def draw_overlay(frame, detections, zones_dict):
             if x2c <= x1c or y2c <= y1c:
                 continue
 
-            pts = np.array(pts_list, dtype=np.int32).reshape(-1, 1, 2)
-            if pts.shape[0] != 4:
+            zone_poly = np.array(zone_pts, dtype=np.int32).reshape(-1, 1, 2)
+            det_poly = np.array(pts_list, dtype=np.int32).reshape(-1, 1, 2)
+            if zone_poly.shape[0] != 4 or det_poly.shape[0] != 4:
                 continue
 
             sub = out[y1c:y2c + 1, x1c:x2c + 1]
@@ -2083,15 +2226,20 @@ def draw_overlay(frame, detections, zones_dict):
             if sh < 2 or sw < 2:
                 continue
 
-            pts_sub = pts.copy()
-            pts_sub[:, :, 0] -= int(x1c)
-            pts_sub[:, :, 1] -= int(y1c)
+            zone_sub = zone_poly.copy()
+            zone_sub[:, :, 0] -= int(x1c)
+            zone_sub[:, :, 1] -= int(y1c)
 
-            poly_mask = np.zeros((sh, sw), dtype=np.uint8)
-            cv2.fillPoly(poly_mask, [pts_sub], 255)
+            det_sub = det_poly.copy()
+            det_sub[:, :, 0] -= int(x1c)
+            det_sub[:, :, 1] -= int(y1c)
 
-            # Outside the quad (within the zone rectangle) -> fill with semi-transparent BLUE
-            m = (poly_mask == 0)
+            zone_mask = np.zeros((sh, sw), dtype=np.uint8)
+            det_mask = np.zeros((sh, sw), dtype=np.uint8)
+            cv2.fillPoly(zone_mask, [zone_sub], 255)
+            cv2.fillPoly(det_mask, [det_sub], 255)
+
+            m = (zone_mask > 0) & (det_mask == 0)
             if not np.any(m):
                 continue
 
@@ -2102,13 +2250,15 @@ def draw_overlay(frame, detections, zones_dict):
 
     if isinstance(zones_dict, dict) and zones_dict:
         for zname, box in zones_dict.items():
-            try:
-                x1, y1, x2, y2 = map(int, box)
-            except Exception:
+            zone_pts = _zone_points(box)
+            zone_bbox = _zone_bbox(zone_pts)
+            if not zone_pts or not zone_bbox:
                 continue
 
-            cv2.rectangle(out, (x1, y1), (x2, y2), ORANGE, 2)
+            pts = np.array(zone_pts, dtype=np.int32).reshape(-1, 1, 2)
+            cv2.polylines(out, [pts], isClosed=True, color=ORANGE, thickness=2)
 
+            x1, y1, x2, y2 = zone_bbox
             zl = _safe_label(str(zname), 32)
             (tw, th), base = cv2.getTextSize(zl, font, 0.55, 2)
             zbx2 = min(w - 1, x1 + tw + pad * 2)
@@ -2157,9 +2307,6 @@ def draw_overlay(frame, detections, zones_dict):
             cv2.rectangle(out, (x1, sy1), (sx2, sy2), bg, -1)
             cv2.putText(out, text, (x1 + pad, sy1 + sth + pad), font, 0.5, fg, 1, cv2.LINE_AA)
 
-    # Draw quads:
-    # - decoded -> red
-    # - detected-but-unresolved (has points but decoded=False) -> blue
     for d in detections:
         pts_list = d.get("points")
         if not pts_list or d.get("no_quad"):
