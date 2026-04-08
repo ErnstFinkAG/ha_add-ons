@@ -121,6 +121,18 @@ detected_list_sort_order: asc
 - `detected_list_sort_order`: `asc` oder `desc`
 - basiert auf **live** propagierten Werten, nicht auf persistenter Historie
 
+## Performance / Parallelisierung
+
+```yaml
+zone_worker_processes: 0
+zone_parallel_min_zones: 3
+```
+
+- `zone_worker_processes`: `0` = Auto, `1` = seriell, `N` = feste Anzahl Worker-Prozesse **pro Kamera**
+- `zone_parallel_min_zones`: ab wie vielen definierten Zonen die Parallelisierung aktiviert wird
+- Die Kamera erfasst weiterhin **einen** Frame pro Zyklus und verteilt danach die Zonen-Scans auf Worker-Prozesse
+- Debug-Zonen laufen absichtlich seriell, damit die Debug-Bilder erhalten bleiben
+
 HTTP:
 - `/detected-list.json`
 - `/detected-list` (HTML-Suchseite)

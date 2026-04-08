@@ -1,5 +1,5 @@
 name: QR Inventory
-version: "0.6.5.1"
+version: "0.6.6.0"
 slug: qr_inventory
 description: "Scan QR codes from one or more RTSPS/RTSP cameras, map them to storage zones, and serve per-camera overlay/debug endpoints via HTTP."
 arch:
@@ -113,6 +113,10 @@ options:
   detected_list_sort_order: asc
   zone_multi_value_separator: " | "
 
+  # Zone scan parallelism. 0 = auto, 1 = serial, N = fixed worker processes per camera.
+  zone_worker_processes: 0
+  zone_parallel_min_zones: 3
+
   stream_info_interval_minutes: 0
 
 schema:
@@ -213,5 +217,8 @@ schema:
   detected_list_regex: str?
   detected_list_sort_order: list(asc|desc)
   zone_multi_value_separator: str
+
+  zone_worker_processes: int
+  zone_parallel_min_zones: int
 
   stream_info_interval_minutes: int

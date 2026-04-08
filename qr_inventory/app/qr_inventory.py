@@ -9,6 +9,8 @@ import logging
 import re
 import subprocess
 import threading
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from collections import deque, defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, unquote, parse_qs, quote
@@ -212,7 +214,22 @@ zone_multi_value_separator = str(opts.get("zone_multi_value_separator") or " | "
 if zone_multi_value_separator == "":
     zone_multi_value_separator = " | "
 ZONE_MULTI_VALUE_SEPARATOR = zone_multi_value_separator
-ZONE_MULTI_MAX_ITERATIONS = max(1, _opt_int("zone_multi_max_iterations", 6))
+zone_worker_processes = max(0, _opt_int("zone_worker_processes", 0))
+zone_parallel_min_zones = max(2, _opt_int("zone_parallel_min_zones", 3))
+ZONE_WORKER_PROCESSES = zone_worker_processes
+ZONE_PARALLEL_MIN_ZONES = zone_parallel_min_zones
+try:
+    _ZONE_MP_CTX = mp.get_context("spawn")
+except Exception:
+    try:
+        _ZONE_MP_CTX = mp.get_context()
+    except Exception:
+        _ZONE_MP_CTX = None
+try:
+    _CPU_COUNT = max(1, int(os.cpu_count() or 1))
+except Exception:
+    _CPU_COUNT = 1
+ZONE_WORKER_AUTO_MAX = max(1, min(8, _CPU_COUNT))
 try:
     DETECTED_LIST_REGEX = re.compile(detected_list_regex) if detected_list_regex else None
 except re.error as e:
@@ -2135,33 +2152,6 @@ def _dedupe_zone_detections(detections):
     return sorted(best.values(), key=_zone_detection_sort_key)
 
 
-def _mask_detected_quad_in_frame(frame_gray: np.ndarray, det: dict, pad_px: int = 12):
-    try:
-        pts_list = (det or {}).get("points")
-        if not pts_list:
-            return False
-        pts = np.array(pts_list, dtype=np.float32).reshape(-1, 2)
-        if pts.shape[0] != 4:
-            return False
-        h, w = frame_gray.shape[:2]
-        pts[:, 0] = np.clip(pts[:, 0], 0, max(0, w - 1))
-        pts[:, 1] = np.clip(pts[:, 1], 0, max(0, h - 1))
-
-        mask = np.zeros((h, w), dtype=np.uint8)
-        poly = pts.astype(np.int32).reshape(-1, 1, 2)
-        cv2.fillPoly(mask, [poly], 255)
-
-        if pad_px > 0:
-            k = max(1, int(pad_px) * 2 + 1)
-            kernel = np.ones((k, k), np.uint8)
-            mask = cv2.dilate(mask, kernel, iterations=1)
-
-        frame_gray[mask > 0] = 255
-        return True
-    except Exception:
-        return False
-
-
 def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
     H, W = frame_gray.shape[:2]
     zone_pts = _zone_points(box)
@@ -2189,7 +2179,6 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
     con = _contrast_std(roi)
     found = []
 
-    # Fast path: collect any symbols ZBar can decode from the whole ROI in one pass.
     for sc in (scales if isinstance(scales, (list, tuple)) else [float(scales)]):
         for scale_tag, roi_s in _scaled_versions(roi, sc):
             try:
@@ -2245,32 +2234,87 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
                         "decoded": True,
                     })
 
-    found = _dedupe_zone_detections(found)
+    return _dedupe_zone_detections(found)
 
-    # Robust path: iteratively run the existing single-code detector, masking each
-    # resolved quad before the next pass. This finds additional QRs that do not
-    # decode in a single multi-symbol ZBar pass.
-    working_gray = frame_gray.copy()
-    for det in found:
-        _mask_detected_quad_in_frame(working_gray, det, pad_px=max(8, int(roi_padding_px // 2)))
 
-    tries = 0
-    while tries < int(ZONE_MULTI_MAX_ITERATIONS):
-        tries += 1
-        det, _miss = _scan_zone_single(working_gray, cam_id, zname, box, pad_px, scales)
-        if not det or not isinstance(det, dict) or not det.get("decoded"):
-            break
+def _translate_zone_shape(shape, dx: int, dy: int):
+    pts = _zone_points(shape)
+    if not pts:
+        return shape
+    return [[int(round(float(p[0]) - dx)), int(round(float(p[1]) - dy))] for p in pts]
 
-        merged = _dedupe_zone_detections(found + [det])
-        if len(merged) == len(found):
-            # Same code rediscovered; stop to avoid looping.
-            break
 
-        found = merged
-        if not _mask_detected_quad_in_frame(working_gray, det, pad_px=max(8, int(roi_padding_px // 2))):
-            break
+def _offset_detection_geometry(det: dict | None, dx: int, dy: int):
+    if not isinstance(det, dict):
+        return det
+    out = copy.deepcopy(det)
+    pts = out.get("points")
+    if isinstance(pts, list):
+        new_pts = []
+        for p in pts:
+            if isinstance(p, (list, tuple)) and len(p) >= 2:
+                try:
+                    new_pts.append([float(p[0]) + dx, float(p[1]) + dy])
+                except Exception:
+                    new_pts.append(p)
+            else:
+                new_pts.append(p)
+        out["points"] = new_pts
+    centroid = out.get("centroid")
+    if isinstance(centroid, (list, tuple)) and len(centroid) >= 2:
+        try:
+            out["centroid"] = [int(round(float(centroid[0]) + dx)), int(round(float(centroid[1]) + dy))]
+        except Exception:
+            pass
+    return out
 
-    return found
+
+def _build_zone_worker_task(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
+    try:
+        H, W = frame_gray.shape[:2]
+        zone_pts = _zone_points(box)
+        zone_bbox = _zone_bbox(zone_pts)
+        if not zone_pts or not zone_bbox:
+            return None
+        zx1, zy1, zx2, zy2 = map(int, zone_bbox)
+        x1p = max(0, zx1 - pad_px)
+        y1p = max(0, zy1 - pad_px)
+        x2p = min(W - 1, zx2 + pad_px)
+        y2p = min(H - 1, zy2 + pad_px)
+        if x2p <= x1p or y2p <= y1p:
+            return None
+        roi = frame_gray[y1p:y2p, x1p:x2p]
+        if roi is None or roi.size == 0:
+            return None
+        return {
+            "cam_id": str(cam_id),
+            "zone_name": str(zname),
+            "local_box": _translate_zone_shape(box, x1p, y1p),
+            "offset": [int(x1p), int(y1p)],
+            "roi": np.ascontiguousarray(roi),
+            "scales": [float(s) for s in (scales if isinstance(scales, (list, tuple)) else [float(scales)])],
+        }
+    except Exception:
+        return None
+
+
+def _scan_zone_worker_task(task: dict):
+    cam_id = str((task or {}).get("cam_id") or "cam")
+    zname = str((task or {}).get("zone_name") or "zone")
+    dx, dy = ((task or {}).get("offset") or [0, 0])[:2]
+    roi = (task or {}).get("roi")
+    local_box = (task or {}).get("local_box")
+    scales = (task or {}).get("scales") or [2.0]
+    t0 = time.perf_counter()
+    decs, miss = scan_zone(roi, cam_id, zname, local_box, 0, scales)
+    decs = [_offset_detection_geometry(d, int(dx), int(dy)) for d in (decs or [])]
+    miss = _offset_detection_geometry(miss, int(dx), int(dy)) if miss is not None else None
+    return {
+        "zone_name": zname,
+        "decs": decs,
+        "miss": miss,
+        "elapsed_ms": round((time.perf_counter() - t0) * 1000.0, 1),
+    }
 
 
 def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
@@ -2689,7 +2733,11 @@ class MQTTManager:
         self.lock = threading.Lock()
         self.zone_cache = {}
         self.discovery_payloads = {}
+        self.discovery_published = set()
+        self.published_zone_payloads = {}
         self.detected_list_cache = build_detected_list_summary({})
+        self.detected_list_discovery_published = False
+        self.published_detected_list = None
         self._build_zone_cache()
 
     def _build_zone_cache(self):
@@ -2779,7 +2827,7 @@ class MQTTManager:
             },
         }
 
-    def _publish_detected_list_sensor(self, summary: dict):
+    def _publish_detected_list_sensor(self, summary: dict, force_discovery: bool = False, force_state: bool = False):
         if self.client is None or not self.connected or not overlay_detected_list_enabled:
             return
         attrs = {
@@ -2790,13 +2838,22 @@ class MQTTManager:
             "text": summary.get("text") or "",
             "ts": int(summary.get("ts") or time.time()),
         }
+        state_payload = str(int(summary.get("count") or 0))
+        compare_payload = {
+            "state": state_payload,
+            "attributes": {k: v for k, v in attrs.items() if k != "ts"},
+        }
+        if (not force_state) and self.published_detected_list == compare_payload:
+            return
         try:
-            self.client.publish(
-                self._detected_list_discovery_topic(),
-                payload=json.dumps(self._detected_list_discovery_payload(), ensure_ascii=False),
-                qos=MQTT_QOS,
-                retain=True,
-            )
+            if force_discovery or (not self.detected_list_discovery_published):
+                self.client.publish(
+                    self._detected_list_discovery_topic(),
+                    payload=json.dumps(self._detected_list_discovery_payload(), ensure_ascii=False),
+                    qos=MQTT_QOS,
+                    retain=True,
+                )
+                self.detected_list_discovery_published = True
             self.client.publish(
                 self._detected_list_attributes_topic(),
                 payload=json.dumps(attrs, ensure_ascii=False),
@@ -2805,10 +2862,11 @@ class MQTTManager:
             )
             self.client.publish(
                 self._detected_list_state_topic(),
-                payload=str(int(summary.get("count") or 0)),
+                payload=state_payload,
                 qos=MQTT_QOS,
                 retain=False,
             )
+            self.published_detected_list = compare_payload
         except Exception:
             logger.exception("MQTT publish failed for detected list")
 
@@ -2910,18 +2968,22 @@ class MQTTManager:
         except Exception:
             logger.exception("MQTT availability publish failed")
 
-    def _publish_sensor(self, cam_id: str, cam_name: str, zone_name: str, payload: dict):
+    def _publish_sensor(self, cam_id: str, cam_name: str, zone_name: str, payload: dict, force_discovery: bool = False, force_state: bool = False):
         if self.client is None or not self.connected:
             return
         key = self._sensor_key(cam_id, zone_name)
         discovery_payload = self.discovery_payloads.get(key) or self._discovery_payload(cam_id, cam_name, zone_name)
+        if (not force_state) and self.published_zone_payloads.get(key) == payload:
+            return
         try:
-            self.client.publish(
-                self._discovery_topic(cam_name, zone_name),
-                payload=json.dumps(discovery_payload, ensure_ascii=False),
-                qos=MQTT_QOS,
-                retain=True,
-            )
+            if force_discovery or (key not in self.discovery_published):
+                self.client.publish(
+                    self._discovery_topic(cam_name, zone_name),
+                    payload=json.dumps(discovery_payload, ensure_ascii=False),
+                    qos=MQTT_QOS,
+                    retain=True,
+                )
+                self.discovery_published.add(key)
             self.client.publish(
                 self._attributes_topic(cam_id, zone_name),
                 payload=json.dumps(payload.get("attributes") or {}, ensure_ascii=False),
@@ -2934,6 +2996,7 @@ class MQTTManager:
                 qos=MQTT_QOS,
                 retain=MQTT_RETAIN,
             )
+            self.published_zone_payloads[key] = copy.deepcopy(payload)
         except Exception:
             logger.exception("MQTT publish failed for camera=%s zone=%s", cam_id, zone_name)
 
@@ -2947,8 +3010,8 @@ class MQTTManager:
             cam_id, zone_name = key.split("::", 1)
             cam = self.cameras.get(cam_id) or {}
             cam_name = str(cam.get("name") or cam_id)
-            self._publish_sensor(cam_id, cam_name, zone_name, payload)
-        self._publish_detected_list_sensor(detected_list_cache)
+            self._publish_sensor(cam_id, cam_name, zone_name, payload, force_discovery=True, force_state=True)
+        self._publish_detected_list_sensor(detected_list_cache, force_discovery=True, force_state=True)
 
     def publish_camera_zone_states(self, cam_id: str, cam_name: str, zones_dict: dict, zone_status: dict):
         if not self.enabled or not isinstance(zones_dict, dict):
@@ -3077,7 +3140,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
         if PRIMARY_CAMERA_ID:
             if path in ("/overlay.png", f"/{OVERLAY_PNG_NAME}"):
                 st = _get_cam_state(PRIMARY_CAMERA_ID)
-                b = st.get("overlay_png")
+                b = st.get("overlay_png") or st.get("frame_png")
                 if not b:
                     return self._send(503, "text/plain; charset=utf-8", b"overlay not ready")
                 return self._send(200, "image/png", b)
@@ -3096,7 +3159,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
             if cid in CAMERAS:
                 st = _get_cam_state(cid)
                 if len(parts) == 2 and parts[1] == "overlay.png":
-                    b = st.get("overlay_png")
+                    b = st.get("overlay_png") or st.get("frame_png")
                     if not b:
                         return self._send(503, "text/plain; charset=utf-8", b"overlay not ready")
                     return self._send(200, "image/png", b)
@@ -3122,7 +3185,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
                 cid = cid[:-4]
             if cid in CAMERAS:
                 st = _get_cam_state(cid)
-                b = st.get("overlay_png")
+                b = st.get("overlay_png") or st.get("frame_png")
                 if not b:
                     return self._send(503, "text/plain; charset=utf-8", b"overlay not ready")
                 return self._send(200, "image/png", b)
@@ -3222,6 +3285,112 @@ class CameraWorker(threading.Thread):
             str(zone_name): {"kind": "none", "det": None, "dets": []}
             for zone_name in ((self.zones.keys() if isinstance(self.zones, dict) else []) or [])
         }
+        self.zone_worker_processes = self._resolve_zone_worker_count()
+        self.zone_pool = None
+
+    def _resolve_zone_worker_count(self) -> int:
+        zone_count = len(self.zones) if isinstance(self.zones, dict) else 0
+        if zone_count < max(1, int(ZONE_PARALLEL_MIN_ZONES)):
+            return 1
+        requested = int(ZONE_WORKER_PROCESSES or 0)
+        if requested == 1:
+            return 1
+        if _ZONE_MP_CTX is None:
+            return 1
+        if requested <= 0:
+            return max(1, min(zone_count, max(1, _CPU_COUNT - 1), 4))
+        return max(1, min(zone_count, requested))
+
+    def _ensure_zone_pool(self):
+        if self.zone_pool is not None or self.zone_worker_processes <= 1:
+            return
+        if _ZONE_MP_CTX is None:
+            logger.warning("Camera %s: multiprocessing context unavailable; falling back to serial zone scans", self.cam_id)
+            self.zone_worker_processes = 1
+            return
+        try:
+            self.zone_pool = ProcessPoolExecutor(max_workers=int(self.zone_worker_processes), mp_context=_ZONE_MP_CTX)
+            logger.info("Camera %s zone worker pool started with %s processes", self.cam_id, self.zone_worker_processes)
+        except Exception as e:
+            logger.warning("Camera %s: failed to start zone worker pool (%s); falling back to serial scans", self.cam_id, e)
+            self.zone_pool = None
+            self.zone_worker_processes = 1
+
+    def _scan_zones(self, frame_gray: np.ndarray):
+        zones_ok = isinstance(self.zones, dict) and bool(self.zones)
+        if self.restrict_to_zones and not zones_ok:
+            return [], True, []
+        if not zones_ok:
+            return [], False, []
+
+        pad = max(0, int(roi_padding_px))
+        scales = _dedupe_sorted(ROI_SCALES + ZONE_EXTRA_SCALES) or [2.0, 3.0, 4.0, 6.0, 8.0, 10.0]
+        ordered_zone_names = [str(z) for z in self.zones.keys()]
+        results_by_zone = {}
+        zone_timings = []
+
+        can_parallel = (
+            self.zone_worker_processes > 1 and
+            len(ordered_zone_names) >= max(1, int(ZONE_PARALLEL_MIN_ZONES)) and
+            _ZONE_MP_CTX is not None
+        )
+        serial_zone_names = []
+        parallel_tasks = []
+
+        if can_parallel:
+            self._ensure_zone_pool()
+            can_parallel = self.zone_pool is not None
+
+        if can_parallel:
+            for zname in ordered_zone_names:
+                box = self.zones.get(zname)
+                if _debug_enabled_for_zone(zname):
+                    serial_zone_names.append(zname)
+                    continue
+                task = _build_zone_worker_task(frame_gray, self.cam_id, zname, box, pad, scales)
+                if task is None:
+                    serial_zone_names.append(zname)
+                else:
+                    parallel_tasks.append(task)
+        else:
+            serial_zone_names = list(ordered_zone_names)
+
+        if parallel_tasks and self.zone_pool is not None:
+            future_to_zone = {self.zone_pool.submit(_scan_zone_worker_task, task): task["zone_name"] for task in parallel_tasks}
+            for fut in as_completed(future_to_zone):
+                zname = future_to_zone[fut]
+                try:
+                    res = fut.result()
+                    results_by_zone[zname] = {
+                        "decs": list(res.get("decs") or []),
+                        "miss": res.get("miss"),
+                    }
+                    zone_timings.append({"zone": zname, "elapsed_ms": float(res.get("elapsed_ms") or 0.0), "mode": "proc"})
+                except Exception:
+                    logger.exception("Camera %s zone worker failed for %s; falling back to serial scan", self.cam_id, zname)
+                    serial_zone_names.append(zname)
+
+        for zname in serial_zone_names:
+            box = self.zones.get(zname)
+            t0 = time.perf_counter()
+            decs, miss = scan_zone(frame_gray, str(self.cam_id), str(zname), box, pad, scales)
+            zone_timings.append({
+                "zone": zname,
+                "elapsed_ms": round((time.perf_counter() - t0) * 1000.0, 1),
+                "mode": "serial",
+            })
+            results_by_zone[zname] = {"decs": list(decs or []), "miss": miss}
+
+        detections = []
+        for zname in ordered_zone_names:
+            res = results_by_zone.get(zname) or {}
+            decs = res.get("decs") or []
+            miss = res.get("miss")
+            if decs:
+                detections.extend(decs)
+            elif miss is not None:
+                detections.append(miss)
+        return detections, bool(self.restrict_to_zones), zone_timings
 
     def _apply_zone_retention(self, raw_zone_status: dict):
         stable = {}
@@ -3263,33 +3432,57 @@ class CameraWorker(threading.Thread):
             return
 
         logger.info(
-            "Camera %s (%s) starting: url=%s interval=%ss required=%s zones=%s restrict_to_zones=%s",
-            self.cam_id, self.cam_name, self.url, self.interval_s, self.required, len(self.zones), self.restrict_to_zones
+            "Camera %s (%s) starting: url=%s interval=%ss required=%s zones=%s restrict_to_zones=%s zone_workers=%s",
+            self.cam_id, self.cam_name, self.url, self.interval_s, self.required, len(self.zones), self.restrict_to_zones, self.zone_worker_processes
         )
 
         _log_stream_info(f"{self.cam_id} STARTUP", self.url, self.tls_verify)
+        if self.zone_worker_processes > 1:
+            self._ensure_zone_pool()
 
         cycle_idx = 0
         while True:
             cycle_idx += 1
+            cycle_t0 = time.perf_counter()
             try:
-                # Periodic stream info
                 if self.stream_info_interval_minutes > 0:
                     now = time.time()
                     if self.last_stream_info_ts == 0 or (now - self.last_stream_info_ts) >= self.stream_info_interval_minutes * 60:
                         _log_stream_info(f"{self.cam_id} PERIODIC", self.url, self.tls_verify)
                         self.last_stream_info_ts = now
 
+                t_cap0 = time.perf_counter()
                 frame = get_frame_ffmpeg(self.url, self.tls_verify)
+                capture_ms = round((time.perf_counter() - t_cap0) * 1000.0, 1)
                 if frame is None:
                     time.sleep(self.interval_s)
                     continue
 
-                detections, zone_only_active = detect_qr(frame, self.cam_id, self.zones, self.restrict_to_zones)
+                frame_png = _encode_png(frame)
+                early_ts = int(time.time())
+                with STATE_LOCK:
+                    prev = (STATE.get(self.cam_id) or {}).copy()
+                    prev.update({
+                        "ts": early_ts,
+                        "frame_png": frame_png,
+                        "frame_info": {
+                            "camera_id": self.cam_id,
+                            "camera_name": self.cam_name,
+                            "frame_w": int(frame.shape[1]),
+                            "frame_h": int(frame.shape[0]),
+                            "cycle": int(cycle_idx),
+                            "stage": "captured",
+                        },
+                    })
+                    STATE[self.cam_id] = prev
+
+                frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                t_det0 = time.perf_counter()
+                detections, zone_only_active, zone_timings = self._scan_zones(frame_gray)
+                detect_ms = round((time.perf_counter() - t_det0) * 1000.0, 1)
                 raw_zone_status = compute_zone_status(self.zones, detections)
                 zone_status = self._apply_zone_retention(raw_zone_status)
 
-                # stamp camera id onto detections
                 for d in detections:
                     try:
                         d["camera"] = self.cam_id
@@ -3302,7 +3495,6 @@ class CameraWorker(threading.Thread):
                     by_payload[d["payload"]].append(d)
 
                 for payload, items in by_payload.items():
-                    # Resolve conflicts within this camera cycle
                     if len(items) > 1:
                         def _rank(it):
                             sc = float(it.get("score") or 0.0)
@@ -3322,11 +3514,13 @@ class CameraWorker(threading.Thread):
                     if len(self.history[payload]) >= max(1, self.required) and len(set(self.history[payload])) == 1:
                         persist_mapping(payload, loc)
 
+                t_mqtt0 = time.perf_counter()
                 MQTT_MANAGER.publish_camera_zone_states(self.cam_id, self.cam_name, self.zones, zone_status)
+                mqtt_zone_ms = round((time.perf_counter() - t_mqtt0) * 1000.0, 1)
 
+                t_ov0 = time.perf_counter()
                 overlay = draw_overlay(frame, detections, self.zones)
-
-                frame_png = _encode_png(frame)
+                overlay_ms = round((time.perf_counter() - t_ov0) * 1000.0, 1)
                 overlay_png = _encode_png(overlay)
 
                 fi = {
@@ -3339,11 +3533,13 @@ class CameraWorker(threading.Thread):
                     "restrict_to_zones_active": bool(zone_only_active),
                     "debug_zones": ("*" if DEBUG_ALL_ZONES else sorted(DEBUG_ZONES)),
                     "cycle": int(cycle_idx),
+                    "capture_ms": capture_ms,
+                    "detect_ms": detect_ms,
+                    "overlay_ms": overlay_ms,
+                    "mqtt_zone_ms": mqtt_zone_ms,
                 }
 
                 ts = int(time.time())
-
-                # Persist detections for this camera
                 propagated_detections = _decoded_detections_from_zone_status(zone_status, self.cam_id)
 
                 _write_camera_detections(self.cam_id, {
@@ -3355,7 +3551,6 @@ class CameraWorker(threading.Thread):
                     "frame_info": fi,
                 })
 
-                # Update in-memory HTTP state
                 with STATE_LOCK:
                     STATE[self.cam_id] = {
                         "ts": ts,
@@ -3368,29 +3563,49 @@ class CameraWorker(threading.Thread):
                     }
                     states_snapshot = {k: (v or {}).copy() for k, v in STATE.items()}
 
+                t_list0 = time.perf_counter()
                 MQTT_MANAGER.publish_detected_list(states_snapshot)
+                mqtt_list_ms = round((time.perf_counter() - t_list0) * 1000.0, 1)
+
+                total_ms = round((time.perf_counter() - cycle_t0) * 1000.0, 1)
+                if logger.isEnabledFor(logging.DEBUG):
+                    slow = ", ".join(
+                        f"{it['zone']}={it['elapsed_ms']:.0f}ms/{it['mode']}"
+                        for it in sorted(zone_timings, key=lambda x: float(x.get('elapsed_ms') or 0.0), reverse=True)[:5]
+                    )
+                    logger.debug(
+                        "Camera %s cycle %s timing: capture=%sms detect=%sms overlay=%sms mqtt_zone=%sms mqtt_list=%sms total=%sms%s",
+                        self.cam_id, cycle_idx, capture_ms, detect_ms, overlay_ms, mqtt_zone_ms, mqtt_list_ms, total_ms,
+                        f" slow_zones=[{slow}]" if slow else ""
+                    )
+                if total_ms > (self.interval_s * 1000.0 * 1.5):
+                    logger.warning(
+                        "Camera %s cycle %s is slower than interval: total=%sms interval=%ss",
+                        self.cam_id, cycle_idx, total_ms, self.interval_s
+                    )
 
             except Exception as e:
                 logger.exception("Error in camera loop (%s): %s", self.cam_id, e)
 
             time.sleep(self.interval_s)
 
-# Start MQTT
-MQTT_MANAGER.start()
+def main():
+    MQTT_MANAGER.start()
 
-# Start HTTP server
-threading.Thread(target=start_http_server, daemon=True).start()
+    threading.Thread(target=start_http_server, daemon=True).start()
 
-# Start cameras
-if CAMERA_IDS:
-    for cid in CAMERA_IDS:
-        cam = CAMERAS.get(cid) or {}
-        if not bool(cam.get("enabled", True)):
-            logger.info("Camera %s disabled; skipping", cid)
-            continue
-        CameraWorker(cam).start()
+    if CAMERA_IDS:
+        for cid in CAMERA_IDS:
+            cam = CAMERAS.get(cid) or {}
+            if not bool(cam.get("enabled", True)):
+                logger.info("Camera %s disabled; skipping", cid)
+                continue
+            CameraWorker(cam).start()
 
-# Keep process alive
-while True:
-    time.sleep(3600)
+    while True:
+        time.sleep(3600)
+
+
+if __name__ == "__main__":
+    main()
 
