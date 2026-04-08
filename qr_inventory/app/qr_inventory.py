@@ -212,6 +212,7 @@ zone_multi_value_separator = str(opts.get("zone_multi_value_separator") or " | "
 if zone_multi_value_separator == "":
     zone_multi_value_separator = " | "
 ZONE_MULTI_VALUE_SEPARATOR = zone_multi_value_separator
+ZONE_MULTI_MAX_ITERATIONS = max(1, _opt_int("zone_multi_max_iterations", 6))
 try:
     DETECTED_LIST_REGEX = re.compile(detected_list_regex) if detected_list_regex else None
 except re.error as e:
@@ -2134,6 +2135,33 @@ def _dedupe_zone_detections(detections):
     return sorted(best.values(), key=_zone_detection_sort_key)
 
 
+def _mask_detected_quad_in_frame(frame_gray: np.ndarray, det: dict, pad_px: int = 12):
+    try:
+        pts_list = (det or {}).get("points")
+        if not pts_list:
+            return False
+        pts = np.array(pts_list, dtype=np.float32).reshape(-1, 2)
+        if pts.shape[0] != 4:
+            return False
+        h, w = frame_gray.shape[:2]
+        pts[:, 0] = np.clip(pts[:, 0], 0, max(0, w - 1))
+        pts[:, 1] = np.clip(pts[:, 1], 0, max(0, h - 1))
+
+        mask = np.zeros((h, w), dtype=np.uint8)
+        poly = pts.astype(np.int32).reshape(-1, 1, 2)
+        cv2.fillPoly(mask, [poly], 255)
+
+        if pad_px > 0:
+            k = max(1, int(pad_px) * 2 + 1)
+            kernel = np.ones((k, k), np.uint8)
+            mask = cv2.dilate(mask, kernel, iterations=1)
+
+        frame_gray[mask > 0] = 255
+        return True
+    except Exception:
+        return False
+
+
 def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
     H, W = frame_gray.shape[:2]
     zone_pts = _zone_points(box)
@@ -2161,6 +2189,7 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
     con = _contrast_std(roi)
     found = []
 
+    # Fast path: collect any symbols ZBar can decode from the whole ROI in one pass.
     for sc in (scales if isinstance(scales, (list, tuple)) else [float(scales)]):
         for scale_tag, roi_s in _scaled_versions(roi, sc):
             try:
@@ -2216,7 +2245,32 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
                         "decoded": True,
                     })
 
-    return _dedupe_zone_detections(found)
+    found = _dedupe_zone_detections(found)
+
+    # Robust path: iteratively run the existing single-code detector, masking each
+    # resolved quad before the next pass. This finds additional QRs that do not
+    # decode in a single multi-symbol ZBar pass.
+    working_gray = frame_gray.copy()
+    for det in found:
+        _mask_detected_quad_in_frame(working_gray, det, pad_px=max(8, int(roi_padding_px // 2)))
+
+    tries = 0
+    while tries < int(ZONE_MULTI_MAX_ITERATIONS):
+        tries += 1
+        det, _miss = _scan_zone_single(working_gray, cam_id, zname, box, pad_px, scales)
+        if not det or not isinstance(det, dict) or not det.get("decoded"):
+            break
+
+        merged = _dedupe_zone_detections(found + [det])
+        if len(merged) == len(found):
+            # Same code rediscovered; stop to avoid looping.
+            break
+
+        found = merged
+        if not _mask_detected_quad_in_frame(working_gray, det, pad_px=max(8, int(roi_padding_px // 2))):
+            break
+
+    return found
 
 
 def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
