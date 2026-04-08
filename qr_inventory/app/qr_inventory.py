@@ -2269,33 +2269,49 @@ def _offset_detection_geometry(det: dict | None, dx: int, dy: int):
     return out
 
 
-def _build_zone_worker_task(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
+def _build_zone_worker_task(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float], return_reason: bool = False):
+    reason = "unknown"
     try:
+        if frame_gray is None or getattr(frame_gray, "size", 0) == 0:
+            reason = "empty_frame_gray"
+            return (None, reason) if return_reason else None
         H, W = frame_gray.shape[:2]
         zone_pts = _zone_points(box)
         zone_bbox = _zone_bbox(zone_pts)
-        if not zone_pts or not zone_bbox:
-            return None
+        if not zone_pts:
+            reason = "no_zone_points"
+            return (None, reason) if return_reason else None
+        if not zone_bbox:
+            reason = "no_zone_bbox"
+            return (None, reason) if return_reason else None
         zx1, zy1, zx2, zy2 = map(int, zone_bbox)
         x1p = max(0, zx1 - pad_px)
         y1p = max(0, zy1 - pad_px)
         x2p = min(W - 1, zx2 + pad_px)
         y2p = min(H - 1, zy2 + pad_px)
         if x2p <= x1p or y2p <= y1p:
-            return None
+            reason = f"invalid_padded_bbox:{x1p},{y1p},{x2p},{y2p}"
+            return (None, reason) if return_reason else None
         roi = frame_gray[y1p:y2p, x1p:x2p]
         if roi is None or roi.size == 0:
-            return None
-        return {
+            reason = "empty_roi"
+            return (None, reason) if return_reason else None
+        local_box = _translate_zone_shape(box, x1p, y1p)
+        if local_box is None:
+            reason = "translate_zone_shape_failed"
+            return (None, reason) if return_reason else None
+        task = {
             "cam_id": str(cam_id),
             "zone_name": str(zname),
-            "local_box": _translate_zone_shape(box, x1p, y1p),
+            "local_box": local_box,
             "offset": [int(x1p), int(y1p)],
             "roi": np.ascontiguousarray(roi),
             "scales": [float(s) for s in (scales if isinstance(scales, (list, tuple)) else [float(scales)])],
         }
-    except Exception:
-        return None
+        return (task, None) if return_reason else task
+    except Exception as e:
+        reason = f"exception:{type(e).__name__}"
+        return (None, reason) if return_reason else None
 
 
 def _scan_zone_worker_task(task: dict):
@@ -3335,25 +3351,33 @@ class CameraWorker(threading.Thread):
             _ZONE_MP_CTX is not None
         )
         serial_zone_names = []
+        serial_reasons = {}
         parallel_tasks = []
 
         if can_parallel:
             self._ensure_zone_pool()
             can_parallel = self.zone_pool is not None
+            if not can_parallel:
+                logger.debug("Camera %s: zone pool unavailable after ensure; all zones will run serially", self.cam_id)
 
         if can_parallel:
             for zname in ordered_zone_names:
                 box = self.zones.get(zname)
                 if _debug_enabled_for_zone(zname):
                     serial_zone_names.append(zname)
+                    serial_reasons[zname] = "debug_zone"
                     continue
-                task = _build_zone_worker_task(frame_gray, self.cam_id, zname, box, pad, scales)
+                task, task_reason = _build_zone_worker_task(frame_gray, self.cam_id, zname, box, pad, scales, return_reason=True)
                 if task is None:
                     serial_zone_names.append(zname)
+                    serial_reasons[zname] = f"task_none:{task_reason or 'unknown'}"
                 else:
                     parallel_tasks.append(task)
         else:
             serial_zone_names = list(ordered_zone_names)
+            fallback_reason = "parallel_disabled" if self.zone_worker_processes <= 1 else "pool_unavailable"
+            for zname in serial_zone_names:
+                serial_reasons[zname] = fallback_reason
 
         if parallel_tasks and self.zone_pool is not None:
             future_to_zone = {self.zone_pool.submit(_scan_zone_worker_task, task): task["zone_name"] for task in parallel_tasks}
@@ -3369,15 +3393,21 @@ class CameraWorker(threading.Thread):
                 except Exception:
                     logger.exception("Camera %s zone worker failed for %s; falling back to serial scan", self.cam_id, zname)
                     serial_zone_names.append(zname)
+                    serial_reasons[zname] = "worker_exception"
+
+        if logger.isEnabledFor(logging.DEBUG) and serial_reasons:
+            serial_summary = ", ".join(f"{z}={serial_reasons.get(z, 'serial')}" for z in ordered_zone_names if z in serial_reasons)
+            logger.debug("Camera %s serial fallback reasons: %s", self.cam_id, serial_summary)
 
         for zname in serial_zone_names:
             box = self.zones.get(zname)
             t0 = time.perf_counter()
             decs, miss = scan_zone(frame_gray, str(self.cam_id), str(zname), box, pad, scales)
+            mode = f"serial({serial_reasons.get(zname, 'serial')})"
             zone_timings.append({
                 "zone": zname,
                 "elapsed_ms": round((time.perf_counter() - t0) * 1000.0, 1),
-                "mode": "serial",
+                "mode": mode,
             })
             results_by_zone[zname] = {"decs": list(decs or []), "miss": miss}
 
