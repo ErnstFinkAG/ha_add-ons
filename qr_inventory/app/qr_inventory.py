@@ -623,6 +623,65 @@ def _build_detected_list_print_group(summary: dict, group_key: str, auto_print: 
 """
     return _print_shell_html(f'QR Inventory - {label}', body, auto_print=auto_print)
 
+def _is_number(v):
+    return isinstance(v, (int, float, np.integer, np.floating))
+
+def _order_zone_points(points):
+    try:
+        pts = np.array(points, dtype=np.float32).reshape(-1, 2)
+        if pts.shape[0] != 4:
+            return None
+        center = np.mean(pts, axis=0)
+        angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+        order = np.argsort(angles)
+        pts = pts[order]
+        start = int(np.argmin(np.sum(pts, axis=1)))
+        pts = np.roll(pts, -start, axis=0)
+        return [[int(round(float(x))), int(round(float(y)))] for x, y in pts]
+    except Exception:
+        return None
+
+def _normalize_zone_shape(raw_shape):
+    """
+    Normalize a zone definition to 4 ordered corner points.
+
+    Supported inputs:
+      - [x1,y1,x2,y2]  -> legacy axis-aligned rectangle
+      - [[x1,y1],[x2,y2],[x3,y3],[x4,y4]] -> arbitrary quadrilateral
+    """
+    try:
+        if raw_shape is None:
+            return None
+
+        if isinstance(raw_shape, dict):
+            raw_shape = (
+                raw_shape.get("points_px")
+                or raw_shape.get("points")
+                or raw_shape.get("quad_px")
+                or raw_shape.get("quad")
+                or raw_shape.get("rect_px")
+                or raw_shape.get("rect")
+                or raw_shape.get("box")
+            )
+
+        if isinstance(raw_shape, (list, tuple)) and len(raw_shape) == 4 and all(_is_number(v) for v in raw_shape):
+            x1, y1, x2, y2 = [int(round(float(v))) for v in raw_shape]
+            xmin, xmax = sorted((x1, x2))
+            ymin, ymax = sorted((y1, y2))
+            return [[xmin, ymin], [xmax, ymin], [xmax, ymax], [xmin, ymax]]
+
+        if isinstance(raw_shape, (list, tuple)) and len(raw_shape) == 4:
+            pts = []
+            for p in raw_shape:
+                if not isinstance(p, (list, tuple)) or len(p) != 2:
+                    return None
+                pts.append([int(round(float(p[0]))), int(round(float(p[1])))])
+            return _order_zone_points(pts)
+
+        return None
+    except Exception:
+        return None
+
 # ------------------------------------------------------------
 # Multi-camera config parsing
 # ------------------------------------------------------------
