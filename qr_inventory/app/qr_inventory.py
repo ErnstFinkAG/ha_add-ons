@@ -208,6 +208,10 @@ detected_list_sort_order = str(opts.get("detected_list_sort_order") or "asc").st
 if detected_list_sort_order not in ("asc", "desc"):
     detected_list_sort_order = "asc"
 DETECTED_LIST_SORT_ORDER = detected_list_sort_order
+zone_multi_value_separator = str(opts.get("zone_multi_value_separator") or " | ")
+if zone_multi_value_separator == "":
+    zone_multi_value_separator = " | "
+ZONE_MULTI_VALUE_SEPARATOR = zone_multi_value_separator
 try:
     DETECTED_LIST_REGEX = re.compile(detected_list_regex) if detected_list_regex else None
 except re.error as e:
@@ -1811,7 +1815,7 @@ def _set_debug(cam_id: str, zone: str, debug_json: dict, roi: np.ndarray,
 # ------------------------------------------------------------
 # Zone scan
 # ------------------------------------------------------------
-def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
+def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
     H, W = frame_gray.shape[:2]
     zone_pts = _zone_points(box)
     zone_bbox = _zone_bbox(zone_pts)
@@ -2090,6 +2094,138 @@ def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int,
     marked_best = _mark_clipping(best_pre, _roi_clip_analysis(best_pre, margin_px=6)) if best_pre is not None else None
     _set_debug(cam_id, zname, dbg, roi, best_pre, marked_roi, marked_best)
     return None, miss
+
+
+def _zone_detection_sort_key(det: dict):
+    payload = str((det or {}).get("payload") or "").strip()
+    centroid = (det or {}).get("centroid") or [0, 0]
+    try:
+        cx = int(round(float(centroid[0])))
+    except Exception:
+        cx = 0
+    try:
+        cy = int(round(float(centroid[1])))
+    except Exception:
+        cy = 0
+    return (_natural_sort_key(payload), cy, cx)
+
+
+def _dedupe_zone_detections(detections):
+    best = {}
+    for det in (detections or []):
+        if not isinstance(det, dict) or not bool(det.get("decoded", False)):
+            continue
+        payload = str(det.get("payload") or "").strip()
+        if not payload:
+            continue
+        centroid = det.get("centroid") or [0, 0]
+        try:
+            cx = int(round(float(centroid[0])))
+        except Exception:
+            cx = 0
+        try:
+            cy = int(round(float(centroid[1])))
+        except Exception:
+            cy = 0
+        key = (payload, int(round(cx / 8.0)), int(round(cy / 8.0)))
+        prev = best.get(key)
+        if prev is None or float(det.get("score") or 0.0) > float(prev.get("score") or 0.0):
+            best[key] = det
+    return sorted(best.values(), key=_zone_detection_sort_key)
+
+
+def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
+    H, W = frame_gray.shape[:2]
+    zone_pts = _zone_points(box)
+    zone_bbox = _zone_bbox(zone_pts)
+    if not zone_pts or not zone_bbox:
+        return []
+
+    try:
+        zx1, zy1, zx2, zy2 = map(int, zone_bbox)
+    except Exception:
+        return []
+
+    x1p = max(0, zx1 - pad_px)
+    y1p = max(0, zy1 - pad_px)
+    x2p = min(W - 1, zx2 + pad_px)
+    y2p = min(H - 1, zy2 + pad_px)
+    if x2p <= x1p or y2p <= y1p:
+        return []
+
+    roi = frame_gray[y1p:y2p, x1p:x2p]
+    if roi is None or roi.size == 0:
+        return []
+
+    lap = _laplacian_var(roi)
+    con = _contrast_std(roi)
+    found = []
+
+    for sc in (scales if isinstance(scales, (list, tuple)) else [float(scales)]):
+        for scale_tag, roi_s in _scaled_versions(roi, sc):
+            try:
+                eff = float(scale_tag.split("x")[0])
+            except Exception:
+                eff = 1.0
+            for pre_name, v in _preprocess_gray_variants(roi_s):
+                res = _zbar_decode_roi(v)
+                if not res:
+                    continue
+                rh, rw = v.shape[:2]
+                for r in res:
+                    try:
+                        payload = (r.data.decode("utf-8", errors="ignore") or "").strip()
+                    except Exception:
+                        payload = ""
+                    if not payload:
+                        continue
+                    quad = _zbar_poly_to_quad(r.polygon)
+                    if quad is None:
+                        continue
+                    quad = quad.astype(np.float32)
+                    quad[:, 0] = np.clip(quad[:, 0], 0, rw - 1)
+                    quad[:, 1] = np.clip(quad[:, 1], 0, rh - 1)
+
+                    pts_roi = quad / max(1e-6, eff)
+                    pts_full = pts_roi + np.array([x1p, y1p], dtype=np.float32)
+                    cx = int(np.mean(pts_full[:, 0])); cy = int(np.mean(pts_full[:, 1]))
+                    if not _point_in_zone(cx, cy, zone_pts):
+                        continue
+
+                    ov = _bbox_overlap_ratio_with_zone(pts_full, zone_pts)
+                    if ov < float(zone_quad_in_zone_min_ratio):
+                        continue
+
+                    edge_px = _edge_px_from_quad(pts_full)
+                    score = _certainty_score(edge_px, lap, con)
+                    found.append({
+                        "payload": payload,
+                        "points": pts_full.tolist(),
+                        "centroid": [cx, cy],
+                        "zone": zname,
+                        "score": score,
+                        "diag": {
+                            "edge_px": edge_px,
+                            "lap_var": lap,
+                            "contrast": con,
+                            "src": "zbar_multi",
+                            "zone_ov": ov,
+                            "scale": scale_tag,
+                            "pre": pre_name,
+                        },
+                        "decoded": True,
+                    })
+
+    return _dedupe_zone_detections(found)
+
+
+def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
+    multi = _scan_zone_multi_decoded(frame_gray, cam_id, zname, box, pad_px, scales)
+    if multi:
+        return multi, None
+    dec, miss = _scan_zone_single(frame_gray, cam_id, zname, box, pad_px, scales)
+    return ([dec] if dec is not None else []), miss
+
 # ------------------------------------------------------------
 # Detection entrypoint
 # ------------------------------------------------------------
@@ -2105,9 +2241,9 @@ def detect_qr(frame_bgr: np.ndarray, cam_id: str, zones_dict: dict, restrict_to_
         pad = max(0, int(roi_padding_px))
         scales = _dedupe_sorted(ROI_SCALES + ZONE_EXTRA_SCALES) or [2.0, 3.0, 4.0, 6.0, 8.0, 10.0]
         for zname, box in zones_dict.items():
-            dec, miss = scan_zone(frame_gray, str(cam_id), str(zname), box, pad, scales)
-            if dec is not None:
-                detections.append(dec)
+            decs, miss = scan_zone(frame_gray, str(cam_id), str(zname), box, pad, scales)
+            if decs:
+                detections.extend(decs)
             elif miss is not None:
                 detections.append(miss)
         return detections, True if restrict_to_zones_flag else False
@@ -2121,41 +2257,68 @@ def compute_zone_status(zones_dict: dict, detections: list):
     status = {}
     if not isinstance(zones_dict, dict):
         return status
+
+    decoded_by_zone = defaultdict(list)
+    candidate_by_zone = {}
+
     for zname in zones_dict.keys():
-        status[zname] = {"kind": "none", "det": None}
+        status[zname] = {"kind": "none", "det": None, "dets": []}
+
     for d in detections:
         z = d.get("zone")
         if not z or z not in status:
             continue
         if d.get("decoded", False):
-            status[z] = {"kind": "decoded", "det": d}
+            decoded_by_zone[z].append(d)
         else:
-            cur = status[z]
-            if cur["kind"] != "decoded":
-                if cur["det"] is None or float(d.get("score") or 0.0) > float(cur["det"].get("score") or 0.0):
-                    status[z] = {"kind": "candidate", "det": d}
+            cur = candidate_by_zone.get(z)
+            if cur is None or float(d.get("score") or 0.0) > float(cur.get("score") or 0.0):
+                candidate_by_zone[z] = d
+
+    for zname in zones_dict.keys():
+        dets = _dedupe_zone_detections(decoded_by_zone.get(zname) or [])
+        if dets:
+            best = sorted(dets, key=lambda d: (float(d.get("score") or 0.0), _zone_detection_sort_key(d)), reverse=True)[0]
+            status[zname] = {"kind": "decoded", "det": best, "dets": dets}
+        elif zname in candidate_by_zone:
+            status[zname] = {"kind": "candidate", "det": candidate_by_zone[zname], "dets": []}
     return status
 
 
 
 def _zone_state_signature(zone_state: dict | None):
-    zone_state = zone_state if isinstance(zone_state, dict) else {"kind": "none", "det": None}
+    zone_state = zone_state if isinstance(zone_state, dict) else {"kind": "none", "det": None, "dets": []}
     kind = str(zone_state.get("kind") or "none")
     det = zone_state.get("det") if isinstance(zone_state.get("det"), dict) else None
-    if kind == "decoded" and det and det.get("payload") is not None:
-        return ("decoded", str(det.get("payload")))
+    dets = zone_state.get("dets") if isinstance(zone_state.get("dets"), list) else None
+    if kind == "decoded":
+        payloads = []
+        for item in (dets or ([det] if det else [])):
+            if not isinstance(item, dict):
+                continue
+            payload = str(item.get("payload") or "").strip()
+            if payload:
+                payloads.append(payload)
+        payloads = _sort_naturally(sorted(set(payloads)))
+        if payloads:
+            return ("decoded", tuple(payloads))
     if kind == "candidate" and det and (det.get("reason") == "detected_unresolved" or (det.get("points") and not det.get("no_quad"))):
         return ("candidate", MQTT_STATE_DETECTED_NO_VALUE)
     return ("none", MQTT_STATE_NONE)
 
 
 def _clone_zone_status(zone_state: dict | None):
-    zone_state = zone_state if isinstance(zone_state, dict) else {"kind": "none", "det": None}
+    zone_state = zone_state if isinstance(zone_state, dict) else {"kind": "none", "det": None, "dets": []}
     try:
         return copy.deepcopy(zone_state)
     except Exception:
         det = zone_state.get("det") if isinstance(zone_state.get("det"), dict) else None
-        return {"kind": str(zone_state.get("kind") or "none"), "det": dict(det) if det else None}
+        dets = zone_state.get("dets") if isinstance(zone_state.get("dets"), list) else []
+        return {
+            "kind": str(zone_state.get("kind") or "none"),
+            "det": dict(det) if det else None,
+            "dets": [dict(item) for item in dets if isinstance(item, dict)],
+        }
 
 
 def _decoded_detections_from_zone_status(zone_status: dict, cam_id: str | None = None):
@@ -2167,18 +2330,20 @@ def _decoded_detections_from_zone_status(zone_status: dict, cam_id: str | None =
             continue
         if str(zone_state.get("kind") or "none") != "decoded":
             continue
-        det = zone_state.get("det")
-        if not isinstance(det, dict):
-            continue
-        payload = str(det.get("payload") or "").strip()
-        if not payload:
-            continue
-        item = copy.deepcopy(det)
-        item["zone"] = str(zone_name)
-        item["decoded"] = True
-        if cam_id is not None:
-            item["camera"] = str(cam_id)
-        out.append(item)
+        dets = zone_state.get("dets") if isinstance(zone_state.get("dets"), list) else None
+        if not dets:
+            det = zone_state.get("det")
+            dets = [det] if isinstance(det, dict) else []
+        for det in _dedupe_zone_detections(dets):
+            payload = str(det.get("payload") or "").strip()
+            if not payload:
+                continue
+            item = copy.deepcopy(det)
+            item["zone"] = str(zone_name)
+            item["decoded"] = True
+            if cam_id is not None:
+                item["camera"] = str(cam_id)
+            out.append(item)
     return out
 
 # ------------------------------------------------------------
@@ -2325,11 +2490,14 @@ def draw_overlay(frame, detections, zones_dict):
             cv2.rectangle(out, (x1, y1), (zbx2, zby2), ORANGE, -1)
             cv2.putText(out, zl, (x1 + pad, y1 + th + pad), font, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
 
-            st = zone_status.get(zname, {"kind": "none", "det": None})
+            st = zone_status.get(zname, {"kind": "none", "det": None, "dets": []})
             det = st.get("det")
 
             if st.get("kind") == "decoded" and det:
                 parts = ["OK"]
+                decoded_count = len([d for d in (st.get("dets") or []) if isinstance(d, dict)])
+                if decoded_count > 1:
+                    parts.append(f"x{decoded_count}")
                 if overlay_show_scores:
                     p = _pct(det.get("score"))
                     if p is not None:
@@ -2411,14 +2579,19 @@ def draw_overlay(frame, detections, zones_dict):
 # MQTT publishing
 # ------------------------------------------------------------
 def _zone_status_to_mqtt_payload(cam_id: str, cam_name: str, zone_name: str, zone_state: dict | None):
-    zone_state = zone_state if isinstance(zone_state, dict) else {"kind": "none", "det": None}
+    zone_state = zone_state if isinstance(zone_state, dict) else {"kind": "none", "det": None, "dets": []}
     kind = str(zone_state.get("kind") or "none")
     det = zone_state.get("det") if isinstance(zone_state.get("det"), dict) else None
+    dets = zone_state.get("dets") if isinstance(zone_state.get("dets"), list) else None
 
-    if kind == "decoded" and det and det.get("payload") is not None:
-        state = str(det.get("payload"))
-        status = "decoded"
+    decoded_dets = _dedupe_zone_detections(dets or ([det] if det else [])) if kind == "decoded" else []
+    decoded_values = _sort_naturally({str(item.get("payload") or "").strip() for item in decoded_dets if isinstance(item, dict) and str(item.get("payload") or "").strip()})
+
+    if decoded_values:
+        state = ZONE_MULTI_VALUE_SEPARATOR.join(decoded_values)
+        status = "decoded_multi" if len(decoded_values) > 1 else "decoded"
         decoded = True
+        det = decoded_dets[0] if decoded_dets else det
     elif kind == "candidate" and det and (det.get("reason") == "detected_unresolved" or (det.get("points") and not det.get("no_quad"))):
         state = MQTT_STATE_DETECTED_NO_VALUE
         status = MQTT_STATE_DETECTED_NO_VALUE
@@ -2438,13 +2611,17 @@ def _zone_status_to_mqtt_payload(cam_id: str, cam_name: str, zone_name: str, zon
             "sensor_name": _mqtt_sensor_name(cam_name, zone_name),
             "status": status,
             "decoded": bool(decoded),
-            "qr_code": (str(det.get("payload")) if decoded and det is not None and det.get("payload") is not None else None),
+            "qr_code": (decoded_values[0] if len(decoded_values) == 1 else None),
+            "qr_codes": (decoded_values if decoded_values else []),
+            "qr_code_count": len(decoded_values),
             "reason": (det.get("reason") if det else None),
             "score": (float(det.get("score")) if det and det.get("score") is not None else None),
             "centroid": (det.get("centroid") if det else None),
             "points": (det.get("points") if det else None),
+            "points_all": ([item.get("points") for item in decoded_dets if isinstance(item, dict) and item.get("points")] if decoded_dets else None),
             "edge_px": (float((det.get("diag") or {}).get("edge_px")) if det and (det.get("diag") or {}).get("edge_px") is not None else None),
             "source": ((det.get("diag") or {}).get("src") if det else None),
+            "separator": ZONE_MULTI_VALUE_SEPARATOR,
         },
     }
     return payload
@@ -2469,7 +2646,7 @@ class MQTTManager:
                 continue
             for zone_name in zones.keys():
                 key = self._sensor_key(cam_id, zone_name)
-                payload = _zone_status_to_mqtt_payload(cam_id, cam_name, str(zone_name), {"kind": "none", "det": None})
+                payload = _zone_status_to_mqtt_payload(cam_id, cam_name, str(zone_name), {"kind": "none", "det": None, "dets": []})
                 self.zone_cache[key] = payload
                 self.discovery_payloads[key] = self._discovery_payload(cam_id, cam_name, str(zone_name))
 
@@ -2988,7 +3165,7 @@ class CameraWorker(threading.Thread):
         self.history = defaultdict(lambda: deque(maxlen=max(1, self.required)))
         self.zone_history = defaultdict(lambda: deque(maxlen=max(1, self.required)))
         self.propagated_zone_status = {
-            str(zone_name): {"kind": "none", "det": None}
+            str(zone_name): {"kind": "none", "det": None, "dets": []}
             for zone_name in ((self.zones.keys() if isinstance(self.zones, dict) else []) or [])
         }
 
@@ -3005,12 +3182,12 @@ class CameraWorker(threading.Thread):
         for zone_name in sorted(zone_names):
             raw_state = raw_zone_status.get(zone_name) if isinstance(raw_zone_status, dict) else None
             if not isinstance(raw_state, dict):
-                raw_state = {"kind": "none", "det": None}
+                raw_state = {"kind": "none", "det": None, "dets": []}
             sig = _zone_state_signature(raw_state)
             hist = self.zone_history[zone_name]
             hist.append(sig)
 
-            prev_state = self.propagated_zone_status.get(zone_name, {"kind": "none", "det": None})
+            prev_state = self.propagated_zone_status.get(zone_name, {"kind": "none", "det": None, "dets": []})
             if required_n <= 1 or (len(hist) >= required_n and len(set(hist)) == 1):
                 next_state = _clone_zone_status(raw_state)
                 prev_sig = _zone_state_signature(prev_state)
