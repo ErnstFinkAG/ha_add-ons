@@ -2,13 +2,14 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.56
+## What changed in v0.1.77
 
-This version keeps the PNG preview as before, but switches printing to native ZPL for QR and text on all supported rotations (0°, 90°, 270°). Only the selected PNG logos are still sent as graphics.
+This version fixes native-print scaling and placement so the printed output matches the preview much more closely again. QR stays native ZPL for speed, while text and logos are sent as smaller positioned graphics instead of a full-label raster image.
 
-- print output now uses native ZPL QR/text for 0°, 90°, and 270° label rotations
-- rotated labels no longer fall back to full-label raster output
-- selected logos are still embedded as graphics, but the whole label is no longer rasterized just because it is rotated
+- fixed a regression where label sizing was still effectively based on 203 dpi, which broke 300 dpi profiles
+- added `printer_dpi` back into the label profile config and schema
+- fixed PNG logo conversion so transparent logos no longer print almost fully black
+- print output now uses native QR plus smaller positioned graphics for text and logos, instead of a full-label raster image
 - the UI preview path stays unchanged
 
 ## Profile and field management
@@ -37,6 +38,7 @@ label_profiles:
   - id: standard
     name: Standard
     printer_host: ""
+    printer_dpi: 203
     label_width_mm: 170
     label_height_mm: 305
     qr_size_mm: 170
@@ -49,6 +51,7 @@ label_profiles:
   - id: rotated
     name: Rotated
     printer_host: ""
+    printer_dpi: 300
     label_width_mm: 170
     label_height_mm: 305
     qr_size_mm: 160
