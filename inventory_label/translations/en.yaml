@@ -18,9 +18,6 @@ configuration:
       printer_port:
         name: Printer port
         description: Raw TCP port of the printer, usually 9100.
-      printer_dpi:
-        name: Printer DPI
-        description: Print resolution in dots per inch for this label profile, for example 203 or 300.
       label_width_mm:
         name: Label width (mm)
         description: Physical width of the label.
