@@ -1877,6 +1877,26 @@ def image_to_gfa(img: Image.Image) -> Tuple[int, int, str]:
     return total_bytes, bytes_per_row, "".join(rows)
 
 
+def image_to_gfb(img: Image.Image) -> Tuple[int, int, bytes]:
+    if img.mode != "1":
+        img = img.convert("1")
+    width, height = img.size
+    bytes_per_row = (width + 7) // 8
+    total_bytes = bytes_per_row * height
+    pixels = img.load()
+    payload = bytearray()
+    for y in range(height):
+        for byte_idx in range(bytes_per_row):
+            value = 0
+            for bit in range(8):
+                x = (byte_idx * 8) + bit
+                value <<= 1
+                if x < width and pixels[x, y] == 0:
+                    value |= 1
+            payload.append(value)
+    return total_bytes, bytes_per_row, bytes(payload)
+
+
 def gfa_chunk_commands(x: int, y: int, img: Image.Image, max_total_bytes: int = 99999) -> List[str]:
     image = prepare_graphic_image(img)
     width, height = image.size
@@ -1891,6 +1911,24 @@ def gfa_chunk_commands(x: int, y: int, img: Image.Image, max_total_bytes: int = 
         commands.append(f"^FO{int(x)},{int(y + row_start)}^GFA,{total_bytes},{total_bytes},{chunk_bytes_per_row},{graphic_hex}^FS")
         row_start = row_end
     return commands
+
+
+def gfb_chunk_payload(x: int, y: int, img: Image.Image, max_total_bytes: int = 99999) -> bytes:
+    image = prepare_graphic_image(img)
+    width, height = image.size
+    bytes_per_row = max(1, (width + 7) // 8)
+    max_rows_per_chunk = max(1, min(height, max_total_bytes // bytes_per_row))
+    payload = bytearray()
+    row_start = 0
+    while row_start < height:
+        row_end = min(height, row_start + max_rows_per_chunk)
+        chunk = image.crop((0, row_start, width, row_end))
+        total_bytes, chunk_bytes_per_row, graphic_bytes = image_to_gfb(chunk)
+        payload.extend(f"^FO{int(x)},{int(y + row_start)}^GFB,{total_bytes},{total_bytes},{chunk_bytes_per_row},".encode("ascii"))
+        payload.extend(graphic_bytes)
+        payload.extend(b"^FS\n")
+        row_start = row_end
+    return bytes(payload)
 
 
 def text_line_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
@@ -2404,38 +2442,32 @@ def build_native_print_context(qr_value: str, field_forms: List[Dict], profile: 
     qr_text = normalize_qr_value(qr_value)
     if qr_text:
         qr_target_size = min(layout["qr_size_dots"], printable_w if rotation == 0 else logical_height)
-        magnification, qr_actual_size = qr_native_size(qr_text, qr_target_size, profile)
-        qr_inset = max(0, (qr_target_size - qr_actual_size) // 2)
 
         if rotation == 0:
-            qr_target_left = max((printable_w - qr_target_size) // 2, 0)
-            qr_target_top = layout["top_margin_dots"]
-            qr_left = qr_target_left + qr_inset
-            qr_top = qr_target_top + qr_inset
+            qr_left = max((printable_w - qr_target_size) // 2, 0)
+            qr_top = layout["top_margin_dots"]
             margin_x = max((printable_w - qr_target_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
             text_left = margin_x
             text_width = max(1, printable_w - (margin_x * 2))
-            current_y = qr_target_top + qr_target_size + mm_to_dots(8, profile)
+            current_y = qr_top + qr_target_size + mm_to_dots(8, profile)
         else:
-            qr_target_left = min(max(layout["top_margin_dots"], 0), max(0, logical_width - qr_target_size))
-            qr_target_top = max((logical_height - qr_target_size) // 2, 0)
-            qr_left = qr_target_left + qr_inset
-            qr_top = qr_target_top + qr_inset
+            qr_left = min(max(layout["top_margin_dots"], 0), max(0, logical_width - qr_target_size))
+            qr_top = max((logical_height - qr_target_size) // 2, 0)
             inter_block_gap = mm_to_dots(8, profile)
-            text_left = min(logical_width, qr_target_left + qr_target_size + inter_block_gap)
+            text_left = min(logical_width, qr_left + qr_target_size + inter_block_gap)
             text_width = max(1, logical_width - text_left - mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
             current_y = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
 
+        qr_image = build_qr_image(qr_text, qr_target_size, profile)
         elements.append({
-            "type": "qr_native",
+            "type": "graphic",
             "x": qr_left,
             "y": qr_top,
-            "width": qr_actual_size,
-            "height": qr_actual_size,
-            "magnification": magnification,
-            "data": qr_text,
+            "width": qr_target_size,
+            "height": qr_target_size,
+            "image": qr_image,
         })
-        qr_bbox = (qr_left, qr_top, qr_actual_size, qr_actual_size)
+        qr_bbox = (qr_left, qr_top, qr_target_size, qr_target_size)
 
     for block in body_blocks:
         if block.get("type") == "logo_row":
@@ -2486,11 +2518,7 @@ def render_native_output_image(qr_value: str, field_forms: List[Dict], profile: 
         )
         tx = max(0, int(tx))
         ty = max(0, int(ty))
-        if element["type"] == "qr_native":
-            image = build_qr_image(str(element["data"]), int(element["width"]), profile)
-        else:
-            image = prepare_graphic_image(element["image"])
-        image = rotate_graphic_for_rotation(prepare_graphic_image(image), rotation).convert("RGBA")
+        image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation).convert("RGBA")
         printable_image.alpha_composite(image, (tx, ty))
 
     final_image = printable_image
@@ -2532,9 +2560,6 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
         f"^LL{label_h}",
         "^LH0,0",
     ]
-    qr_ecc = str(profile.get("qr_error_correction") or "M").strip().upper()
-    if qr_ecc not in {"L", "M", "Q", "H"}:
-        qr_ecc = "M"
     for element in context["elements"]:
         tx, ty, tw, th = transform_logical_bbox(
             element["x"],
@@ -2547,16 +2572,39 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
         )
         tx = max(0, int(tx))
         ty = max(0, int(ty))
-        if element["type"] == "qr_native":
-            commands.append(f"^FO{tx},{ty}^BQN,2,{int(element['magnification'])}^FD{qr_ecc}A,{str(element['data'])}^FS")
-            continue
-        if element["type"] == "graphic":
-            image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation)
-            commands.extend(gfa_chunk_commands(tx, ty, image))
-            continue
+        image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation)
+        commands.extend(gfa_chunk_commands(tx, ty, image))
     commands.append(f"^PQ{copies},0,1,N")
     commands.append("^XZ")
     return "\n".join(commands)
+
+
+def build_print_payload(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> bytes:
+    context = build_native_print_context(qr_value, field_forms, profile)
+    printable_w = context["printable_w"]
+    label_h = context["label_h"]
+    rotation = context["rotation"]
+    logical_width = context["logical_width"]
+    logical_height = context["logical_height"]
+    payload = bytearray()
+    payload.extend(f"^XA\n^CI28\n^PW{printable_w}\n^LL{label_h}\n^LH0,0\n".encode("ascii"))
+    for element in context["elements"]:
+        tx, ty, tw, th = transform_logical_bbox(
+            element["x"],
+            element["y"],
+            element["width"],
+            element["height"],
+            rotation,
+            logical_width,
+            logical_height,
+        )
+        tx = max(0, int(tx))
+        ty = max(0, int(ty))
+        image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation)
+        payload.extend(gfb_chunk_payload(tx, ty, image))
+    payload.extend(f"^PQ{copies},0,1,N\n^XZ".encode("ascii"))
+    return bytes(payload)
+
 
 def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
     try:
@@ -2566,8 +2614,8 @@ def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict
         return build_raster_zpl(qr_value, field_forms, copies, profile)
 
 
-def send_to_printer(host: str, port: int, payload: str) -> None:
-    data = payload.encode("utf-8")
+def send_to_printer(host: str, port: int, payload: str | bytes) -> None:
+    data = payload.encode("utf-8") if isinstance(payload, str) else bytes(payload)
     LOGGER.info("Sending %s bytes to printer %s:%s", len(data), host, port)
     with socket.create_connection((host, int(port)), timeout=10) as sock:
         sock.sendall(data)
@@ -2964,10 +3012,10 @@ def print_label():
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
-        zpl = build_zpl(qr_value, field_forms, copies, profile)
+        payload = build_print_payload(qr_value, field_forms, copies, profile)
         host, port = resolve_printer_target(profile, opts)
         LOGGER.info("Print request received: profile=%s copies=%s qr_payload=%r", profile.get("id"), copies, qr_value)
-        send_to_printer(host, port, zpl)
+        send_to_printer(host, port, payload)
         result = {"success": True, "message": ui_text(opts, "sent_labels_message", copies=copies, host=host, port=port, qr_payload=qr_value or ui_text(opts, "none"))}
     except Exception as exc:
         LOGGER.exception("Print failed")
@@ -3136,10 +3184,10 @@ def api_print():
         qr_field_ids = selected_qr_field_ids_from_source(profile, payload)
         qr_value = qr_payload_from_field_forms(field_forms, qr_field_ids) if qr_field_ids else normalize_qr_value(payload.get("qr_value", profile.get("qr_default_value", "")))
         copies = max(1, min(50, int(payload.get("copies", 1))))
-        zpl = build_zpl(qr_value, field_forms, copies, profile)
+        payload = build_print_payload(qr_value, field_forms, copies, profile)
         host, port = resolve_printer_target(profile, opts)
         LOGGER.info("API print request received: profile=%s copies=%s qr_value=%r", profile.get("id"), copies, qr_value)
-        send_to_printer(host, port, zpl)
+        send_to_printer(host, port, payload)
         return jsonify({
             "ok": True,
             "profile_id": profile.get("id", ""),
