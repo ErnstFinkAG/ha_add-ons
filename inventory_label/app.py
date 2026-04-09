@@ -2386,33 +2386,31 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
 
     qr_text = normalize_qr_value(qr_value)
     if qr_text:
-        qr_target_size = min(layout["qr_size_dots"], logical_width if rotation == 0 else logical_height)
-        qr_mag, qr_actual_size = qr_native_size(qr_text, qr_target_size, profile)
+        # Render the QR as its own positioned graphic using the exact same target footprint
+        # as the PNG preview. This keeps print and preview aligned much more closely while
+        # still avoiding a full-label raster job.
+        qr_target_size = min(layout["qr_size_dots"], printable_w if rotation == 0 else logical_height)
         if rotation == 0:
-            qr_box_left = max((printable_w - qr_target_size) // 2, 0)
-            qr_left = qr_box_left + max(0, (qr_target_size - qr_actual_size) // 2)
-            qr_top = layout["top_margin_dots"] + max(0, (qr_target_size - qr_actual_size) // 2)
+            qr_left = max((printable_w - qr_target_size) // 2, 0)
+            qr_top = layout["top_margin_dots"]
             margin_x = max((printable_w - qr_target_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
             text_left = margin_x
             text_width = max(1, printable_w - (margin_x * 2))
-            current_y = layout["top_margin_dots"] + qr_target_size + mm_to_dots(8, profile)
+            current_y = qr_top + qr_target_size + mm_to_dots(8, profile)
         else:
-            qr_box_left = min(max(layout["top_margin_dots"], 0), max(0, logical_width - qr_target_size))
-            qr_left = qr_box_left + max(0, (qr_target_size - qr_actual_size) // 2)
-            qr_box_top = max((logical_height - qr_target_size) // 2, 0)
-            qr_top = qr_box_top + max(0, (qr_target_size - qr_actual_size) // 2)
+            qr_left = min(max(layout["top_margin_dots"], 0), max(0, logical_width - qr_target_size))
+            qr_top = max((logical_height - qr_target_size) // 2, 0)
             inter_block_gap = mm_to_dots(8, profile)
-            text_left = min(logical_width, qr_box_left + qr_target_size + inter_block_gap)
+            text_left = min(logical_width, qr_left + qr_target_size + inter_block_gap)
             text_width = max(1, logical_width - text_left - mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
             current_y = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
         elements.append({
-            "type": "qr",
+            "type": "graphic",
             "x": qr_left,
             "y": qr_top,
-            "width": qr_actual_size,
-            "height": qr_actual_size,
-            "magnification": qr_mag,
-            "data": qr_text,
+            "width": qr_target_size,
+            "height": qr_target_size,
+            "image": build_qr_image(qr_text, qr_target_size, profile),
         })
 
     for block in body_blocks:
@@ -2432,8 +2430,6 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
             elements.extend(logical_footer_block_elements(draw, block, text_left, text_width, top_y, profile))
             current_bottom = top_y - mm_to_dots(FOOTER_GAP_MM, profile)
 
-    orientation = zpl_orientation_for_rotation(rotation)
-    qr_error = str(profile.get("qr_error_correction") or "M").strip().upper() or "M"
     commands = [
         "^XA",
         "^CI28",
@@ -2453,11 +2449,6 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
         )
         tx = max(0, int(tx))
         ty = max(0, int(ty))
-        if element["type"] == "qr":
-            qr_payload = f"{qr_error}A,{element['data']}"
-            commands.append(f"^FO{tx},{ty}^BQ{orientation},2,{element['magnification']}")
-            commands.append(f"^FH^FD{zpl_hex_encode(qr_payload)}^FS")
-            continue
         if element["type"] == "graphic":
             image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation)
             total_bytes, bytes_per_row, graphic_hex = image_to_gfa(image)
