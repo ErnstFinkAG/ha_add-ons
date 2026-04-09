@@ -18,9 +18,6 @@ configuration:
       printer_port:
         name: Drucker-Port
         description: Raw-TCP-Port des Druckers, normalerweise 9100.
-      printer_dpi:
-        name: Drucker-DPI
-        description: Druckerauflösung in Punkten pro Zoll für Label-Rendering und PNG-Vorschau.
       label_width_mm:
         name: Labelbreite (mm)
         description: Physische Breite des Labels.
