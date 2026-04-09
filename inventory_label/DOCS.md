@@ -2,9 +2,9 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.83
+## What changed in v0.1.84
 
-This version adds a live preview payload size readout so you can estimate how much ZPL data will be sent to the printer for the current label.
+This version fixes the live preview payload size readout so it actually changes with the current label content by using content-aware chunked graphics instead of one fixed full-label graphic payload.
 
 - added a live preview payload size readout in the preview panel
 - the size readout updates as field values, QR selection, copies, and profile settings change
@@ -139,3 +139,5 @@ Example payload:
   }
 }
 ```
+- printing now sends content-aware chunked graphics instead of one fixed full-label raster graphic
+- the live preview payload size readout now changes with the actual current label content

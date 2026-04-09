@@ -2240,20 +2240,97 @@ def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, pr
     return orient_preview_for_display(canvas, rotation_degrees)
 
 
-def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
+def image_row_has_black(img: Image.Image, y: int, x0: int = 0, x1: int | None = None) -> bool:
+    if img.mode != "1":
+        img = img.convert("1")
+    width, _ = img.size
+    if x1 is None:
+        x1 = width
+    pixels = img.load()
+    for x in range(max(0, x0), min(width, x1)):
+        if pixels[x, y] == 0:
+            return True
+    return False
+
+
+def image_bbox_has_black(img: Image.Image, left: int, top: int, right: int, bottom: int) -> bool:
+    if img.mode != "1":
+        img = img.convert("1")
+    pixels = img.load()
+    width, height = img.size
+    left = max(0, left)
+    top = max(0, top)
+    right = min(width, right)
+    bottom = min(height, bottom)
+    for y in range(top, bottom):
+        for x in range(left, right):
+            if pixels[x, y] == 0:
+                return True
+    return False
+
+
+def detect_content_bands(img: Image.Image, max_band_height: int = 256, row_margin: int = 4, col_margin: int = 4) -> List[Tuple[int, int, int, int]]:
+    if img.mode != "1":
+        img = img.convert("1")
+    width, height = img.size
+    active_rows = [y for y in range(height) if image_row_has_black(img, y)]
+    if not active_rows:
+        return []
+    row_ranges: List[Tuple[int, int]] = []
+    start = active_rows[0]
+    prev = active_rows[0]
+    for y in active_rows[1:]:
+        if y == prev + 1:
+            prev = y
+            continue
+        row_ranges.append((start, prev + 1))
+        start = y
+        prev = y
+    row_ranges.append((start, prev + 1))
+
+    bands: List[Tuple[int, int, int, int]] = []
+    for start_y, end_y in row_ranges:
+        start_y = max(0, start_y - row_margin)
+        end_y = min(height, end_y + row_margin)
+        band_top = start_y
+        while band_top < end_y:
+            band_bottom = min(end_y, band_top + max_band_height)
+            cols = [x for x in range(width) if image_bbox_has_black(img, x, band_top, x + 1, band_bottom)]
+            if cols:
+                left = max(0, cols[0] - col_margin)
+                right = min(width, cols[-1] + 1 + col_margin)
+                bands.append((left, band_top, right, band_bottom))
+            band_top = band_bottom
+    return bands
+
+
+def build_chunked_render_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
     layout = effective_layout(profile)
     pw = layout["effective_width_dots"]
     ll = layout["requested_height_dots"]
     label_img = render_label_image(qr_value, field_forms, profile, preview=False).convert("1")
-    total_bytes, bytes_per_row, graphic_hex = image_to_gfa(label_img)
-    return f"""^XA
-^CI28
-^PW{pw}
-^LL{ll}
-^LH0,0
-^FO0,0^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_hex}^FS
-^PQ{copies},0,1,N
-^XZ"""
+    bands = detect_content_bands(label_img)
+    commands = [
+        "^XA",
+        "^CI28",
+        f"^PW{pw}",
+        f"^LL{ll}",
+        "^LH0,0",
+    ]
+    if not bands:
+        commands.append("^FO0,0^GB1,1,1,W^FS")
+    else:
+        for left, top, right, bottom in bands:
+            crop = label_img.crop((left, top, right, bottom))
+            total_bytes, bytes_per_row, graphic_hex = image_to_gfa(crop)
+            commands.append(f"^FO{left},{top}^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_hex}^FS")
+    commands.append(f"^PQ{copies},0,1,N")
+    commands.append("^XZ")
+    return "\n".join(commands)
+
+
+def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
+    return build_chunked_render_zpl(qr_value, field_forms, copies, profile)
 
 
 def build_preview_size_stats(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> Dict[str, object]:
