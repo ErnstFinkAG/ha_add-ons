@@ -2369,7 +2369,7 @@ def logical_footer_block_elements(draw: ImageDraw.ImageDraw, block: Dict, box_le
     return elements
 
 
-def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
+def build_native_print_context(qr_value: str, field_forms: List[Dict], profile: Dict) -> Dict:
     layout = effective_layout(profile)
     printable_w = layout["effective_width_dots"]
     label_h = layout["requested_height_dots"]
@@ -2381,14 +2381,12 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
     margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
     text_left = margin_x
     text_width = max(1, logical_width - (margin_x * 2))
-    current_y = layout["top_margin_dots"] if rotation == 0 else layout["top_margin_dots"]
+    current_y = layout["top_margin_dots"]
     elements: List[Dict] = []
+    qr_bbox: Tuple[int, int, int, int] | None = None
 
     qr_text = normalize_qr_value(qr_value)
     if qr_text:
-        # Render the QR as its own positioned graphic using the exact same target footprint
-        # as the PNG preview. This keeps print and preview aligned much more closely while
-        # still avoiding a full-label raster job.
         qr_target_size = min(layout["qr_size_dots"], printable_w if rotation == 0 else logical_height)
         if rotation == 0:
             qr_left = max((printable_w - qr_target_size) // 2, 0)
@@ -2404,14 +2402,16 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
             text_left = min(logical_width, qr_left + qr_target_size + inter_block_gap)
             text_width = max(1, logical_width - text_left - mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
             current_y = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+        qr_image = build_qr_image(qr_text, qr_target_size, profile)
         elements.append({
             "type": "graphic",
             "x": qr_left,
             "y": qr_top,
             "width": qr_target_size,
             "height": qr_target_size,
-            "image": build_qr_image(qr_text, qr_target_size, profile),
+            "image": qr_image,
         })
+        qr_bbox = (qr_left, qr_top, qr_target_size, qr_target_size)
 
     for block in body_blocks:
         if block.get("type") == "logo_row":
@@ -2430,6 +2430,73 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
             elements.extend(logical_footer_block_elements(draw, block, text_left, text_width, top_y, profile))
             current_bottom = top_y - mm_to_dots(FOOTER_GAP_MM, profile)
 
+    return {
+        "layout": layout,
+        "printable_w": printable_w,
+        "label_h": label_h,
+        "rotation": rotation,
+        "logical_width": logical_width,
+        "logical_height": logical_height,
+        "elements": elements,
+        "qr_bbox": qr_bbox,
+    }
+
+
+def render_native_output_image(qr_value: str, field_forms: List[Dict], profile: Dict, include_requested_canvas: bool = False, include_qr_outline: bool = False) -> Image.Image:
+    context = build_native_print_context(qr_value, field_forms, profile)
+    printable_w = context["printable_w"]
+    label_h = context["label_h"]
+    rotation = context["rotation"]
+    logical_width = context["logical_width"]
+    logical_height = context["logical_height"]
+    printable_image = Image.new("RGBA", (printable_w, label_h), color=(255, 255, 255, 255))
+    for element in context["elements"]:
+        tx, ty, tw, th = transform_logical_bbox(
+            element["x"],
+            element["y"],
+            element["width"],
+            element["height"],
+            rotation,
+            logical_width,
+            logical_height,
+        )
+        tx = max(0, int(tx))
+        ty = max(0, int(ty))
+        image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation).convert("RGBA")
+        printable_image.alpha_composite(image, (tx, ty))
+
+    final_image = printable_image
+    qr_outline_offset_x = 0
+    if include_requested_canvas:
+        requested_w = context["layout"]["requested_width_dots"]
+        if requested_w > printable_w:
+            canvas = Image.new("RGBA", (requested_w, label_h), color=(255, 255, 255, 255))
+            printable_left = max((requested_w - printable_w) // 2, 0)
+            draw_background_for_preview(canvas, requested_w, label_h, printable_left, printable_w)
+            canvas.alpha_composite(printable_image, (printable_left, 0))
+            final_image = canvas
+            qr_outline_offset_x = printable_left
+
+    if include_qr_outline and context.get("qr_bbox"):
+        draw = ImageDraw.Draw(final_image)
+        qx, qy, qw, qh = context["qr_bbox"]
+        tx, ty, tw, th = transform_logical_bbox(qx, qy, qw, qh, rotation, logical_width, logical_height)
+        tx += qr_outline_offset_x
+        preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
+        draw.rectangle((tx, ty, tx + tw - 1, ty + th - 1), outline=(220, 38, 38), width=preview_border_width)
+
+    if include_requested_canvas:
+        return orient_preview_for_display(final_image, rotation)
+    return final_image
+
+
+def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
+    context = build_native_print_context(qr_value, field_forms, profile)
+    printable_w = context["printable_w"]
+    label_h = context["label_h"]
+    rotation = context["rotation"]
+    logical_width = context["logical_width"]
+    logical_height = context["logical_height"]
     commands = [
         "^XA",
         "^CI28",
@@ -2437,7 +2504,7 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
         f"^LL{label_h}",
         "^LH0,0",
     ]
-    for element in elements:
+    for element in context["elements"]:
         tx, ty, tw, th = transform_logical_bbox(
             element["x"],
             element["y"],
@@ -2457,7 +2524,6 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
     commands.append(f"^PQ{copies},0,1,N")
     commands.append("^XZ")
     return "\n".join(commands)
-
 
 def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
     try:
@@ -3014,16 +3080,18 @@ def preview_png():
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("active_profile_id"), qr_value)
-        img = render_label_image(qr_value, field_forms, opts["active_profile"], preview=True)
+        try:
+            img = render_native_output_image(qr_value, field_forms, opts["active_profile"], include_requested_canvas=True, include_qr_outline=True)
+        except Exception:
+            LOGGER.exception("Native preview render failed, falling back to legacy preview renderer")
+            img = render_label_image(qr_value, field_forms, opts["active_profile"], preview=True)
         bio = BytesIO()
-        dpi = normalize_printer_dpi((opts.get("active_profile") or {}).get("printer_dpi"), DEFAULT_PRINTER_DPI)
-        img.save(bio, format="PNG", dpi=(dpi, dpi), optimize=True)
+        img.save(bio, format="PNG", dpi=(normalize_printer_dpi(opts["active_profile"].get("printer_dpi")), normalize_printer_dpi(opts["active_profile"].get("printer_dpi"))), optimize=True)
         bio.seek(0)
         return send_file(bio, mimetype="image/png", download_name="label-preview.png")
     except Exception as exc:
         LOGGER.exception("PNG preview failed")
         return Response(ui_text(opts, "preview_failed_message", error=exc), status=400, mimetype="text/plain; charset=utf-8")
-
 
 @APP.route("/api/print", methods=["POST"])
 def api_print():

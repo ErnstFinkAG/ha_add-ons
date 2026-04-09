@@ -10,7 +10,7 @@ This version fixes native-print scaling and placement so the printed output matc
 - added `printer_dpi` back into the label profile config and schema
 - fixed PNG logo conversion so transparent logos no longer print almost fully black
 - print output now uses smaller positioned graphics for QR, text, and logos, instead of a full-label raster image
-- the UI preview path stays unchanged
+- the PNG preview now renders from the same hybrid composition path used for printing, so preview and print line up much more closely
 
 ## Profile and field management
 
