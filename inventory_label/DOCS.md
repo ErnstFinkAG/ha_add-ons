@@ -2,25 +2,15 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.79
+## What changed in v0.1.82
 
-This version fixes large QR-code print clipping by splitting oversized graphic fields into printer-safe chunks before sending them.
+This version switches printing to a content-aware chunked graphic path built from the same rendered label image used for preview. The goal is to keep preview and print aligned much more closely while still avoiding sending the whole empty label background to the printer.
 
-- large QR graphics are now split into multiple `^GF` segments so they stay within Zebra command size limits
-- QR print size and placement now match the preview much more closely again on rotated labels
-- add-on version bumped to `0.1.79`
-
-This version fixes native-print scaling and placement so the printed output matches the preview much more closely again. This version makes the printed output line up with the preview more closely again by sending the QR, text, and logos as smaller positioned graphics instead of a full-label raster image.
-
-- QR printing now uses native Zebra QR again for faster print start
-- preview QR is centered using the native QR footprint so preview and print match more closely
-- text and logos remain positioned graphics for layout fidelity
-
-- fixed a regression where label sizing was still effectively based on 203 dpi, which broke 300 dpi profiles
-- added `printer_dpi` back into the label profile config and schema
-- fixed PNG logo conversion so transparent logos no longer print almost fully black
-- print output now uses smaller positioned graphics for QR, text, and logos, instead of a full-label raster image
-- the PNG preview now renders from the same hybrid composition path used for printing, so preview and print line up much more closely
+- print output is now generated from the same rendered label image as the PNG preview
+- only occupied content regions are sent to the printer, instead of one full-label bitmap
+- large regions are split into printer-safe graphic chunks automatically
+- per-profile printer DPI is supported again and used consistently for preview, print layout, logo sizing, QR sizing, margins, and width clamping
+- add-on version bumped to `0.1.82`
 
 ## Profile and field management
 
@@ -48,6 +38,7 @@ label_profiles:
   - id: standard
     name: Standard
     printer_host: ""
+    printer_port: 9100
     printer_dpi: 203
     label_width_mm: 170
     label_height_mm: 305
@@ -61,7 +52,8 @@ label_profiles:
   - id: rotated
     name: Rotated
     printer_host: ""
-    printer_dpi: 300
+    printer_port: 9100
+    printer_dpi: 203
     label_width_mm: 170
     label_height_mm: 305
     qr_size_mm: 160

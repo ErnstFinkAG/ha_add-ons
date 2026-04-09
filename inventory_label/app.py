@@ -36,6 +36,8 @@ APP.logger.propagate = True
 
 DEFAULT_PRINTER_DPI = 203
 PRINTER_MAX_WIDTH_MM = 168.0
+GRAPHIC_FIELD_MAX_BYTES = 99999
+CONTENT_REGION_GAP_MM = 2.0
 INGRESS_ALLOWED_IP = "172.30.32.2"
 LOCAL_ALLOWED_IPS = {"127.0.0.1", "::1", None}
 OPTIONS_PATH = "/data/options.json"
@@ -249,7 +251,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at the configured printer DPI. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
+        "preview_meta": "PNG preview and print are rendered from the same image composition path and exported at the configured printer DPI. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
         "fields_heading": "Configured fields",
         "print_field": "Print",
         "required": "Required",
@@ -349,7 +351,7 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit der konfigurierten Drucker-DPI exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
+        "preview_meta": "PNG-Vorschau und Druck werden aus derselben Bildkomposition erzeugt und mit der konfigurierten Drucker-DPI exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
         "required": "Pflichtfeld",
@@ -1227,18 +1229,6 @@ def dots_per_mm(profile: Dict | None = None, dpi: int | None = None) -> float:
     return resolved_dpi / 25.4
 
 
-def mm_to_dots(mm_value: float, profile: Dict | None = None, dpi: int | None = None) -> int:
-    return max(1, int(round(float(mm_value) * dots_per_mm(profile, dpi))))
-
-
-def dots_to_mm(dots: int, profile: Dict | None = None, dpi: int | None = None) -> float:
-    return round(dots / dots_per_mm(profile, dpi), 1)
-
-
-def printer_max_width_dots(profile: Dict | None = None) -> int:
-    return mm_to_dots(PRINTER_MAX_WIDTH_MM, profile)
-
-
 def sanitize_id(value: str, fallback: str) -> str:
     normalized = re.sub(r"[^a-z0-9_-]+", "_", value.strip().lower()).strip("_")
     return normalized or fallback
@@ -1803,13 +1793,26 @@ def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     return body, (footer_logo_rows + footer_texts)
 
 
+def mm_to_dots(mm_value: float, profile: Dict | None = None, dpi: int | None = None) -> int:
+    return max(1, int(round(float(mm_value) * dots_per_mm(profile, dpi))))
+
+
+def dots_to_mm(dots: int, profile: Dict | None = None, dpi: int | None = None) -> float:
+    return round(dots / dots_per_mm(profile, dpi), 1)
+
+
+def printer_max_width_dots(profile: Dict | None = None) -> int:
+    return mm_to_dots(PRINTER_MAX_WIDTH_MM, profile)
+
+
 def effective_layout(profile: Dict) -> Dict:
     requested_width_dots = mm_to_dots(profile["label_width_mm"], profile)
     requested_height_dots = mm_to_dots(profile["label_height_mm"], profile)
     qr_size_dots = mm_to_dots(profile["qr_size_mm"], profile)
     top_margin_dots = mm_to_dots(profile["top_margin_mm"], profile)
     footer_bottom_margin_dots = mm_to_dots(profile.get("footer_bottom_margin_mm", 0.0), profile)
-    effective_width_dots = min(requested_width_dots, printer_max_width_dots(profile))
+    max_width_dots = printer_max_width_dots(profile)
+    effective_width_dots = min(requested_width_dots, max_width_dots)
     return {
         "requested_width_dots": requested_width_dots,
         "requested_height_dots": requested_height_dots,
@@ -1817,7 +1820,7 @@ def effective_layout(profile: Dict) -> Dict:
         "top_margin_dots": top_margin_dots,
         "footer_bottom_margin_dots": footer_bottom_margin_dots,
         "effective_width_dots": effective_width_dots,
-        "width_warning": requested_width_dots > printer_max_width_dots(profile),
+        "width_warning": requested_width_dots > max_width_dots,
     }
 
 
@@ -1876,59 +1879,91 @@ def image_to_gfa(img: Image.Image) -> Tuple[int, int, str]:
         rows.append("".join(f"{item:02X}" for item in row_bytes))
     return total_bytes, bytes_per_row, "".join(rows)
 
+def occupied_ranges(flags: List[bool], gap_tolerance: int) -> List[Tuple[int, int]]:
+    ranges: List[Tuple[int, int]] = []
+    start: int | None = None
+    gap = 0
+    for idx, active in enumerate(flags):
+        if active:
+            if start is None:
+                start = idx
+            gap = 0
+            continue
+        if start is None:
+            continue
+        if gap < gap_tolerance:
+            gap += 1
+            continue
+        ranges.append((start, idx - gap + 1))
+        start = None
+        gap = 0
+    if start is not None:
+        end = len(flags) - gap
+        ranges.append((start, max(start + 1, end)))
+    return [(start, end) for start, end in ranges if end > start]
 
-def image_to_gfb(img: Image.Image) -> Tuple[int, int, bytes]:
-    if img.mode != "1":
-        img = img.convert("1")
-    width, height = img.size
-    bytes_per_row = (width + 7) // 8
-    total_bytes = bytes_per_row * height
-    pixels = img.load()
-    payload = bytearray()
+
+def occupied_region_rectangles(img: Image.Image, profile: Dict) -> List[Tuple[int, int, int, int]]:
+    bw = img.convert("1") if img.mode != "1" else img
+    width, height = bw.size
+    pixels = bw.load()
+    vertical_gap = max(1, mm_to_dots(CONTENT_REGION_GAP_MM, profile))
+    horizontal_gap = max(1, mm_to_dots(CONTENT_REGION_GAP_MM, profile))
+
+    row_flags: List[bool] = []
     for y in range(height):
-        for byte_idx in range(bytes_per_row):
-            value = 0
-            for bit in range(8):
-                x = (byte_idx * 8) + bit
-                value <<= 1
-                if x < width and pixels[x, y] == 0:
-                    value |= 1
-            payload.append(value)
-    return total_bytes, bytes_per_row, bytes(payload)
+        active = False
+        for x in range(width):
+            if pixels[x, y] == 0:
+                active = True
+                break
+        row_flags.append(active)
+
+    rectangles: List[Tuple[int, int, int, int]] = []
+    for y0, y1 in occupied_ranges(row_flags, vertical_gap):
+        col_flags: List[bool] = []
+        for x in range(width):
+            active = False
+            for y in range(y0, y1):
+                if pixels[x, y] == 0:
+                    active = True
+                    break
+            col_flags.append(active)
+        for x0, x1 in occupied_ranges(col_flags, horizontal_gap):
+            rectangles.append((x0, y0, x1, y1))
+    return rectangles
 
 
-def gfa_chunk_commands(x: int, y: int, img: Image.Image, max_total_bytes: int = 99999) -> List[str]:
-    image = prepare_graphic_image(img)
-    width, height = image.size
-    bytes_per_row = max(1, (width + 7) // 8)
-    max_rows_per_chunk = max(1, min(height, max_total_bytes // bytes_per_row))
+def gfa_commands_for_region(origin_x: int, origin_y: int, img: Image.Image) -> List[str]:
+    bw = img.convert("1") if img.mode != "1" else img
+    width, height = bw.size
+    bytes_per_row = (width + 7) // 8
+    if bytes_per_row <= 0:
+        return []
+    max_rows = max(1, GRAPHIC_FIELD_MAX_BYTES // bytes_per_row)
     commands: List[str] = []
-    row_start = 0
-    while row_start < height:
-        row_end = min(height, row_start + max_rows_per_chunk)
-        chunk = image.crop((0, row_start, width, row_end))
-        total_bytes, chunk_bytes_per_row, graphic_hex = image_to_gfa(chunk)
-        commands.append(f"^FO{int(x)},{int(y + row_start)}^GFA,{total_bytes},{total_bytes},{chunk_bytes_per_row},{graphic_hex}^FS")
-        row_start = row_end
+    current_y = int(origin_y)
+    for row_start in range(0, height, max_rows):
+        row_end = min(height, row_start + max_rows)
+        chunk = bw.crop((0, row_start, width, row_end))
+        total_bytes, bytes_per_row_chunk, graphic_hex = image_to_gfa(chunk)
+        commands.append(f"^FO{int(origin_x)},{current_y}^GFA,{total_bytes},{total_bytes},{bytes_per_row_chunk},{graphic_hex}^FS")
+        current_y += row_end - row_start
     return commands
 
 
-def gfb_chunk_payload(x: int, y: int, img: Image.Image, max_total_bytes: int = 99999) -> bytes:
-    image = prepare_graphic_image(img)
-    width, height = image.size
-    bytes_per_row = max(1, (width + 7) // 8)
-    max_rows_per_chunk = max(1, min(height, max_total_bytes // bytes_per_row))
-    payload = bytearray()
-    row_start = 0
-    while row_start < height:
-        row_end = min(height, row_start + max_rows_per_chunk)
-        chunk = image.crop((0, row_start, width, row_end))
-        total_bytes, chunk_bytes_per_row, graphic_bytes = image_to_gfb(chunk)
-        payload.extend(f"^FO{int(x)},{int(y + row_start)}^GFB,{total_bytes},{total_bytes},{chunk_bytes_per_row},".encode("ascii"))
-        payload.extend(graphic_bytes)
-        payload.extend(b"^FS\n")
-        row_start = row_end
-    return bytes(payload)
+def build_region_chunked_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
+    layout = effective_layout(profile)
+    pw = layout["effective_width_dots"]
+    ll = layout["requested_height_dots"]
+    label_img = render_label_image(qr_value, field_forms, profile, preview=False).convert("1")
+    commands = ["^XA", "^CI28", f"^PW{pw}", f"^LL{ll}", "^LH0,0"]
+    for x0, y0, x1, y1 in occupied_region_rectangles(label_img, profile):
+        region = label_img.crop((x0, y0, x1, y1))
+        commands.extend(gfa_commands_for_region(x0, y0, region))
+    commands.append(f"^PQ{copies},0,1,N")
+    commands.append("^XZ")
+    return "\n".join(commands)
 
 
 def text_line_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
@@ -2250,372 +2285,12 @@ def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, pr
     return orient_preview_for_display(canvas, rotation_degrees)
 
 
-def build_raster_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
-    layout = effective_layout(profile)
-    pw = layout["effective_width_dots"]
-    ll = layout["requested_height_dots"]
-    label_img = render_label_image(qr_value, field_forms, profile, preview=False).convert("1")
-    total_bytes, bytes_per_row, graphic_hex = image_to_gfa(label_img)
-    return f"""^XA
-^CI28
-^PW{pw}
-^LL{ll}
-^LH0,0
-^FO0,0^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_hex}^FS
-^PQ{copies},0,1,N
-^XZ"""
-
-
-def make_measure_draw() -> ImageDraw.ImageDraw:
-    return ImageDraw.Draw(Image.new("RGB", (4, 4), color=(255, 255, 255)))
-
-
-def zpl_orientation_for_rotation(rotation_degrees: int) -> str:
-    return {0: "N", 90: "R", 180: "I", 270: "B"}.get(rotation_degrees, "N")
-
-
-def zpl_hex_encode(text: str) -> str:
-    raw = str(text or "").encode("utf-8")
-    return "".join(f"_{byte:02X}" for byte in raw)
-
-
-def qr_module_count(data: str, profile: Dict) -> int:
-    qr = qrcode.QRCode(
-        version=None,
-        error_correction=qr_error_correction_constant(profile),
-        box_size=1,
-        border=normalize_int(profile.get("qr_quiet_zone_modules"), 3, 0, 20),
-    )
-    qr.add_data(data)
-    qr.make(fit=True)
-    return len(qr.get_matrix())
-
-
-def qr_native_size(data: str, target_size_dots: int, profile: Dict) -> Tuple[int, int]:
-    modules = max(1, qr_module_count(data, profile))
-    magnification = max(1, min(100, target_size_dots // modules))
-    return magnification, modules * magnification
-
-
-def transform_logical_bbox(x: int, y: int, width: int, height: int, rotation_degrees: int, logical_width: int, logical_height: int) -> Tuple[int, int, int, int]:
-    x = int(round(x))
-    y = int(round(y))
-    width = int(round(width))
-    height = int(round(height))
-    if rotation_degrees == 90:
-        return logical_height - (y + height), x, height, width
-    if rotation_degrees == 270:
-        return y, logical_width - (x + width), height, width
-    return x, y, width, height
-
-
-def rotate_graphic_for_rotation(img: Image.Image, rotation_degrees: int) -> Image.Image:
-    if rotation_degrees == 90:
-        return img.transpose(Image.Transpose.ROTATE_270)
-    if rotation_degrees == 270:
-        return img.transpose(Image.Transpose.ROTATE_90)
-    return img
-
-
-def prepare_graphic_image(img: Image.Image, threshold: int = 180) -> Image.Image:
-    if img.mode == "1":
-        return img
-    rgba = img.convert("RGBA")
-    white = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-    white.alpha_composite(rgba)
-    gray = white.convert("L")
-    return gray.point(lambda value: 255 if value >= threshold else 0, mode="1")
-
-
-def render_text_line_image(line: str, font: ImageFont.ImageFont, underline: bool, line_h: int, underline_offset: int, underline_thickness: int) -> Tuple[Image.Image, Tuple[int, int]]:
-    probe = ImageDraw.Draw(Image.new("RGB", (4, 4), color=(255, 255, 255)))
-    bbox = probe.textbbox((0, 0), line, font=font)
-    text_w = max(1, bbox[2] - bbox[0])
-    text_h = max(1, bbox[3] - bbox[1])
-    img_h = text_h
-    if underline:
-        img_h = max(img_h, line_h + underline_offset + underline_thickness)
-    canvas = Image.new("RGBA", (text_w, img_h), color=(255, 255, 255, 255))
-    draw = ImageDraw.Draw(canvas)
-    draw.text((-bbox[0], -bbox[1]), line, font=font, fill=(0, 0, 0, 255))
-    if underline:
-        underline_y = min(img_h - 1, line_h + underline_offset)
-        draw.rectangle((0, underline_y, max(0, text_w - 1), min(img_h - 1, underline_y + underline_thickness - 1)), fill=(0, 0, 0, 255))
-    return prepare_graphic_image(canvas), (bbox[0], bbox[1])
-
-
-def line_alignment_x(box_left: int, box_width: int, text_width: int, alignment: str) -> int:
-    if alignment == "left":
-        return int(round(box_left))
-    if alignment == "right":
-        return int(round(box_left + box_width - text_width))
-    return int(round(box_left + ((box_width - text_width) / 2)))
-
-
-def logical_text_lines(draw: ImageDraw.ImageDraw, block: Dict, box_left: int, box_width: int, top_y: int, profile: Dict) -> Tuple[List[Dict], int]:
-    font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width, profile)
-    spacing = max(4, resolved // 7)
-    line_h = text_line_height(draw, font)
-    underline_thickness = max(1, line_h // 18)
-    underline_offset = max(2, line_h // 12)
-    elements: List[Dict] = []
-    current_y = int(round(top_y))
-    for idx, line in enumerate(lines):
-        bbox = draw.textbbox((0, 0), line, font=font)
-        text_w = max(1, bbox[2] - bbox[0])
-        x = line_alignment_x(box_left, box_width, text_w, block["alignment"])
-        text_image, bbox_offset = render_text_line_image(line, font, bool(block.get("underline")), line_h, underline_offset, underline_thickness)
-        elements.append({
-            "type": "graphic",
-            "x": x + bbox_offset[0],
-            "y": current_y + bbox_offset[1],
-            "width": text_image.width,
-            "height": text_image.height,
-            "image": text_image,
-        })
-        current_y += line_h
-        if idx < len(lines) - 1:
-            current_y += spacing
-    return elements, current_y
-
-
-def logical_logo_row_elements(block: Dict, box_left: int, box_width: int, top_y: int, profile: Dict) -> Tuple[List[Dict], int]:
-    logos = fit_logo_row_images(block, box_width, profile)
-    if not logos:
-        return [], int(round(top_y))
-    gap = mm_to_dots(DEFAULT_LOGO_GAP_MM, profile)
-    total_width = sum(logo.width for logo in logos) + (gap * max(0, len(logos) - 1))
-    max_height = max(logo.height for logo in logos)
-    if block["alignment"] == "left":
-        start_x = box_left
-    elif block["alignment"] == "right":
-        start_x = box_left + box_width - total_width
-    else:
-        start_x = box_left + ((box_width - total_width) / 2)
-    current_x = int(round(start_x))
-    elements: List[Dict] = []
-    for idx, logo in enumerate(logos):
-        logo_y = int(round(top_y + max_height - logo.height))
-        elements.append({
-            "type": "graphic",
-            "x": current_x,
-            "y": logo_y,
-            "width": logo.width,
-            "height": logo.height,
-            "image": prepare_graphic_image(logo),
-        })
-        current_x += logo.width
-        if idx < len(logos) - 1:
-            current_x += gap
-    return elements, int(round(top_y + max_height))
-
-
-def logical_block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int, profile: Dict) -> int:
-    total_h, _, _, _ = block_height(draw, block, box_width, profile)
-    return int(total_h)
-
-
-def logical_footer_block_elements(draw: ImageDraw.ImageDraw, block: Dict, box_left: int, box_width: int, top_y: int, profile: Dict) -> List[Dict]:
-    if block.get("type") == "logo_row":
-        elements, _ = logical_logo_row_elements(block, box_left, box_width, top_y, profile)
-        return elements
-    elements, _ = logical_text_lines(draw, block, box_left, box_width, top_y, profile)
-    return elements
-
-
-def build_native_print_context(qr_value: str, field_forms: List[Dict], profile: Dict) -> Dict:
-    layout = effective_layout(profile)
-    printable_w = layout["effective_width_dots"]
-    label_h = layout["requested_height_dots"]
-    rotation = profile.get("print_rotation_degrees", 0)
-    body_blocks, footer_blocks = fields_to_blocks(field_forms)
-    draw = make_measure_draw()
-    logical_width = printable_w if rotation == 0 else label_h
-    logical_height = label_h if rotation == 0 else printable_w
-    margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    text_left = margin_x
-    text_width = max(1, logical_width - (margin_x * 2))
-    current_y = layout["top_margin_dots"]
-    elements: List[Dict] = []
-    qr_bbox: Tuple[int, int, int, int] | None = None
-
-    qr_text = normalize_qr_value(qr_value)
-    if qr_text:
-        qr_target_size = min(layout["qr_size_dots"], printable_w if rotation == 0 else logical_height)
-
-        if rotation == 0:
-            qr_left = max((printable_w - qr_target_size) // 2, 0)
-            qr_top = layout["top_margin_dots"]
-            margin_x = max((printable_w - qr_target_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
-            text_left = margin_x
-            text_width = max(1, printable_w - (margin_x * 2))
-            current_y = qr_top + qr_target_size + mm_to_dots(8, profile)
-        else:
-            qr_left = min(max(layout["top_margin_dots"], 0), max(0, logical_width - qr_target_size))
-            qr_top = max((logical_height - qr_target_size) // 2, 0)
-            inter_block_gap = mm_to_dots(8, profile)
-            text_left = min(logical_width, qr_left + qr_target_size + inter_block_gap)
-            text_width = max(1, logical_width - text_left - mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
-            current_y = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-
-        qr_image = build_qr_image(qr_text, qr_target_size, profile)
-        elements.append({
-            "type": "graphic",
-            "x": qr_left,
-            "y": qr_top,
-            "width": qr_target_size,
-            "height": qr_target_size,
-            "image": qr_image,
-        })
-        qr_bbox = (qr_left, qr_top, qr_target_size, qr_target_size)
-
-    for block in body_blocks:
-        if block.get("type") == "logo_row":
-            block_elements, current_y = logical_logo_row_elements(block, text_left, text_width, current_y, profile)
-        else:
-            block_elements, current_y = logical_text_lines(draw, block, text_left, text_width, current_y, profile)
-        elements.extend(block_elements)
-        current_y += mm_to_dots(FIELD_GAP_MM, profile)
-
-    if footer_blocks:
-        current_bottom = logical_height - layout["footer_bottom_margin_dots"]
-        for block in reversed(footer_blocks):
-            current_bottom -= max(0, mm_to_dots(float(block.get("footer_bottom_margin_mm", 0.0)), profile))
-            total_h = logical_block_height(draw, block, text_width, profile)
-            top_y = current_bottom - total_h
-            elements.extend(logical_footer_block_elements(draw, block, text_left, text_width, top_y, profile))
-            current_bottom = top_y - mm_to_dots(FOOTER_GAP_MM, profile)
-
-    return {
-        "layout": layout,
-        "printable_w": printable_w,
-        "label_h": label_h,
-        "rotation": rotation,
-        "logical_width": logical_width,
-        "logical_height": logical_height,
-        "elements": elements,
-        "qr_bbox": qr_bbox,
-    }
-
-
-def render_native_output_image(qr_value: str, field_forms: List[Dict], profile: Dict, include_requested_canvas: bool = False, include_qr_outline: bool = False) -> Image.Image:
-    context = build_native_print_context(qr_value, field_forms, profile)
-    printable_w = context["printable_w"]
-    label_h = context["label_h"]
-    rotation = context["rotation"]
-    logical_width = context["logical_width"]
-    logical_height = context["logical_height"]
-    printable_image = Image.new("RGBA", (printable_w, label_h), color=(255, 255, 255, 255))
-    for element in context["elements"]:
-        tx, ty, tw, th = transform_logical_bbox(
-            element["x"],
-            element["y"],
-            element["width"],
-            element["height"],
-            rotation,
-            logical_width,
-            logical_height,
-        )
-        tx = max(0, int(tx))
-        ty = max(0, int(ty))
-        image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation).convert("RGBA")
-        printable_image.alpha_composite(image, (tx, ty))
-
-    final_image = printable_image
-    qr_outline_offset_x = 0
-    if include_requested_canvas:
-        requested_w = context["layout"]["requested_width_dots"]
-        if requested_w > printable_w:
-            canvas = Image.new("RGBA", (requested_w, label_h), color=(255, 255, 255, 255))
-            printable_left = max((requested_w - printable_w) // 2, 0)
-            draw_background_for_preview(canvas, requested_w, label_h, printable_left, printable_w)
-            canvas.alpha_composite(printable_image, (printable_left, 0))
-            final_image = canvas
-            qr_outline_offset_x = printable_left
-
-    if include_qr_outline and context.get("qr_bbox"):
-        draw = ImageDraw.Draw(final_image)
-        qx, qy, qw, qh = context["qr_bbox"]
-        tx, ty, tw, th = transform_logical_bbox(qx, qy, qw, qh, rotation, logical_width, logical_height)
-        tx += qr_outline_offset_x
-        preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
-        draw.rectangle((tx, ty, tx + tw - 1, ty + th - 1), outline=(220, 38, 38), width=preview_border_width)
-
-    if include_requested_canvas:
-        return orient_preview_for_display(final_image, rotation)
-    return final_image
-
-
-def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
-    context = build_native_print_context(qr_value, field_forms, profile)
-    printable_w = context["printable_w"]
-    label_h = context["label_h"]
-    rotation = context["rotation"]
-    logical_width = context["logical_width"]
-    logical_height = context["logical_height"]
-    commands = [
-        "^XA",
-        "^CI28",
-        f"^PW{printable_w}",
-        f"^LL{label_h}",
-        "^LH0,0",
-    ]
-    for element in context["elements"]:
-        tx, ty, tw, th = transform_logical_bbox(
-            element["x"],
-            element["y"],
-            element["width"],
-            element["height"],
-            rotation,
-            logical_width,
-            logical_height,
-        )
-        tx = max(0, int(tx))
-        ty = max(0, int(ty))
-        image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation)
-        commands.extend(gfa_chunk_commands(tx, ty, image))
-    commands.append(f"^PQ{copies},0,1,N")
-    commands.append("^XZ")
-    return "\n".join(commands)
-
-
-def build_print_payload(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> bytes:
-    context = build_native_print_context(qr_value, field_forms, profile)
-    printable_w = context["printable_w"]
-    label_h = context["label_h"]
-    rotation = context["rotation"]
-    logical_width = context["logical_width"]
-    logical_height = context["logical_height"]
-    payload = bytearray()
-    payload.extend(f"^XA\n^CI28\n^PW{printable_w}\n^LL{label_h}\n^LH0,0\n".encode("ascii"))
-    for element in context["elements"]:
-        tx, ty, tw, th = transform_logical_bbox(
-            element["x"],
-            element["y"],
-            element["width"],
-            element["height"],
-            rotation,
-            logical_width,
-            logical_height,
-        )
-        tx = max(0, int(tx))
-        ty = max(0, int(ty))
-        image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation)
-        payload.extend(gfb_chunk_payload(tx, ty, image))
-    payload.extend(f"^PQ{copies},0,1,N\n^XZ".encode("ascii"))
-    return bytes(payload)
-
-
 def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
-    try:
-        return build_native_zpl(qr_value, field_forms, copies, profile)
-    except Exception:
-        LOGGER.exception("Native ZPL build failed, falling back to raster output")
-        return build_raster_zpl(qr_value, field_forms, copies, profile)
+    return build_region_chunked_zpl(qr_value, field_forms, copies, profile)
 
 
-def send_to_printer(host: str, port: int, payload: str | bytes) -> None:
-    data = payload.encode("utf-8") if isinstance(payload, str) else bytes(payload)
+def send_to_printer(host: str, port: int, payload: str) -> None:
+    data = payload.encode("utf-8")
     LOGGER.info("Sending %s bytes to printer %s:%s", len(data), host, port)
     with socket.create_connection((host, int(port)), timeout=10) as sock:
         sock.sendall(data)
@@ -3012,10 +2687,10 @@ def print_label():
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
-        payload = build_print_payload(qr_value, field_forms, copies, profile)
+        zpl = build_zpl(qr_value, field_forms, copies, profile)
         host, port = resolve_printer_target(profile, opts)
         LOGGER.info("Print request received: profile=%s copies=%s qr_payload=%r", profile.get("id"), copies, qr_value)
-        send_to_printer(host, port, payload)
+        send_to_printer(host, port, zpl)
         result = {"success": True, "message": ui_text(opts, "sent_labels_message", copies=copies, host=host, port=port, qr_payload=qr_value or ui_text(opts, "none"))}
     except Exception as exc:
         LOGGER.exception("Print failed")
@@ -3161,11 +2836,7 @@ def preview_png():
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("active_profile_id"), qr_value)
-        try:
-            img = render_native_output_image(qr_value, field_forms, opts["active_profile"], include_requested_canvas=True, include_qr_outline=True)
-        except Exception:
-            LOGGER.exception("Native preview render failed, falling back to legacy preview renderer")
-            img = render_label_image(qr_value, field_forms, opts["active_profile"], preview=True)
+        img = render_label_image(qr_value, field_forms, opts["active_profile"], preview=True)
         bio = BytesIO()
         img.save(bio, format="PNG", dpi=(normalize_printer_dpi(opts["active_profile"].get("printer_dpi")), normalize_printer_dpi(opts["active_profile"].get("printer_dpi"))), optimize=True)
         bio.seek(0)
@@ -3173,6 +2844,7 @@ def preview_png():
     except Exception as exc:
         LOGGER.exception("PNG preview failed")
         return Response(ui_text(opts, "preview_failed_message", error=exc), status=400, mimetype="text/plain; charset=utf-8")
+
 
 @APP.route("/api/print", methods=["POST"])
 def api_print():
@@ -3184,10 +2856,10 @@ def api_print():
         qr_field_ids = selected_qr_field_ids_from_source(profile, payload)
         qr_value = qr_payload_from_field_forms(field_forms, qr_field_ids) if qr_field_ids else normalize_qr_value(payload.get("qr_value", profile.get("qr_default_value", "")))
         copies = max(1, min(50, int(payload.get("copies", 1))))
-        payload = build_print_payload(qr_value, field_forms, copies, profile)
+        zpl = build_zpl(qr_value, field_forms, copies, profile)
         host, port = resolve_printer_target(profile, opts)
         LOGGER.info("API print request received: profile=%s copies=%s qr_value=%r", profile.get("id"), copies, qr_value)
-        send_to_printer(host, port, payload)
+        send_to_printer(host, port, zpl)
         return jsonify({
             "ok": True,
             "profile_id": profile.get("id", ""),
