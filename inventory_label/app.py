@@ -2404,30 +2404,38 @@ def build_native_print_context(qr_value: str, field_forms: List[Dict], profile: 
     qr_text = normalize_qr_value(qr_value)
     if qr_text:
         qr_target_size = min(layout["qr_size_dots"], printable_w if rotation == 0 else logical_height)
+        magnification, qr_actual_size = qr_native_size(qr_text, qr_target_size, profile)
+        qr_inset = max(0, (qr_target_size - qr_actual_size) // 2)
+
         if rotation == 0:
-            qr_left = max((printable_w - qr_target_size) // 2, 0)
-            qr_top = layout["top_margin_dots"]
+            qr_target_left = max((printable_w - qr_target_size) // 2, 0)
+            qr_target_top = layout["top_margin_dots"]
+            qr_left = qr_target_left + qr_inset
+            qr_top = qr_target_top + qr_inset
             margin_x = max((printable_w - qr_target_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
             text_left = margin_x
             text_width = max(1, printable_w - (margin_x * 2))
-            current_y = qr_top + qr_target_size + mm_to_dots(8, profile)
+            current_y = qr_target_top + qr_target_size + mm_to_dots(8, profile)
         else:
-            qr_left = min(max(layout["top_margin_dots"], 0), max(0, logical_width - qr_target_size))
-            qr_top = max((logical_height - qr_target_size) // 2, 0)
+            qr_target_left = min(max(layout["top_margin_dots"], 0), max(0, logical_width - qr_target_size))
+            qr_target_top = max((logical_height - qr_target_size) // 2, 0)
+            qr_left = qr_target_left + qr_inset
+            qr_top = qr_target_top + qr_inset
             inter_block_gap = mm_to_dots(8, profile)
-            text_left = min(logical_width, qr_left + qr_target_size + inter_block_gap)
+            text_left = min(logical_width, qr_target_left + qr_target_size + inter_block_gap)
             text_width = max(1, logical_width - text_left - mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
             current_y = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-        qr_image = build_qr_image(qr_text, qr_target_size, profile)
+
         elements.append({
-            "type": "graphic",
+            "type": "qr_native",
             "x": qr_left,
             "y": qr_top,
-            "width": qr_target_size,
-            "height": qr_target_size,
-            "image": qr_image,
+            "width": qr_actual_size,
+            "height": qr_actual_size,
+            "magnification": magnification,
+            "data": qr_text,
         })
-        qr_bbox = (qr_left, qr_top, qr_target_size, qr_target_size)
+        qr_bbox = (qr_left, qr_top, qr_actual_size, qr_actual_size)
 
     for block in body_blocks:
         if block.get("type") == "logo_row":
@@ -2478,7 +2486,11 @@ def render_native_output_image(qr_value: str, field_forms: List[Dict], profile: 
         )
         tx = max(0, int(tx))
         ty = max(0, int(ty))
-        image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation).convert("RGBA")
+        if element["type"] == "qr_native":
+            image = build_qr_image(str(element["data"]), int(element["width"]), profile)
+        else:
+            image = prepare_graphic_image(element["image"])
+        image = rotate_graphic_for_rotation(prepare_graphic_image(image), rotation).convert("RGBA")
         printable_image.alpha_composite(image, (tx, ty))
 
     final_image = printable_image
@@ -2520,6 +2532,9 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
         f"^LL{label_h}",
         "^LH0,0",
     ]
+    qr_ecc = str(profile.get("qr_error_correction") or "M").strip().upper()
+    if qr_ecc not in {"L", "M", "Q", "H"}:
+        qr_ecc = "M"
     for element in context["elements"]:
         tx, ty, tw, th = transform_logical_bbox(
             element["x"],
@@ -2532,6 +2547,9 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
         )
         tx = max(0, int(tx))
         ty = max(0, int(ty))
+        if element["type"] == "qr_native":
+            commands.append(f"^FO{tx},{ty}^BQN,2,{int(element['magnification'])}^FD{qr_ecc}A,{str(element['data'])}^FS")
+            continue
         if element["type"] == "graphic":
             image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation)
             commands.extend(gfa_chunk_commands(tx, ty, image))

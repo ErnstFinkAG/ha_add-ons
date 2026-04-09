@@ -12,6 +12,10 @@ This version fixes large QR-code print clipping by splitting oversized graphic f
 
 This version fixes native-print scaling and placement so the printed output matches the preview much more closely again. This version makes the printed output line up with the preview more closely again by sending the QR, text, and logos as smaller positioned graphics instead of a full-label raster image.
 
+- QR printing now uses native Zebra QR again for faster print start
+- preview QR is centered using the native QR footprint so preview and print match more closely
+- text and logos remain positioned graphics for layout fidelity
+
 - fixed a regression where label sizing was still effectively based on 203 dpi, which broke 300 dpi profiles
 - added `printer_dpi` back into the label profile config and schema
 - fixed PNG logo conversion so transparent logos no longer print almost fully black
