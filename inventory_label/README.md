@@ -2,14 +2,14 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.53
+## What changed in v0.1.83
 
-This version moves the copies input next to the print button in the preview panel, shows the active label profile at the top of configured fields, and keeps logo tiles in the configured fields area image-only.
+This version adds a live preview payload size readout so you can estimate how much ZPL data will be sent to the printer for the current label.
 
-- logo selections in configured fields now show only the image checkboxes
-- the copies input now sits directly to the left of the print button in the preview section
-- the active label profile is shown at the top of configured fields
-- the two-column configured-fields layout stays unchanged
+- added a live preview payload size readout in the preview panel
+- the size readout updates as field values, QR selection, copies, and profile settings change
+- the readout shows estimated print payload bytes, character count, and graphic field count
+- the preview metadata text now refers to the configured printer DPI instead of a fixed 203 dpi
 
 ## Profile and field management
 

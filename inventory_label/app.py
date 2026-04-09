@@ -247,7 +247,10 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at the configured printer DPI. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
+        "preview_payload_size_label": "Estimated print payload",
+        "preview_payload_size_loading": "Calculating…",
+        "preview_payload_size_error": "Unavailable",
         "fields_heading": "Configured fields",
         "print_field": "Print",
         "required": "Required",
@@ -354,7 +357,10 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit 203 dpi exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
+        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit der konfigurierten Drucker-DPI exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
+        "preview_payload_size_label": "Geschätzte Druckdaten",
+        "preview_payload_size_loading": "Wird berechnet…",
+        "preview_payload_size_error": "Nicht verfügbar",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
         "required": "Pflichtfeld",
@@ -616,6 +622,7 @@ HTML = """
               </div>
             </div>
             <div class="preview-meta">{{ ui.preview_meta }}</div>
+            <div class="preview-meta"><strong>{{ ui.preview_payload_size_label }}:</strong> <span id="preview-size-readout">{{ preview_size_text }}</span></div>
             <div class="preview-actions">
               <div class="copies-inline">
                 <label for="copies">{{ ui.copies }}</label>
@@ -903,6 +910,7 @@ HTML = """
       const previewStage = document.querySelector(".preview-stage");
       const previewPngLink = document.getElementById("preview-png-link");
       const previewZplLink = document.getElementById("preview-zpl-link");
+      const previewSizeReadout = document.getElementById("preview-size-readout");
       const newFieldButton = document.getElementById("new-field-button");
       const fieldEditorForm = document.getElementById("field-editor-form");
       const fieldData = {{ field_editor_json|tojson }};
@@ -917,6 +925,9 @@ HTML = """
       const defaultLogoLabelText = {{ ui.default_logo_label|tojson }};
       const logoOrderLabelText = {{ ui.logo_order_label|tojson }};
       const removeLogoLabelText = {{ ui.remove_logo_label|tojson }};
+      const previewSizeLoadingText = {{ ui.preview_payload_size_loading|tojson }};
+      const previewSizeErrorText = {{ ui.preview_payload_size_error|tojson }};
+      let previewSizeAbortController = null;
 
       function sanitizeNumericInput(input) {
         if (!input || input.dataset.numberOnly !== "1") return;
@@ -971,6 +982,28 @@ HTML = """
         previewImage.src = `${ingressBase}/preview.png?${pngParams.toString()}`;
         previewPngLink.href = `${ingressBase}/preview.png?${params.toString()}`;
         previewZplLink.href = `${ingressBase}/preview?${params.toString()}`;
+        applyPreviewSizeUpdate(params);
+      }
+
+      function applyPreviewSizeUpdate(params) {
+        if (!previewSizeReadout) return;
+        if (previewSizeAbortController) previewSizeAbortController.abort();
+        previewSizeAbortController = new AbortController();
+        previewSizeReadout.textContent = previewSizeLoadingText;
+        fetch(`${ingressBase}/preview-size?${params.toString()}`, {signal: previewSizeAbortController.signal})
+          .then((response) => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+          })
+          .then((payload) => {
+            if (!previewSizeReadout) return;
+            previewSizeReadout.textContent = payload.display || previewSizeErrorText;
+          })
+          .catch((error) => {
+            if (error && error.name === "AbortError") return;
+            console.warn("Failed to update preview size", error);
+            if (previewSizeReadout) previewSizeReadout.textContent = previewSizeErrorText;
+          });
       }
 
       function schedulePreviewUpdate() {
@@ -2223,6 +2256,41 @@ def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict
 ^XZ"""
 
 
+def build_preview_size_stats(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> Dict[str, object]:
+    zpl = build_zpl(qr_value, field_forms, copies, profile)
+    payload_bytes = len(zpl.encode("utf-8"))
+    payload_chars = len(zpl)
+    graphic_fields = zpl.count("^GF")
+    return {
+        "bytes": payload_bytes,
+        "chars": payload_chars,
+        "graphic_fields": graphic_fields,
+    }
+
+
+def human_size_bytes(size: int) -> str:
+    units = ["B", "KB", "MB", "GB"]
+    value = float(max(0, size))
+    unit = units[0]
+    for candidate in units:
+        unit = candidate
+        if value < 1024.0 or candidate == units[-1]:
+            break
+        value /= 1024.0
+    if unit == "B":
+        return f"{int(value)} {unit}"
+    return f"{value:.1f} {unit}"
+
+
+def preview_size_display(stats: Dict[str, object]) -> str:
+    size_text = human_size_bytes(int(stats.get("bytes", 0)))
+    chars_text = f"{int(stats.get('chars', 0)):,} chars"
+    graphics = int(stats.get("graphic_fields", 0))
+    if graphics > 0:
+        return f"{size_text} · {chars_text} · {graphics} ^GF"
+    return f"{size_text} · {chars_text}"
+
+
 def send_to_printer(host: str, port: int, payload: str) -> None:
     data = payload.encode("utf-8")
     LOGGER.info("Sending %s bytes to printer %s:%s", len(data), host, port)
@@ -2532,6 +2600,11 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         for field in field_forms if not field_supports_logos(field)
     ]
     editor_form = editor_form or blank_editor_form()
+    try:
+        preview_size_text = preview_size_display(build_preview_size_stats(qr_preview if qr_preview != ui["none"] else "", field_forms, max(1, min(50, int(form.get("copies", "1")))), profile))
+    except Exception:
+        LOGGER.exception("Preview size calculation failed during page render")
+        preview_size_text = ui["preview_payload_size_error"]
     return render_template_string(
         HTML,
         ui=ui,
@@ -2560,6 +2633,7 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         preview_display_height_mm=preview_display_height_mm,
         ingress_base=ingress_base_path(),
         preview_query=preview_query_from_form(form, field_forms),
+        preview_size_text=preview_size_text,
         editor_form=editor_form,
             field_editor_json=field_store_map_for_profile(profile),
         qr_field_options=qr_field_options,
@@ -2798,6 +2872,21 @@ def serve_logo_asset(storage_name: str):
     if not os.path.exists(path):
         return Response("Not found", status=404)
     return send_file(path, mimetype="image/png")
+
+
+@APP.route("/preview-size", methods=["GET"])
+def preview_size():
+    opts = load_runtime_options()
+    form, field_forms = form_data_from_request(opts)
+    try:
+        field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
+        copies = max(1, min(50, int(form.get("copies", "1"))))
+        stats = build_preview_size_stats(qr_value, field_forms, copies, opts.get("active_profile") or {})
+        return jsonify({**stats, "display": preview_size_display(stats)})
+    except Exception as exc:
+        LOGGER.exception("Preview size calculation failed")
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 @APP.route("/preview", methods=["GET"])
