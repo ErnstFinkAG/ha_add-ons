@@ -2369,6 +2369,25 @@ def logical_footer_block_elements(draw: ImageDraw.ImageDraw, block: Dict, box_le
     return elements
 
 
+def can_render_qr_natively(data: str) -> bool:
+    if not data:
+        return False
+    for char in data:
+        codepoint = ord(char)
+        if codepoint < 32 or codepoint > 126:
+            return False
+        if char in {"^", "~"}:
+            return False
+    return True
+
+
+def native_qr_preview_image(data: str, target_size_dots: int, profile: Dict) -> Tuple[Image.Image, int, int]:
+    magnification, actual_size = qr_native_size(data, target_size_dots, profile)
+    actual_size = max(1, min(target_size_dots, actual_size))
+    qr_img = build_qr_image(data, actual_size, profile)
+    return qr_img, magnification, actual_size
+
+
 def build_native_print_context(qr_value: str, field_forms: List[Dict], profile: Dict) -> Dict:
     layout = effective_layout(profile)
     printable_w = layout["effective_width_dots"]
@@ -2402,16 +2421,32 @@ def build_native_print_context(qr_value: str, field_forms: List[Dict], profile: 
             text_left = min(logical_width, qr_left + qr_target_size + inter_block_gap)
             text_width = max(1, logical_width - text_left - mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
             current_y = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-        qr_image = build_qr_image(qr_text, qr_target_size, profile)
-        elements.append({
-            "type": "graphic",
-            "x": qr_left,
-            "y": qr_top,
-            "width": qr_target_size,
-            "height": qr_target_size,
-            "image": qr_image,
-        })
         qr_bbox = (qr_left, qr_top, qr_target_size, qr_target_size)
+        if can_render_qr_natively(qr_text):
+            qr_img, magnification, actual_size = native_qr_preview_image(qr_text, qr_target_size, profile)
+            qr_draw_left = qr_left + max(0, (qr_target_size - actual_size) // 2)
+            qr_draw_top = qr_top + max(0, (qr_target_size - actual_size) // 2)
+            elements.append({
+                "type": "native_qr",
+                "x": qr_draw_left,
+                "y": qr_draw_top,
+                "width": actual_size,
+                "height": actual_size,
+                "image": qr_img,
+                "magnification": magnification,
+                "data": qr_text,
+                "error_correction": str(profile.get("qr_error_correction") or "M").strip().upper(),
+            })
+        else:
+            qr_image = build_qr_image(qr_text, qr_target_size, profile)
+            elements.append({
+                "type": "graphic",
+                "x": qr_left,
+                "y": qr_top,
+                "width": qr_target_size,
+                "height": qr_target_size,
+                "image": qr_image,
+            })
 
     for block in body_blocks:
         if block.get("type") == "logo_row":
@@ -2516,6 +2551,16 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
         )
         tx = max(0, int(tx))
         ty = max(0, int(ty))
+        if element["type"] == "native_qr":
+            orientation = zpl_orientation_for_rotation(rotation)
+            model = 2
+            magnification = max(1, min(100, int(element.get("magnification", 1))))
+            error_correction = str(element.get("error_correction") or "M").strip().upper()
+            if error_correction not in {"H", "Q", "M", "L"}:
+                error_correction = "M"
+            data = str(element.get("data") or "")
+            commands.append(f"^FO{tx},{ty}^BQ{orientation},{model},{magnification}^FD{error_correction}A,{data}^FS")
+            continue
         if element["type"] == "graphic":
             image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation)
             total_bytes, bytes_per_row, graphic_hex = image_to_gfa(image)

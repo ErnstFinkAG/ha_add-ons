@@ -2,15 +2,16 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.77
+## What changed in v0.1.78
 
-This version fixes native-print scaling and placement so the printed output matches the preview much more closely again. This version makes the printed output line up with the preview more closely again by sending the QR, text, and logos as smaller positioned graphics instead of a full-label raster image.
+This version restores faster print starts by sending the QR code as native Zebra QR again while keeping text and logos as positioned graphics. The preview now simulates the native QR footprint inside the configured QR box so preview and print stay closer together.
 
 - fixed a regression where label sizing was still effectively based on 203 dpi, which broke 300 dpi profiles
 - added `printer_dpi` back into the label profile config and schema
 - fixed PNG logo conversion so transparent logos no longer print almost fully black
-- print output now uses smaller positioned graphics for QR, text, and logos, instead of a full-label raster image
-- the PNG preview now renders from the same hybrid composition path used for printing, so preview and print line up much more closely
+- print output now uses native Zebra QR for the QR code, while text and logos stay as smaller positioned graphics
+- the native QR is centered inside its configured QR footprint so rotated labels line up better vertically
+- the PNG preview simulates the same native QR footprint used for printing, so preview and print stay closer together
 
 ## Profile and field management
 
