@@ -248,7 +248,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at {dpi} dpi. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at {dpi} dpi. Printing uses native ZPL for QR and text on 0° labels and only sends logos as graphics; rotated labels fall back to full-image raster output. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
         "fields_heading": "Configured fields",
         "print_field": "Print",
         "required": "Required",
@@ -348,7 +348,7 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit {dpi} dpi exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
+        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit {dpi} dpi exportiert. Beim Drucken wird für 0°-Labels natives ZPL für QR und Text verwendet; nur Logos werden als Grafik gesendet. Gedrehte Labels fallen auf vollständige Rasterausgabe zurück. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
         "required": "Pflichtfeld",
@@ -2202,7 +2202,158 @@ def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, pr
     return orient_preview_for_display(canvas, rotation_degrees)
 
 
-def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
+def zpl_hex_escape_utf8(text: str, indicator: str = "\\") -> str:
+    return "".join(f"{indicator}{byte:02X}" for byte in str(text or "").encode("utf-8"))
+
+
+def qr_native_spec(data: str, target_size_dots: int, profile: Dict) -> Dict[str, int]:
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qr_error_correction_constant(profile),
+        box_size=1,
+        border=normalize_int(profile.get("qr_quiet_zone_modules"), 3, 0, 20),
+    )
+    qr.add_data(data)
+    qr.make(fit=True)
+    total_modules = int(qr.modules_count) + (normalize_int(profile.get("qr_quiet_zone_modules"), 3, 0, 20) * 2)
+    magnification = max(1, min(100, int(target_size_dots) // max(1, total_modules)))
+    actual_size = max(1, total_modules * magnification)
+    return {"magnification": magnification, "actual_size": actual_size, "total_modules": total_modules}
+
+
+def zpl_font_width(height: int, family: str) -> int:
+    family = normalize_font_family(family, "sans")
+    scale = 0.95 if family == "mono" else 0.9 if family == "serif" else 0.85
+    return max(10, int(round(int(height) * scale)))
+
+
+def logo_to_monochrome(logo: Image.Image) -> Image.Image:
+    flattened = Image.new("RGBA", logo.size, (255, 255, 255, 255))
+    flattened.alpha_composite(logo)
+    grayscale = flattened.convert("L")
+    return grayscale.point(lambda px: 255 if px >= 200 else 0, mode="1")
+
+
+def text_x_position(text_width: int, box_left: int, box_width: int, alignment: str) -> int:
+    if alignment == "left":
+        return int(round(box_left))
+    if alignment == "right":
+        return int(round(box_left + box_width - text_width))
+    return int(round(box_left + ((box_width - text_width) / 2)))
+
+
+def measure_text_block_elements(draw: ImageDraw.ImageDraw, block: Dict, top_y: int, box_left: int, box_width: int) -> Tuple[List[Dict], int]:
+    font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
+    spacing = max(4, resolved // 7)
+    line_h = text_line_height(draw, font)
+    underline_thickness = max(1, line_h // 18)
+    underline_offset = max(2, line_h // 12)
+    current_y = int(round(top_y))
+    elements: List[Dict] = []
+    for idx, line in enumerate(lines):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        text_w = max(1, bbox[2] - bbox[0])
+        x = text_x_position(text_w, box_left, box_width, block["alignment"])
+        elements.append({
+            "type": "text_line",
+            "x": x,
+            "y": current_y,
+            "text": line,
+            "font_height": max(10, int(resolved)),
+            "font_width": zpl_font_width(max(10, int(resolved)), block.get("font_family", "sans")),
+            "bold": normalize_bool(block.get("bold"), False),
+            "underline": normalize_bool(block.get("underline"), False),
+            "underline_y": current_y + line_h + underline_offset,
+            "underline_thickness": underline_thickness,
+            "text_width": text_w,
+        })
+        current_y += line_h
+        if idx < len(lines) - 1:
+            current_y += spacing
+    return elements, current_y
+
+
+def measure_logo_row_elements(block: Dict, top_y: int, box_left: int, box_width: int, profile: Dict) -> Tuple[List[Dict], int]:
+    logos = fit_logo_row_images(block, box_width)
+    if not logos:
+        return [], int(round(top_y))
+    gap = mm_to_dots(DEFAULT_LOGO_GAP_MM, profile)
+    total_width = sum(logo.width for logo in logos) + (gap * max(0, len(logos) - 1))
+    max_height = max(logo.height for logo in logos)
+    start_x = text_x_position(total_width, box_left, box_width, block["alignment"])
+    current_x = start_x
+    top_y = int(round(top_y))
+    elements: List[Dict] = []
+    for idx, logo in enumerate(logos):
+        logo_y = top_y + max_height - logo.height
+        elements.append({"type": "logo", "x": int(round(current_x)), "y": int(round(logo_y)), "image": logo})
+        current_x += logo.width
+        if idx < len(logos) - 1:
+            current_x += gap
+    return elements, top_y + max_height
+
+
+def layout_body_elements(draw: ImageDraw.ImageDraw, start_y: int, box_left: int, box_width: int, body_blocks: List[Dict], profile: Dict) -> Tuple[List[Dict], int]:
+    current_y = int(round(start_y))
+    elements: List[Dict] = []
+    for block in body_blocks:
+        block_elements: List[Dict]
+        block_bottom: int
+        if block.get("type") == "logo_row":
+            block_elements, block_bottom = measure_logo_row_elements(block, current_y, box_left, box_width, profile)
+        else:
+            block_elements, block_bottom = measure_text_block_elements(draw, block, current_y, box_left, box_width)
+        elements.extend(block_elements)
+        current_y = block_bottom + mm_to_dots(FIELD_GAP_MM, profile)
+    return elements, current_y
+
+
+def layout_footer_elements(draw: ImageDraw.ImageDraw, bottom_y: int, box_left: int, box_width: int, footer_blocks: List[Dict], profile: Dict) -> Tuple[List[Dict], int]:
+    current_bottom = int(round(bottom_y))
+    elements: List[Dict] = []
+    for block in reversed(footer_blocks):
+        current_bottom -= mm_to_dots(block.get("footer_bottom_margin_mm", 0.0), profile)
+        if block.get("type") == "logo_row":
+            logos = fit_logo_row_images(block, box_width)
+            total_h = max((logo.height for logo in logos), default=0)
+            top_y = current_bottom - total_h
+            block_elements, _ = measure_logo_row_elements(block, top_y, box_left, box_width, profile)
+        else:
+            font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
+            spacing = max(4, resolved // 7)
+            line_h = text_line_height(draw, font)
+            total_h = (line_h * len(lines)) + (max(0, len(lines) - 1) * spacing)
+            top_y = current_bottom - total_h
+            block_elements, _ = measure_text_block_elements(draw, block, top_y, box_left, box_width)
+        elements.extend(block_elements)
+        current_bottom = int(round(top_y)) - mm_to_dots(FOOTER_GAP_MM, profile)
+    return elements, current_bottom
+
+
+def zpl_text_field_command(element: Dict) -> str:
+    escaped = zpl_hex_escape_utf8(element.get("text", ""))
+    x = int(element.get("x", 0))
+    y = int(element.get("y", 0))
+    height = max(10, int(element.get("font_height", 10)))
+    width = max(10, int(element.get("font_width", height)))
+    commands = [f"^FO{x},{y}^A0N,{height},{width}^FH\\^FD{escaped}^FS"]
+    if normalize_bool(element.get("bold"), False):
+        commands.append(f"^FO{x + 1},{y}^A0N,{height},{width}^FH\\^FD{escaped}^FS")
+    if normalize_bool(element.get("underline"), False):
+        underline_y = int(element.get("underline_y", y + height))
+        underline_thickness = max(1, int(element.get("underline_thickness", 1)))
+        underline_width = max(1, int(element.get("text_width", width)))
+        commands.append(f"^FO{x},{underline_y}^GB{underline_width},{underline_thickness},{underline_thickness}^FS")
+    return "\n".join(commands)
+
+
+def zpl_logo_field_command(element: Dict) -> str:
+    logo_img = logo_to_monochrome(element["image"])
+    total_bytes, bytes_per_row, graphic_hex = image_to_gfa(logo_img)
+    return f"^FO{int(element.get('x', 0))},{int(element.get('y', 0))}^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_hex}^FS"
+
+
+def build_zpl_raster(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
     layout = effective_layout(profile)
     pw = layout["effective_width_dots"]
     ll = layout["requested_height_dots"]
@@ -2216,6 +2367,66 @@ def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict
 ^FO0,0^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_hex}^FS
 ^PQ{copies},0,1,N
 ^XZ"""
+
+
+def build_zpl_native(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
+    layout = effective_layout(profile)
+    printable_w = layout["effective_width_dots"]
+    label_h = layout["requested_height_dots"]
+    body_blocks, footer_blocks = fields_to_blocks(field_forms)
+    measure_draw = ImageDraw.Draw(Image.new("RGB", (max(10, printable_w), 64), color=(255, 255, 255)))
+
+    margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    text_width = max(1, printable_w - (margin_x * 2))
+    current_y = layout["top_margin_dots"]
+    commands: List[str] = []
+
+    if normalize_qr_value(qr_value):
+        qr_box_size = min(layout["qr_size_dots"], printable_w)
+        qr_spec = qr_native_spec(qr_value, qr_box_size, profile)
+        qr_left = max((printable_w - qr_spec["actual_size"]) // 2, 0)
+        qr_top = layout["top_margin_dots"] + max((qr_box_size - qr_spec["actual_size"]) // 2, 0)
+        qr_payload = zpl_hex_escape_utf8(f"{profile.get('qr_error_correction', 'M')}A,{qr_value}")
+        commands.append(f"^FO{qr_left},{qr_top}^BQN,2,{qr_spec['magnification']}^FH\\^FD{qr_payload}^FS")
+        margin_x = max((printable_w - qr_box_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
+        text_width = max(1, printable_w - (margin_x * 2))
+        current_y = layout["top_margin_dots"] + qr_box_size + mm_to_dots(8, profile)
+
+    body_elements, _ = layout_body_elements(measure_draw, current_y, margin_x, text_width, body_blocks, profile)
+    footer_elements: List[Dict] = []
+    if footer_blocks:
+        footer_bottom = label_h - layout["footer_bottom_margin_dots"]
+        footer_elements, _ = layout_footer_elements(measure_draw, footer_bottom, margin_x, text_width, footer_blocks, profile)
+
+    for element in body_elements + footer_elements:
+        if element.get("type") == "logo":
+            commands.append(zpl_logo_field_command(element))
+        elif element.get("type") == "text_line":
+            commands.append(zpl_text_field_command(element))
+
+    return "\n".join([
+        "^XA",
+        "^CI28",
+        f"^PW{printable_w}",
+        f"^LL{label_h}",
+        "^LH0,0",
+        *commands,
+        f"^PQ{copies},0,1,N",
+        "^XZ",
+    ])
+
+
+def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
+    if normalize_rotation_degrees(profile.get("print_rotation_degrees"), 0) != 0:
+        LOGGER.info("Using raster ZPL fallback for rotated profile=%s rotation=%s", profile.get("id"), profile.get("print_rotation_degrees"))
+        return build_zpl_raster(qr_value, field_forms, copies, profile)
+    try:
+        payload = build_zpl_native(qr_value, field_forms, copies, profile)
+        LOGGER.info("Built native ZPL payload for profile=%s (%s bytes)", profile.get("id"), len(payload.encode("utf-8")))
+        return payload
+    except Exception as exc:
+        LOGGER.warning("Native ZPL generation failed for profile=%s, falling back to raster: %s", profile.get("id"), exc)
+        return build_zpl_raster(qr_value, field_forms, copies, profile)
 
 
 def send_to_printer(host: str, port: int, payload: str) -> None:
