@@ -2,9 +2,13 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.2.06
+## What changed in v0.2.07
 
-This version makes the field manager collapsible by default and adds move up/down controls so fields can be reordered inside the active label profile.
+This version collapses the Inventory Label controls together with the field manager, and the selected label profile is now treated as an edit target while printing stays driven by the multi preview.
+
+- Inventory Label controls and the field manager now live in the same collapsed section
+- the multi preview remains visible above for printing
+- selecting a label profile is now only for editing that profile
 
 - field manager is now collapsed by default and opens on demand
 - fields can now be moved up and down directly in the field list
