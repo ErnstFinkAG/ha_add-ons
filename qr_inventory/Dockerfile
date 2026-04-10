@@ -20,6 +20,8 @@ RUN set -eux; \
       py3-opencv \
       py3-numpy \
       ffmpeg \
+      ttf-dejavu \
+      fontconfig \
       mesa-gl \
       glib \
       libsm \
@@ -38,6 +40,8 @@ RUN set -eux; \
       python3-opencv \
       python3-numpy \
       ffmpeg \
+      fonts-dejavu-core \
+      fontconfig \
       libgl1 \
       libglib2.0-0 \
       libsm6 \

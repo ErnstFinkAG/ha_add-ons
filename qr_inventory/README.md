@@ -161,3 +161,19 @@ title: QR Inventory
 entity: sensor.qr_inventory_detected_list
 print_base_url: http://YOUR_ADDON_HOST:8099
 ```
+
+## Version 0.6.8.0
+
+- fresh rebuild from the original base
+- fast dual-decoder flow restored: ZBar for detection, OpenCV can override payload text on the same crop
+- per-zone canonicalization drops duplicate payload variants for the same QR, preferring OpenCV-backed / non-corrupted text
+- Unicode overlay rendering via Pillow with configurable pixel font sizes
+- process-pool recovery for broken worker pools
+
+Overlay font options:
+
+```yaml
+overlay_zone_label_font_px: 18
+overlay_zone_status_font_px: 16
+overlay_payload_font_px: 20
+```
