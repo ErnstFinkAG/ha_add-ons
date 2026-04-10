@@ -4,12 +4,13 @@ Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT4
 
 ## What changed in v0.1.84
 
-This version fixes the live preview payload size readout so it actually changes with the current label content by using content-aware chunked graphics instead of one fixed full-label graphic payload.
+This version keeps the per-label printer DPI setting and changes the print path so 0° labels are sent mostly as native ZPL instead of one full-label bitmap.
 
-- added a live preview payload size readout in the preview panel
-- the size readout updates as field values, QR selection, copies, and profile settings change
-- the readout shows estimated print payload bytes, character count, and graphic field count
-- the preview metadata text now refers to the configured printer DPI instead of a fixed 203 dpi
+- QR codes now print as native `^BQ`
+- text now prints as native ZPL text fields
+- uploaded PNG logos are still sent as graphics, but only the logos instead of the whole label
+- rotated labels currently fall back to the previous full-image raster print path
+- `printer_dpi` remains available per label profile and still drives sizing, margins, and preview export
 
 ## Profile and field management
 
@@ -37,6 +38,7 @@ label_profiles:
   - id: standard
     name: Standard
     printer_host: ""
+    printer_dpi: 203
     label_width_mm: 170
     label_height_mm: 305
     qr_size_mm: 170
@@ -49,6 +51,7 @@ label_profiles:
   - id: rotated
     name: Rotated
     printer_host: ""
+    printer_dpi: 203
     label_width_mm: 170
     label_height_mm: 305
     qr_size_mm: 160
@@ -97,7 +100,7 @@ Field settings supported in the UI:
 
 ## Web UI
 
-Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, field inputs can offer suggested values while still accepting free text, and fields can be marked as footer text so their values stay anchored at the bottom of the label. Footer fields can also have their own additional bottom margin in mm. Fields can now also be configured as logo fields with uploaded PNG choices that are shown as selectable checkboxes in the label form. Multiple logos can be selected and rendered on one label. In the field editor, each uploaded logo can also be marked as selected by default so it appears in preview immediately.
+Printer host, printer port, and printer DPI are configured per label profile. Host and port are optional so the add-on can start without them, previews still work, and printing only becomes available once both are set. DPI defaults to 203 when omitted. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, field inputs can offer suggested values while still accepting free text, and fields can be marked as footer text so their values stay anchored at the bottom of the label. Footer fields can also have their own additional bottom margin in mm. Fields can now also be configured as logo fields with uploaded PNG choices that are shown as selectable checkboxes in the label form. Multiple logos can be selected and rendered on one label. In the field editor, each uploaded logo can also be marked as selected by default so it appears in preview immediately. For non-rotated labels, printing now uses native ZPL for QR and text and only sends the selected logos as graphics, which significantly reduces the print payload compared with rendering the whole label as one bitmap.
 
 In the add-on web UI you can:
 
@@ -139,5 +142,3 @@ Example payload:
   }
 }
 ```
-- printing now sends content-aware chunked graphics instead of one fixed full-label raster graphic
-- the live preview payload size readout now changes with the actual current label content
