@@ -2,14 +2,14 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.2.08
+## What changed in v0.2.05
 
-This version keeps the editor collapsed, but adds label-profile switching directly in the collapsible header so you can choose which profile to modify without first opening the whole editor.
+This version adds a per-profile option to control whether a label appears in the stacked multi preview and click-to-print area.
 
-- the collapsed Inventory Label / Field manager header now includes a label-profile selector
-- switching the selector changes which profile is being edited
-- the full editor area still opens for field/value changes
-- the multi preview remains the printing surface above
+- new `show_in_multi_preview` option per label profile
+- profiles with `show_in_multi_preview: false` are hidden from stacked previews
+- hidden profiles are also excluded from click-to-print in the multi preview area
+- profile editing and direct single-profile use stay unchanged
 
 ## Profile and field management
 
