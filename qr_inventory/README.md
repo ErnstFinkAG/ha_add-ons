@@ -14,6 +14,12 @@ Dieses Add-on nimmt in konfigurierbaren Intervallen Standbilder von **einer oder
 - Retention/Bestätigung über `required`
 - ZBar + OpenCV Abgleich für problematische Unicode-QR-Payloads (z. B. `Büetigen` statt `B羹etigen`)
 
+## Version 0.6.6.4
+
+- Behebt die Unicode-Darstellung im Overlay-PNG, sodass Zeichen wie `ü` nicht mehr als `??` erscheinen.
+- Nutzt für nicht-ASCII-Overlaytexte eine Unicode-fähige Pillow-Textausgabe, mit Fallback auf OpenCV für reine ASCII-Texte.
+- Enthält weiterhin den Decoder-Abgleich aus `0.6.6.3`, damit problematische Unicode-QR-Payloads korrekt aus OpenCV übernommen werden.
+
 ## Version 0.6.6.3
 
 - Behebt einen Decoder-Fall, bei dem ZBar einzelne Unicode-Zeichen in QR-Texten falsch liefern konnte.

@@ -18,6 +18,16 @@ from urllib.parse import urlparse, unquote, parse_qs, quote
 import cv2
 import numpy as np
 
+# Optional Pillow (Unicode-capable overlay text)
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    _PIL_OK = True
+except Exception:
+    Image = None
+    ImageDraw = None
+    ImageFont = None
+    _PIL_OK = False
+
 # Optional MQTT
 try:
     import paho.mqtt.client as mqtt
@@ -45,7 +55,7 @@ except Exception:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
 
-APP_VERSION = "0.6.6.3"
+APP_VERSION = "0.6.6.4"
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -957,6 +967,106 @@ def _safe_label(s: str, max_len: int = 96) -> str:
     if len(s) > max_len:
         return s[: max_len - 1] + "…"
     return s
+
+def _contains_non_ascii(text: str) -> bool:
+    try:
+        return any(ord(ch) > 127 for ch in str(text or ""))
+    except Exception:
+        return False
+
+def _bgr_to_rgb(color):
+    try:
+        b, g, r = [int(c) for c in color]
+        return (r, g, b)
+    except Exception:
+        return (255, 255, 255)
+
+def _find_overlay_font_path():
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+    ]
+    for path in candidates:
+        try:
+            if os.path.exists(path):
+                return path
+        except Exception:
+            continue
+    return None
+
+_OVERLAY_FONT_PATH = _find_overlay_font_path() if _PIL_OK else None
+_OVERLAY_FONT_CACHE = {}
+
+def _overlay_font_px(font_scale: float, thickness: int = 1) -> int:
+    try:
+        fs = max(0.3, float(font_scale))
+    except Exception:
+        fs = 0.6
+    try:
+        th = max(1, int(thickness))
+    except Exception:
+        th = 1
+    return max(12, int(round((fs * 28.0) + (th * 2.0) + 4.0)))
+
+def _get_overlay_font(font_px: int):
+    if not _PIL_OK:
+        return None
+    size = max(12, int(font_px))
+    font = _OVERLAY_FONT_CACHE.get(size)
+    if font is not None:
+        return font
+    try:
+        if _OVERLAY_FONT_PATH:
+            font = ImageFont.truetype(_OVERLAY_FONT_PATH, size=size)
+        else:
+            font = ImageFont.load_default()
+    except Exception:
+        try:
+            font = ImageFont.load_default()
+        except Exception:
+            font = None
+    _OVERLAY_FONT_CACHE[size] = font
+    return font
+
+def _draw_overlay_label(img: np.ndarray, text: str, x: int, y: int, bg_bgr, fg_bgr, font_scale: float = 0.6, thickness: int = 2, padding: int = 3):
+    text = str(text or "")
+    h, w = img.shape[:2]
+    x1 = max(0, min(w - 1, int(x)))
+    y1 = max(0, min(h - 1, int(y)))
+
+    use_pil = bool(_PIL_OK and _contains_non_ascii(text))
+    if use_pil:
+        try:
+            font = _get_overlay_font(_overlay_font_px(font_scale, thickness))
+            if font is not None:
+                bbox = font.getbbox(text)
+                tw = max(1, int(bbox[2] - bbox[0]))
+                th = max(1, int(bbox[3] - bbox[1]))
+                x2 = min(w - 1, x1 + tw + padding * 2)
+                y2 = min(h - 1, y1 + th + padding * 2)
+
+                rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                pil_img = Image.fromarray(rgb)
+                draw = ImageDraw.Draw(pil_img)
+                draw.rectangle([x1, y1, x2, y2], fill=_bgr_to_rgb(bg_bgr))
+                tx = x1 + padding - int(bbox[0])
+                ty = y1 + padding - int(bbox[1])
+                draw.text((tx, ty), text, font=font, fill=_bgr_to_rgb(fg_bgr))
+                img[:, :, :] = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+                return (x1, y1, x2, y2)
+        except Exception:
+            logger.debug("Pillow overlay text render failed; falling back to cv2.putText", exc_info=True)
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    (tw, th), base = cv2.getTextSize(text, font, float(font_scale), int(thickness))
+    x2 = min(w - 1, x1 + tw + padding * 2)
+    y2 = min(h - 1, y1 + th + base + padding * 2)
+    cv2.rectangle(img, (x1, y1), (x2, y2), bg_bgr, -1)
+    cv2.putText(img, text, (x1 + padding, y1 + th + padding), font, float(font_scale), fg_bgr, int(thickness), cv2.LINE_AA)
+    return (x1, y1, x2, y2)
 
 def _encode_png(img):
     ok, buf = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 1])
@@ -2782,11 +2892,7 @@ def draw_overlay(frame, detections, zones_dict):
 
             x1, y1, x2, y2 = zone_bbox
             zl = _safe_label(str(zname), 32)
-            (tw, th), base = cv2.getTextSize(zl, font, 0.55, 2)
-            zbx2 = min(w - 1, x1 + tw + pad * 2)
-            zby2 = min(h - 1, y1 + th + base + pad * 2)
-            cv2.rectangle(out, (x1, y1), (zbx2, zby2), ORANGE, -1)
-            cv2.putText(out, zl, (x1 + pad, y1 + th + pad), font, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+            _, _, zbx2, zby2 = _draw_overlay_label(out, zl, x1, y1, ORANGE, (255, 255, 255), font_scale=0.55, thickness=2, padding=pad)
 
             st = zone_status.get(zname, {"kind": "none", "det": None, "dets": []})
             det = st.get("det")
@@ -2825,12 +2931,8 @@ def draw_overlay(frame, detections, zones_dict):
                 bg, fg = MISSBG, (255, 255, 255)
 
             text = _safe_label(text, 64)
-            (stw, sth), sbase = cv2.getTextSize(text, font, 0.5, 1)
             sy1 = min(h - 1, zby2 + 2)
-            sy2 = min(h - 1, sy1 + sth + sbase + pad * 2)
-            sx2 = min(w - 1, x1 + stw + pad * 2)
-            cv2.rectangle(out, (x1, sy1), (sx2, sy2), bg, -1)
-            cv2.putText(out, text, (x1 + pad, sy1 + sth + pad), font, 0.5, fg, 1, cv2.LINE_AA)
+            _draw_overlay_label(out, text, x1, sy1, bg, fg, font_scale=0.5, thickness=1, padding=pad)
 
     for d in detections:
         pts_list = d.get("points")
@@ -2862,13 +2964,22 @@ def draw_overlay(frame, detections, zones_dict):
         label = _safe_label(label, 96)
 
         x, y = int(pts[0, 0, 0]), int(pts[0, 0, 1])
-        (tw, th), base = cv2.getTextSize(label, font, 0.6, 2)
+        font_scale = 0.6
+        thickness = 2
+        if _PIL_OK and _contains_non_ascii(label):
+            font = _get_overlay_font(_overlay_font_px(font_scale, thickness))
+            if font is not None:
+                bbox = font.getbbox(label)
+                label_h = max(1, int(bbox[3] - bbox[1]))
+                y1 = max(0, y - label_h - pad * 2)
+            else:
+                (_, label_h), base = cv2.getTextSize(label, font, font_scale, thickness)
+                y1 = max(0, y - label_h - base - pad * 2)
+        else:
+            (_, label_h), base = cv2.getTextSize(label, font, font_scale, thickness)
+            y1 = max(0, y - label_h - base - pad * 2)
         x1 = max(0, x)
-        y1 = max(0, y - th - base - pad * 2)
-        x2 = min(w - 1, x + tw + pad * 2)
-        y2 = min(h - 1, y)
-        cv2.rectangle(out, (x1, y1), (x2, y2), color, -1)
-        cv2.putText(out, label, (x + pad, y - pad), font, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+        _draw_overlay_label(out, label, x1, y1, color, (255, 255, 255), font_scale=font_scale, thickness=thickness, padding=pad)
 
     _draw_margin_helper_box(out)
     _draw_alignment_helper_lines(out)
