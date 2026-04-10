@@ -2148,15 +2148,15 @@ def get_printable_area_rect(width: int, height: int, profile: Dict | None = None
     height = max(1, int(height))
     if not normalize_bool((profile or {}).get("printable_area_box_enabled"), False):
         return 0, 0, width - 1, height - 1
-    inset = mm_to_dot_offset(printable_area_box_margin_mm(profile), profile)
-    max_inset_x = max(0, (width - 1) // 2)
-    max_inset_y = max(0, (height - 1) // 2)
-    inset_x = min(inset, max_inset_x)
-    inset_y = min(inset, max_inset_y)
-    left = inset_x
-    top = inset_y
-    right = max(left, width - inset_x - 1)
-    bottom = max(top, height - inset_y - 1)
+
+    inset_dots = max(0, mm_to_dot_offset(printable_area_box_margin_mm(profile), profile))
+    inner_width = max(1, width - (inset_dots * 2))
+    inner_height = max(1, height - (inset_dots * 2))
+
+    left = max(0, (width - inner_width) // 2)
+    top = max(0, (height - inner_height) // 2)
+    right = min(width - 1, left + inner_width - 1)
+    bottom = min(height - 1, top + inner_height - 1)
 
     if apply_offsets:
         offset_x = mm_to_dot_offset((profile or {}).get("print_offset_x_mm", 0.0), profile)
@@ -2280,13 +2280,15 @@ def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, pr
         draw_printable_area_box(printable_image, profile, preview=False, apply_offsets=True)
         return printable_image
     if requested_w <= printable_w:
-        draw_printable_area_box(printable_image, profile, preview=True, apply_offsets=True)
+        draw_printable_area_box(printable_image, profile, preview=True, apply_offsets=False)
         return orient_preview_for_display(printable_image, rotation_degrees)
     canvas = Image.new("RGBA", (requested_w, requested_h), color=(255, 255, 255, 255))
     printable_left = max((requested_w - printable_w) // 2, 0)
     draw_background_for_preview(canvas, requested_w, requested_h, printable_left, printable_w)
     canvas.alpha_composite(printable_image, (printable_left, 0))
-    draw_printable_area_box(canvas, profile, preview=True, apply_offsets=True)
+    preview_box = Image.new("RGBA", (printable_w, requested_h), color=(0, 0, 0, 0))
+    draw_printable_area_box(preview_box, profile, preview=True, apply_offsets=False)
+    canvas.alpha_composite(preview_box, (printable_left, 0))
     return orient_preview_for_display(canvas, rotation_degrees)
 
 
