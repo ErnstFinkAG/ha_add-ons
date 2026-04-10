@@ -254,6 +254,10 @@ UI_STRINGS = {
         "preview_zpl": "Preview ZPL",
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
+        "preview_stack_heading": "All label previews",
+        "preview_stack_intro": "Each preview uses that profile's own size, rotation, and printer. Matching field IDs reuse the values above. Click a label preview to print that label on its configured printer.",
+        "click_preview_to_print": "Click preview to print",
+        "preview_print_unavailable": "Printer not configured",
         "preview_alt": "Label preview",
         "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at the configured printer DPI. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone. The red box shows the printable area, and the green box shows the text and footer block area.",
         "fields_heading": "Configured fields",
@@ -355,6 +359,10 @@ UI_STRINGS = {
         "preview_zpl": "ZPL-Vorschau",
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
+        "preview_stack_heading": "Alle Label-Vorschauen",
+        "preview_stack_intro": "Jede Vorschau verwendet die eigene Größe, Drehung und den eigenen Drucker des jeweiligen Profils. Passende Feld-IDs übernehmen die Werte von oben. Ein Klick auf eine Label-Vorschau druckt dieses Label auf dem konfigurierten Drucker.",
+        "click_preview_to_print": "Zum Drucken auf Vorschau klicken",
+        "preview_print_unavailable": "Drucker nicht konfiguriert",
         "preview_alt": "Etikettenvorschau",
         "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit der konfigurierten Drucker-DPI exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone. Der rote Rahmen zeigt den Druckbereich, der grüne Rahmen den Text- und Footer-Bereich.",
         "fields_heading": "Konfigurierte Felder",
@@ -481,9 +489,16 @@ HTML = """
     .flash.error { background: rgba(239,68,68,0.14); border: 1px solid var(--danger); }
     .muted { color: var(--muted); }
     .preview-wrap { overflow: auto; background: #0b1220; border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
-    .preview-stage { display: flex; justify-content: center; align-items: flex-start; min-width: 0; width: 100%; }
-    .preview-frame { width: {{ preview_display_width_mm }}mm; height: {{ preview_display_height_mm }}mm; flex: 0 0 auto; max-width: none; background: var(--label-bg); border: 1px solid var(--label-edge); box-shadow: 0 10px 30px rgba(0,0,0,0.28); }
-    .preview-frame img { display: block; width: 100%; height: 100%; object-fit: contain; background: white; }
+    .preview-stack { display: grid; gap: 16px; }
+    .preview-tile { background: #0f172a; border: 1px solid var(--border); border-radius: 14px; padding: 12px; }
+    .preview-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+    .preview-tile-title { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .preview-tile-title strong, .preview-tile-title span { word-break: break-word; }
+    .preview-tile-links { display: flex; gap: 8px; flex-wrap: wrap; }
+    .preview-tile-links .button-link { padding: 8px 12px; }
+    .preview-tile-button { width: 100%; padding: 0; overflow: hidden; background: transparent; border: 1px solid var(--label-edge); border-radius: 12px; }
+    .preview-tile-button[disabled] { cursor: not-allowed; opacity: 0.65; }
+    .preview-tile-button img { display: block; width: 100%; height: auto; object-fit: contain; background: white; }
     .preview-meta { margin-top: 12px; font-size: 0.95rem; color: var(--muted); }
     .preview-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-top: 14px; }
     .preview-actions .btns { margin: 0; }
@@ -601,26 +616,48 @@ HTML = """
           </div>
 
           <div class="top-panel">
-            <h2>{{ ui.preview_heading }}</h2>
-            <div class="preview-wrap">
-              <div class="preview-stage">
-                <div class="preview-frame">
-                  <img id="preview-image" src="{{ ingress_base }}/preview.png?{{ preview_query }}" alt="{{ ui.preview_alt }}">
-                </div>
-              </div>
-            </div>
-            <div class="preview-meta">{{ ui.preview_meta }}</div>
+            <h2>{{ ui.preview_stack_heading }}</h2>
+            <p class="muted small">{{ ui.preview_stack_intro }}</p>
             <div class="preview-actions">
               <div class="copies-inline">
                 <label for="copies">{{ ui.copies }}</label>
                 <input id="copies" name="copies" type="number" min="1" max="50" value="{{ form.copies }}" required>
               </div>
-              <div class="btns">
-                <button type="submit">{{ ui.print_label_button }}</button>
-                <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?{{ preview_query }}">{{ ui.preview_zpl }}</a>
-                <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?{{ preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
+            </div>
+            <div class="preview-wrap">
+              <div class="preview-stack">
+                {% for preview_item in preview_profiles %}
+                <div class="preview-tile">
+                  <div class="preview-tile-head">
+                    <div class="preview-tile-title">
+                      <strong>{{ preview_item.name }}</strong>
+                      <span class="muted small">{{ preview_item.printer_target }}</span>
+                    </div>
+                    <div class="preview-tile-links">
+                      <a class="button-link secondary" data-preview-zpl-link data-profile-id="{{ preview_item.id }}" href="{{ ingress_base }}/preview?{{ preview_item.preview_query }}">{{ ui.preview_zpl }}</a>
+                      <a class="button-link secondary" data-preview-png-link data-profile-id="{{ preview_item.id }}" href="{{ ingress_base }}/preview.png?{{ preview_item.preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
+                    </div>
+                  </div>
+                  <button
+                    type="submit"
+                    class="preview-tile-button"
+                    name="target_profile_id"
+                    value="{{ preview_item.id }}"
+                    title="{{ ui.click_preview_to_print }}"
+                    {% if not preview_item.can_print %}disabled{% endif %}
+                  >
+                    <img data-preview-image data-profile-id="{{ preview_item.id }}" src="{{ ingress_base }}/preview.png?{{ preview_item.preview_query }}" alt="{{ preview_item.name }}">
+                  </button>
+                  {% if not preview_item.can_print %}
+                  <div class="muted small" style="margin-top:8px;">{{ ui.preview_print_unavailable }}</div>
+                  {% endif %}
+                </div>
+                {% else %}
+                <div class="field-card muted">{{ ui.profile_none }}</div>
+                {% endfor %}
               </div>
             </div>
+            <div class="preview-meta">{{ ui.preview_meta }}</div>
           </div>
         </div>
 
@@ -881,22 +918,17 @@ HTML = """
     (function () {
       const form = document.getElementById("label-form");
       const profileSelect = document.getElementById("profile_id");
-      const previewImage = document.getElementById("preview-image");
-      const previewFrame = document.querySelector(".preview-frame");
-      const previewWrap = document.querySelector(".preview-wrap");
-      const previewStage = document.querySelector(".preview-stage");
-      const previewPngLink = document.getElementById("preview-png-link");
-      const previewZplLink = document.getElementById("preview-zpl-link");
+      const previewImages = Array.from(document.querySelectorAll("[data-preview-image]"));
+      const previewPngLinks = Array.from(document.querySelectorAll("[data-preview-png-link]"));
+      const previewZplLinks = Array.from(document.querySelectorAll("[data-preview-zpl-link]"));
       const newFieldButton = document.getElementById("new-field-button");
       const fieldEditorForm = document.getElementById("field-editor-form");
       const fieldData = {{ field_editor_json|tojson }};
-      if (!form || !previewImage || !previewFrame || !previewWrap || !previewStage || !previewPngLink || !previewZplLink) return;
+      if (!form) return;
 
       let refreshTimer = null;
       let previewNonce = Date.now();
       const ingressBase = {{ ingress_base|tojson }};
-      const portraitWidthMm = {{ preview_display_width_mm|tojson }};
-      const portraitHeightMm = {{ preview_display_height_mm|tojson }};
       const noLogosUploadedText = {{ ui.no_logos_uploaded|tojson }};
       const defaultLogoLabelText = {{ ui.default_logo_label|tojson }};
       const logoOrderLabelText = {{ ui.logo_order_label|tojson }};
@@ -926,35 +958,28 @@ HTML = """
         return params;
       }
 
-      function syncPreviewFrameToImage() {
-        const naturalWidth = previewImage.naturalWidth || 0;
-        const naturalHeight = previewImage.naturalHeight || 0;
-        if (!naturalWidth || !naturalHeight) return;
-        const wrapStyles = window.getComputedStyle(previewWrap);
-        const horizontalPadding = (parseFloat(wrapStyles.paddingLeft || "0") || 0) + (parseFloat(wrapStyles.paddingRight || "0") || 0);
-        const availableWidth = Math.max(160, Math.floor(previewWrap.clientWidth - horizontalPadding - 2));
-        if (naturalWidth >= naturalHeight) {
-          const scaledHeight = Math.max(1, Math.round((availableWidth * naturalHeight) / naturalWidth));
-          previewWrap.style.overflowX = "hidden";
-          previewStage.style.width = "100%";
-          previewFrame.style.width = `${availableWidth}px`;
-          previewFrame.style.height = `${scaledHeight}px`;
-        } else {
-          previewWrap.style.overflowX = "auto";
-          previewStage.style.width = "100%";
-          previewFrame.style.width = `${portraitWidthMm}mm`;
-          previewFrame.style.height = `${portraitHeightMm}mm`;
-        }
-      }
-
       function applyPreviewUpdate() {
         const params = buildQuery();
         previewNonce += 1;
-        const pngParams = new URLSearchParams(params);
-        pngParams.set("_", String(previewNonce));
-        previewImage.src = `${ingressBase}/preview.png?${pngParams.toString()}`;
-        previewPngLink.href = `${ingressBase}/preview.png?${params.toString()}`;
-        previewZplLink.href = `${ingressBase}/preview?${params.toString()}`;
+        previewImages.forEach((img) => {
+          const profileId = img.getAttribute("data-profile-id") || "";
+          const pngParams = new URLSearchParams(params);
+          if (profileId) pngParams.set("profile_id", profileId);
+          pngParams.set("_", String(previewNonce));
+          img.src = `${ingressBase}/preview.png?${pngParams.toString()}`;
+        });
+        previewPngLinks.forEach((link) => {
+          const profileId = link.getAttribute("data-profile-id") || "";
+          const pngParams = new URLSearchParams(params);
+          if (profileId) pngParams.set("profile_id", profileId);
+          link.href = `${ingressBase}/preview.png?${pngParams.toString()}`;
+        });
+        previewZplLinks.forEach((link) => {
+          const profileId = link.getAttribute("data-profile-id") || "";
+          const zplParams = new URLSearchParams(params);
+          if (profileId) zplParams.set("profile_id", profileId);
+          link.href = `${ingressBase}/preview?${zplParams.toString()}`;
+        });
       }
 
       function schedulePreviewUpdate() {
@@ -1130,8 +1155,6 @@ HTML = """
         });
       }
 
-      previewImage.addEventListener("load", syncPreviewFrameToImage);
-      window.addEventListener("resize", syncPreviewFrameToImage);
       applyPreviewUpdate();
     })();
   </script>
@@ -2457,6 +2480,22 @@ def preview_query_from_form(form: Dict[str, object], field_forms: List[Dict]) ->
     return urlencode(params, doseq=True)
 
 
+def preview_profiles_from_form(form: Dict[str, object], label_profiles: List[Dict], language_or_options: object) -> List[Dict]:
+    previews: List[Dict] = []
+    for profile in label_profiles:
+        preview_form = dict(form)
+        preview_form["profile_id"] = profile.get("id", "")
+        preview_field_forms = build_field_forms(profile, preview_form)
+        previews.append({
+            "id": profile.get("id", ""),
+            "name": profile.get("name", ""),
+            "preview_query": preview_query_from_form(preview_form, preview_field_forms),
+            "printer_target": format_printer_target(profile, language_or_options),
+            "can_print": bool(normalize_string(profile.get("printer_host"), "") and normalize_optional_port(profile.get("printer_port"))),
+        })
+    return previews
+
+
 def blank_editor_form() -> Dict:
     return {
         "original_field_id": "",
@@ -2701,10 +2740,6 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
     profile = opts.get("active_profile") or {}
     layout = effective_layout(profile)
     ui = get_ui_strings(opts.get("ui_language"))
-    preview_display_width_mm = profile.get("label_width_mm", 170.0)
-    preview_display_height_mm = profile.get("label_height_mm", 305.0)
-    if profile.get("print_rotation_degrees") in (90, 270):
-        preview_display_width_mm, preview_display_height_mm = preview_display_height_mm, preview_display_width_mm
     qr_selected_ids = normalize_qr_field_ids(form.get("qr_field_ids", []))
     qr_preview = qr_payload_from_field_forms(field_forms, qr_selected_ids) or ui["none"]
     qr_field_options = [
@@ -2717,6 +2752,8 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         for field in field_forms if not field_supports_logos(field)
     ]
     editor_form = editor_form or blank_editor_form()
+    label_profiles = opts.get("label_profiles", [])
+    preview_profiles = preview_profiles_from_form(form, label_profiles, opts)
     return render_template_string(
         HTML,
         ui=ui,
@@ -2725,7 +2762,8 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         form=form,
         field_forms=field_forms,
         active_profile_fields=[{**field, "supports_logos": field_supports_logos(field), "logo_options": [{**option, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))]} for field in profile.get("fields", [])],
-        label_profiles=opts.get("label_profiles", []),
+        label_profiles=label_profiles,
+        preview_profiles=preview_profiles,
         active_profile_id=opts.get("active_profile_id", ""),
         active_profile_name=opts.get("active_profile_name", ""),
         printer_host=profile.get("printer_host", ""),
@@ -2743,12 +2781,9 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         text_block_offset_x_mm=profile.get("text_block_offset_x_mm", DEFAULT_TEXT_BLOCK_OFFSET_X_MM),
         effective_width_dots=layout["effective_width_dots"],
         width_warning=layout["width_warning"],
-        preview_display_width_mm=preview_display_width_mm,
-        preview_display_height_mm=preview_display_height_mm,
         ingress_base=ingress_base_path(),
-        preview_query=preview_query_from_form(form, field_forms),
         editor_form=editor_form,
-            field_editor_json=field_store_map_for_profile(profile),
+        field_editor_json=field_store_map_for_profile(profile),
         qr_field_options=qr_field_options,
         qr_selected_ids=qr_selected_ids,
         alignments=sorted(ALIGNMENTS),
@@ -2820,23 +2855,27 @@ def index():
 
 @APP.route("/print", methods=["POST"])
 def print_label():
-    opts = load_runtime_options()
-    profile = opts.get("active_profile") or {}
-    form, field_forms = form_data_from_request(opts)
-    result = {"success": False, "message": ui_text(opts, "unknown_error")}
+    target_profile_id = request.form.get("target_profile_id") or request.form.get("profile_id") or None
+    page_profile_id = request.form.get("profile_id") or target_profile_id
+    print_opts = load_runtime_options(target_profile_id)
+    profile = print_opts.get("active_profile") or {}
+    form, field_forms = form_data_from_request(print_opts)
+    result = {"success": False, "message": ui_text(print_opts, "unknown_error")}
     try:
-        field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        field_forms = validate_field_forms(field_forms, print_opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
         zpl = build_zpl(qr_value, field_forms, copies, profile)
-        host, port = resolve_printer_target(profile, opts)
+        host, port = resolve_printer_target(profile, print_opts)
         LOGGER.info("Print request received: profile=%s copies=%s qr_payload=%r", profile.get("id"), copies, qr_value)
         send_to_printer(host, port, zpl)
-        result = {"success": True, "message": ui_text(opts, "sent_labels_message", copies=copies, host=host, port=port, qr_payload=qr_value or ui_text(opts, "none"))}
+        result = {"success": True, "message": ui_text(print_opts, "sent_labels_message", copies=copies, host=host, port=port, qr_payload=qr_value or ui_text(print_opts, "none"))}
     except Exception as exc:
         LOGGER.exception("Print failed")
-        result = {"success": False, "message": ui_text(opts, "print_failed_message", error=exc)}
-    return render_page(form, opts, field_forms, result=result)
+        result = {"success": False, "message": ui_text(print_opts, "print_failed_message", error=exc)}
+    page_opts = load_runtime_options(page_profile_id)
+    page_form, page_field_forms = form_data_from_request(page_opts)
+    return render_page(page_form, page_opts, page_field_forms, result=result)
 
 
 @APP.route("/fields/save", methods=["POST"])
