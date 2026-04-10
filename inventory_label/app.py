@@ -57,7 +57,7 @@ DEFAULT_LABEL_PROFILES = [
         "id": "standard",
         "name": "Standard",
         "printer_host": "",
-        "printer_port": None,
+        "printer_port": 9100,
         "printer_dpi": DEFAULT_PRINTER_DPI,
         "print_offset_x_mm": 0.0,
         "print_offset_y_mm": 0.0,
@@ -1942,7 +1942,7 @@ def wrap_text_lines(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageF
     return trimmed
 
 
-def fit_block_lines(draw: ImageDraw.ImageDraw, text: str, block: Dict, max_width: int) -> Tuple[ImageFont.ImageFont, List[str], int]:
+def fit_block_lines(draw: ImageDraw.ImageDraw, text: str, block: Dict, max_width: int, profile: Dict) -> Tuple[ImageFont.ImageFont, List[str], int]:
     start_size = max(10, mm_to_dots(block["font_size_mm"], profile))
     min_size = max(10, int(start_size * 0.6))
     best_font = load_font(block["font_family"], block["bold"], block["italic"], start_size)
@@ -1996,7 +1996,7 @@ def load_logo_image(storage_name: object) -> Image.Image:
         return img.convert("RGBA").copy()
 
 
-def fit_logo_image(block: Dict, max_width: int) -> Image.Image:
+def fit_logo_image(block: Dict, max_width: int, profile: Dict) -> Image.Image:
     logo = load_logo_image(block.get("storage_name"))
     target_h = max(1, mm_to_dots(block.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM), profile))
     scale = target_h / max(1, logo.height)
@@ -2009,14 +2009,14 @@ def fit_logo_image(block: Dict, max_width: int) -> Image.Image:
     return logo.resize((width, height), Image.Resampling.LANCZOS)
 
 
-def fit_logo_row_images(block: Dict, max_width: int) -> List[Image.Image]:
+def fit_logo_row_images(block: Dict, max_width: int, profile: Dict) -> List[Image.Image]:
     logos = []
     for option in normalize_logo_options(block.get("logos", [])):
         storage_name = option.get("storage_name")
         if not storage_name:
             continue
         logo_block = {"storage_name": storage_name, "logo_height_mm": block.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM)}
-        logos.append(fit_logo_image(logo_block, max_width))
+        logos.append(fit_logo_image(logo_block, max_width, profile))
     if not logos:
         return []
     gap = mm_to_dots(DEFAULT_LOGO_GAP_MM, profile)
@@ -2046,7 +2046,7 @@ def draw_aligned_logo(img: Image.Image, logo: Image.Image, y: int, box_left: int
     return y + logo_h
 
 
-def draw_aligned_logo_row(img: Image.Image, logos: List[Image.Image], y: int, box_left: int, box_width: int, alignment: str) -> int:
+def draw_aligned_logo_row(img: Image.Image, logos: List[Image.Image], y: int, box_left: int, box_width: int, alignment: str, profile: Dict) -> int:
     if not logos:
         return y
     gap = mm_to_dots(DEFAULT_LOGO_GAP_MM, profile)
@@ -2069,45 +2069,45 @@ def draw_aligned_logo_row(img: Image.Image, logos: List[Image.Image], y: int, bo
     return top_y + max_height
 
 
-def draw_body_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, start_y: int, box_left: int, box_width: int, body_blocks: List[Dict]) -> int:
+def draw_body_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, start_y: int, box_left: int, box_width: int, body_blocks: List[Dict], profile: Dict) -> int:
     current_y = start_y
     for block in body_blocks:
         if block.get("type") == "logo_row":
-            logos = fit_logo_row_images(block, box_width)
-            current_y = draw_aligned_logo_row(img, logos, current_y, box_left, box_width, block["alignment"])
+            logos = fit_logo_row_images(block, box_width, profile)
+            current_y = draw_aligned_logo_row(img, logos, current_y, box_left, box_width, block["alignment"], profile)
         elif block.get("type") == "logo":
-            logo = fit_logo_image(block, box_width)
+            logo = fit_logo_image(block, box_width, profile)
             current_y = draw_aligned_logo(img, logo, current_y, box_left, box_width, block["alignment"])
         else:
-            font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
+            font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width, profile)
             spacing = max(4, resolved // 7)
             current_y = draw_aligned_lines(draw, lines, current_y, box_left, box_width, font, block["alignment"], block["underline"], spacing)
         current_y += mm_to_dots(FIELD_GAP_MM, profile)
     return current_y
 
 
-def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int) -> Tuple[int, object, object, int]:
+def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int, profile: Dict) -> Tuple[int, object, object, int]:
     if block.get("type") == "logo_row":
-        logos = fit_logo_row_images(block, box_width)
+        logos = fit_logo_row_images(block, box_width, profile)
         return (max((logo.height for logo in logos), default=0), logos, None, 0)
     if block.get("type") == "logo":
-        logo = fit_logo_image(block, box_width)
+        logo = fit_logo_image(block, box_width, profile)
         return logo.height, logo, None, 0
-    font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
+    font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width, profile)
     spacing = max(4, resolved // 7)
     line_h = text_line_height(draw, font)
     total = (line_h * len(lines)) + (max(0, len(lines) - 1) * spacing)
     return total, font, lines, spacing
 
 
-def draw_footer_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, bottom_y: int, box_left: int, box_width: int, footer_blocks: List[Dict]) -> int:
+def draw_footer_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, bottom_y: int, box_left: int, box_width: int, footer_blocks: List[Dict], profile: Dict) -> int:
     current_bottom = bottom_y
     for block in reversed(footer_blocks):
         current_bottom -= max(0, mm_to_dot_offset(float(block.get("footer_bottom_margin_mm", 0.0)), profile))
-        total_h, payload, lines, spacing = block_height(draw, block, box_width)
+        total_h, payload, lines, spacing = block_height(draw, block, box_width, profile)
         top_y = current_bottom - total_h
         if block.get("type") == "logo_row":
-            draw_aligned_logo_row(img, payload, top_y, box_left, box_width, block["alignment"])
+            draw_aligned_logo_row(img, payload, top_y, box_left, box_width, block["alignment"], profile)
         elif block.get("type") == "logo":
             draw_aligned_logo(img, payload, top_y, box_left, box_width, block["alignment"])
         else:
@@ -2148,10 +2148,10 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
         margin_x = max((printable_w - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
         text_width = max(1, printable_w - (margin_x * 2))
         current_y = qr_top + qr_size + mm_to_dots(8, profile)
-    draw_body_blocks(img, draw, current_y, margin_x, text_width, body_blocks)
+    draw_body_blocks(img, draw, current_y, margin_x, text_width, body_blocks, profile)
     if footer_blocks:
         footer_bottom = canvas_h - layout["footer_bottom_margin_dots"]
-        draw_footer_blocks(img, draw, footer_bottom, margin_x, text_width, footer_blocks)
+        draw_footer_blocks(img, draw, footer_bottom, margin_x, text_width, footer_blocks, profile)
     return img
 
 
@@ -2180,10 +2180,10 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
         text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
         text_width = max(1, logical_w - text_left - right_margin)
         text_top = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks)
+    draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
     if footer_blocks:
         footer_bottom = logical_h - layout["footer_bottom_margin_dots"]
-        draw_footer_blocks(landscape, draw, footer_bottom, text_left, text_width, footer_blocks)
+        draw_footer_blocks(landscape, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
     if rotation_degrees == 90:
         return landscape.transpose(Image.Transpose.ROTATE_270)
     return landscape.transpose(Image.Transpose.ROTATE_90)
