@@ -55,7 +55,7 @@ except Exception:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
 
-APP_VERSION = "0.6.6.4"
+APP_VERSION = "0.6.6.5"
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -1009,7 +1009,11 @@ def _overlay_font_px(font_scale: float, thickness: int = 1) -> int:
         th = max(1, int(thickness))
     except Exception:
         th = 1
-    return max(12, int(round((fs * 28.0) + (th * 2.0) + 4.0)))
+    # Base approximation from OpenCV Hershey font scale to Pillow pixel size.
+    # Final matching is refined by _get_overlay_font_matched() so non-ASCII
+    # labels (for example with ü/ö/ä) visually align with the regular overlay
+    # text size used for ASCII labels.
+    return max(14, int(round((fs * 34.0) + (th * 2.0) + 4.0)))
 
 def _get_overlay_font(font_px: int):
     if not _PIL_OK:
@@ -1031,6 +1035,47 @@ def _get_overlay_font(font_px: int):
     _OVERLAY_FONT_CACHE[size] = font
     return font
 
+def _overlay_cv2_text_metrics(text: str, font_scale: float = 0.6, thickness: int = 2):
+    try:
+        fs = float(font_scale)
+    except Exception:
+        fs = 0.6
+    try:
+        th = max(1, int(thickness))
+    except Exception:
+        th = 2
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    sample = str(text or 'Ag')
+    if not sample.strip():
+        sample = 'Ag'
+    (tw, th_px), base = cv2.getTextSize(sample, font, fs, th)
+    return int(tw), int(th_px), int(base)
+
+def _get_overlay_font_matched(text: str, font_scale: float = 0.6, thickness: int = 2):
+    if not _PIL_OK:
+        return None
+    target_h = _overlay_cv2_text_metrics('Ag', font_scale, thickness)[1]
+    size = _overlay_font_px(font_scale, thickness)
+    best_font = _get_overlay_font(size)
+    if best_font is None:
+        return None
+    for _ in range(4):
+        try:
+            bbox = best_font.getbbox('Ag')
+            cur_h = max(1, int(bbox[3] - bbox[1]))
+        except Exception:
+            break
+        if abs(cur_h - target_h) <= 1:
+            break
+        new_size = max(12, int(round(size * (float(target_h) / float(cur_h)))))
+        if abs(new_size - size) <= 1:
+            break
+        size = new_size
+        best_font = _get_overlay_font(size)
+        if best_font is None:
+            break
+    return best_font
+
 def _draw_overlay_label(img: np.ndarray, text: str, x: int, y: int, bg_bgr, fg_bgr, font_scale: float = 0.6, thickness: int = 2, padding: int = 3):
     text = str(text or "")
     h, w = img.shape[:2]
@@ -1040,7 +1085,7 @@ def _draw_overlay_label(img: np.ndarray, text: str, x: int, y: int, bg_bgr, fg_b
     use_pil = bool(_PIL_OK and _contains_non_ascii(text))
     if use_pil:
         try:
-            font = _get_overlay_font(_overlay_font_px(font_scale, thickness))
+            font = _get_overlay_font_matched(text, font_scale, thickness)
             if font is not None:
                 bbox = font.getbbox(text)
                 tw = max(1, int(bbox[2] - bbox[0]))
@@ -2967,7 +3012,7 @@ def draw_overlay(frame, detections, zones_dict):
         font_scale = 0.6
         thickness = 2
         if _PIL_OK and _contains_non_ascii(label):
-            font = _get_overlay_font(_overlay_font_px(font_scale, thickness))
+            font = _get_overlay_font_matched(label, font_scale, thickness)
             if font is not None:
                 bbox = font.getbbox(label)
                 label_h = max(1, int(bbox[3] - bbox[1]))

@@ -14,6 +14,11 @@ Dieses Add-on nimmt in konfigurierbaren Intervallen Standbilder von **einer oder
 - Retention/Bestätigung über `required`
 - ZBar + OpenCV Abgleich für problematische Unicode-QR-Payloads (z. B. `Büetigen` statt `B羹etigen`)
 
+## Version 0.6.6.5
+
+- Non-ASCII overlay labels now match the regular overlay text size more closely (for example labels containing `ü`).
+- Overlay font size is not reduced by payload length; the box width grows with text length, but the target font size stays consistent.
+
 ## Version 0.6.6.4
 
 - Behebt die Unicode-Darstellung im Overlay-PNG, sodass Zeichen wie `ü` nicht mehr als `??` erscheinen.
