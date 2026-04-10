@@ -2844,7 +2844,6 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         ingress_base=ingress_base_path(),
         editor_form=editor_form,
         field_editor_json=field_store_map_for_profile(profile),
-        qr_field_options=qr_field_options,
         qr_selected_ids=qr_selected_ids,
         alignments=sorted(ALIGNMENTS),
         font_families=sorted(FONT_FAMILIES),
