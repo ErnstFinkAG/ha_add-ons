@@ -77,7 +77,7 @@ overlay_margin_px: 10
 
 ## Hinweise zu Unicode-QRs und Overlay-Schriften
 
-Seit Version **0.6.6.9** werden ZBar-Ergebnisse zusätzlich gegen OpenCV geprüft. Wenn beide Decoder unterschiedliche Texte liefern, gewinnt der OpenCV-Text. Das behebt Fälle wie `Büetigen` vs. `B羹etigen`.
+Seit Version **0.6.7.0** werden ZBar-Ergebnisse zusätzlich gegen OpenCV geprüft. Wenn beide Decoder unterschiedliche Texte liefern, gewinnt der OpenCV-Text. Das behebt Fälle wie `Büetigen` vs. `B羹etigen`.
 
 Für Overlay-Texte stehen nun Pixelgrößen zur Verfügung:
 

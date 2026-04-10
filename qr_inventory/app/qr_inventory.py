@@ -1169,6 +1169,34 @@ def _debug_log_raw_qr_readout(raw, cam_id: str, zone_name: str, src: str):
         utf8_replace,
     )
 
+
+def _contains_cjk(text: str) -> bool:
+    for ch in str(text or ""):
+        cp = ord(ch)
+        if (
+            0x3400 <= cp <= 0x4DBF or
+            0x4E00 <= cp <= 0x9FFF or
+            0xF900 <= cp <= 0xFAFF or
+            0x20000 <= cp <= 0x2A6DF or
+            0x2A700 <= cp <= 0x2B73F or
+            0x2B740 <= cp <= 0x2B81F or
+            0x2B820 <= cp <= 0x2CEAF or
+            0x2CEB0 <= cp <= 0x2EBEF
+        ):
+            return True
+    return False
+
+
+def _payload_looks_suspicious(payload: str) -> bool:
+    text = str(payload or "").strip()
+    if not text:
+        return False
+    if "�" in text or "?" in text:
+        return True
+    if _contains_cjk(text):
+        return True
+    return False
+
 # ------------------------------------------------------------
 # Stream info
 # ------------------------------------------------------------
@@ -1969,6 +1997,57 @@ def _opencv_decode_subprocess(gray_img: np.ndarray):
         return None
 
 
+def _order_quad_points_float(pts):
+    try:
+        arr = np.array(pts, dtype=np.float32).reshape(-1, 2)
+        if arr.shape[0] != 4:
+            return None
+        center = np.mean(arr, axis=0)
+        angles = np.arctan2(arr[:, 1] - center[1], arr[:, 0] - center[0])
+        order = np.argsort(angles)
+        arr = arr[order]
+        start_idx = int(np.argmin(np.sum(arr, axis=1)))
+        arr = np.roll(arr, -start_idx, axis=0)
+        return arr.astype(np.float32)
+    except Exception:
+        return None
+
+
+def _warp_quad_for_opencv(gray_variant: np.ndarray, quad_pts, border_px: int = 20):
+    try:
+        if gray_variant is None or gray_variant.size == 0:
+            return None
+        src = _order_quad_points_float(quad_pts)
+        if src is None:
+            return None
+        side_top = float(np.linalg.norm(src[1] - src[0]))
+        side_right = float(np.linalg.norm(src[2] - src[1]))
+        side_bottom = float(np.linalg.norm(src[2] - src[3]))
+        side_left = float(np.linalg.norm(src[3] - src[0]))
+        side = int(round(max(side_top, side_right, side_bottom, side_left)))
+        side = max(24, min(2048, side))
+        border = max(8, int(border_px))
+        out_size = side + (2 * border)
+        dst = np.array([
+            [border, border],
+            [border + side - 1, border],
+            [border + side - 1, border + side - 1],
+            [border, border + side - 1],
+        ], dtype=np.float32)
+        M = cv2.getPerspectiveTransform(src, dst)
+        warped = cv2.warpPerspective(
+            np.ascontiguousarray(gray_variant),
+            M,
+            (int(out_size), int(out_size)),
+            flags=cv2.INTER_CUBIC,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=255,
+        )
+        return warped
+    except Exception:
+        return None
+
+
 def _crop_quad_for_opencv(gray_variant: np.ndarray, quad_pts, border_frac: float = 0.20, border_min_px: int = 16):
     try:
         if gray_variant is None or gray_variant.size == 0:
@@ -2000,37 +2079,135 @@ def _crop_quad_for_opencv(gray_variant: np.ndarray, quad_pts, border_frac: float
         return None
 
 
-def _reconcile_payload_with_opencv(zbar_payload: str, gray_variant: np.ndarray, quad_pts, cam_id: str, zone_name: str, src: str = "zbar"):
-    final_payload = str(zbar_payload or "").strip()
-    chosen_src = str(src or "zbar")
-    if not opencv_subprocess_fallback:
-        return {"payload": final_payload, "src": chosen_src, "mismatch": False, "opencv": None}
+def _opencv_confirm_variants(gray_variant: np.ndarray, quad_pts, attempts_max: int = 8):
+    attempts = []
+    seen = set()
+
+    def _maybe_add(tag, img):
+        if img is None or getattr(img, 'size', 0) == 0:
+            return
+        key = (str(tag), int(img.shape[1]), int(img.shape[0]))
+        if key in seen:
+            return
+        seen.add(key)
+        attempts.append((str(tag), np.ascontiguousarray(img)))
+
     crop = _crop_quad_for_opencv(gray_variant, quad_pts)
-    if crop is None:
-        return {"payload": final_payload, "src": chosen_src, "mismatch": False, "opencv": None}
-    out = _opencv_decode_subprocess(crop)
-    opencv_payload = str((out or {}).get("payload") or "").strip()
+    warp = _warp_quad_for_opencv(gray_variant, quad_pts)
+    _maybe_add('crop', crop)
+    _maybe_add('warp', warp)
+
+    for base_tag, base_img in list(attempts):
+        bh, bw = base_img.shape[:2]
+        for scale in (2.0, 3.0):
+            nw = max(1, min(2400, int(round(bw * scale))))
+            nh = max(1, min(2400, int(round(bh * scale))))
+            if nw == bw and nh == bh:
+                continue
+            _maybe_add(f'{base_tag}_{scale:.1f}x', cv2.resize(base_img, (nw, nh), interpolation=cv2.INTER_CUBIC))
+        try:
+            blur = cv2.GaussianBlur(base_img, (0, 0), 1.0)
+            sharp = cv2.addWeighted(base_img, 1.8, blur, -0.8, 0)
+            _maybe_add(f'{base_tag}_sharp', sharp)
+        except Exception:
+            pass
+        try:
+            _, otsu = cv2.threshold(base_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            _maybe_add(f'{base_tag}_otsu', otsu)
+        except Exception:
+            pass
+
+    tried = []
+    for tag, img in attempts[:max(1, int(attempts_max))]:
+        out = _opencv_decode_subprocess(img)
+        payload = str((out or {}).get('payload') or '').strip()
+        tried.append({
+            'tag': tag,
+            'shape': [int(img.shape[0]), int(img.shape[1])],
+            'ok': bool((out or {}).get('ok')),
+            'payload': payload,
+            'method': (out or {}).get('method'),
+        })
+        if payload:
+            return {
+                'payload': payload,
+                'out': out,
+                'tag': tag,
+                'shape': [int(img.shape[0]), int(img.shape[1])],
+                'attempts': tried,
+            }
+    return {
+        'payload': '',
+        'out': None,
+        'tag': None,
+        'shape': None,
+        'attempts': tried,
+    }
+
+
+def _log_opencv_confirmation(cam_id: str, zone_name: str, src: str, zbar_payload: str, suspect: bool, confirm: dict, decision: str):
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    logger.debug(
+        'QR confirm cam=%s zone=%s src=%s suspect=%s zbar=%r opencv_status=%s opencv_payload=%r decision=%s attempt=%s shape=%s',
+        cam_id,
+        zone_name,
+        src,
+        bool(suspect),
+        zbar_payload,
+        'ok' if str(confirm.get('payload') or '').strip() else 'empty',
+        str(confirm.get('payload') or '').strip(),
+        decision,
+        confirm.get('tag'),
+        confirm.get('shape'),
+    )
+
+
+def _reconcile_payload_with_opencv(zbar_payload: str, gray_variant: np.ndarray, quad_pts, cam_id: str, zone_name: str, src: str = 'zbar'):
+    final_payload = str(zbar_payload or '').strip()
+    chosen_src = str(src or 'zbar')
+    suspect = _payload_looks_suspicious(final_payload)
+    if not opencv_subprocess_fallback:
+        return {'payload': final_payload, 'src': chosen_src, 'mismatch': False, 'opencv': None, 'decision': 'zbar', 'suspect': suspect}
+
+    confirm = _opencv_confirm_variants(gray_variant, quad_pts, attempts_max=max(4, min(12, int(opencv_fallback_attempts or 8))))
+    opencv_payload = str(confirm.get('payload') or '').strip()
     mismatch = bool(opencv_payload and final_payload and opencv_payload != final_payload)
+
     if opencv_payload:
         if mismatch:
             logger.warning(
-                "QR decoder mismatch cam=%s zone=%s src=%s zbar=%r opencv=%r choosing=opencv",
+                'QR decoder mismatch cam=%s zone=%s src=%s zbar=%r opencv=%r choosing=opencv',
                 cam_id,
                 zone_name,
                 src,
                 final_payload,
                 opencv_payload,
             )
-            chosen_src = f"{chosen_src}+opencv"
+            decision = 'opencv_mismatch'
+            chosen_src = f'{chosen_src}+opencv'
         else:
-            chosen_src = f"{chosen_src}+opencv_agree"
+            decision = 'opencv_agree'
+            chosen_src = f'{chosen_src}+opencv_agree'
         final_payload = opencv_payload
-    return {
-        "payload": final_payload,
-        "src": chosen_src,
-        "mismatch": mismatch,
-        "opencv": out if opencv_payload else None,
-    }
+        _log_opencv_confirmation(cam_id, zone_name, src, zbar_payload, suspect, confirm, decision)
+        return {'payload': final_payload, 'src': chosen_src, 'mismatch': mismatch, 'opencv': confirm, 'decision': decision, 'suspect': suspect}
+
+    if suspect:
+        logger.warning(
+            'QR suspect payload rejected cam=%s zone=%s src=%s zbar=%r reason=no_opencv_confirmation',
+            cam_id,
+            zone_name,
+            src,
+            final_payload,
+        )
+        decision = 'reject_suspect'
+        _log_opencv_confirmation(cam_id, zone_name, src, zbar_payload, suspect, confirm, decision)
+        return {'payload': '', 'src': f'{chosen_src}+rejected', 'mismatch': False, 'opencv': confirm, 'decision': decision, 'suspect': suspect}
+
+    decision = 'zbar_fallback'
+    _log_opencv_confirmation(cam_id, zone_name, src, zbar_payload, suspect, confirm, decision)
+    return {'payload': final_payload, 'src': chosen_src, 'mismatch': False, 'opencv': confirm, 'decision': decision, 'suspect': suspect}
 
 # ------------------------------------------------------------
 # Scaling helper
@@ -3070,7 +3247,7 @@ class MQTTManager:
             "name": str(cam_name),
             "manufacturer": "QR Inventory",
             "model": "QR Zone Scanner",
-            "sw_version": "0.6.6.9",
+            "sw_version": "0.6.7.0",
         }
 
     def _discovery_payload(self, cam_id: str, cam_name: str, zone_name: str) -> dict:
@@ -3114,7 +3291,7 @@ class MQTTManager:
                 "name": "QR Inventory Summary",
                 "manufacturer": "QR Inventory",
                 "model": "Detected List",
-                "sw_version": "0.6.6.9",
+                "sw_version": "0.6.7.0",
             },
         }
 
