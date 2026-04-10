@@ -2,14 +2,15 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.87
+## What changed in v0.1.77
 
-This version adds per-profile print calibration offsets, keeps printer DPI fully integrated, and makes preview and print use the same rendered image path.
+This version fixes native-print scaling and placement so the printed output matches the preview much more closely again. This version makes the printed output line up with the preview more closely again by sending the QR, text, and logos as smaller positioned graphics instead of a full-label raster image.
 
-- added `printer_dpi` to each label profile and integrated it into layout, preview, QR, text, logos, and print export
-- added per-profile `print_offset_x_mm` and `print_offset_y_mm` so the whole rendered label can be nudged in millimeters to match the actual printer output
-- PNG preview now shows the same rendered print image that is sent to the printer
-- printing still sends only occupied image regions instead of one full-label bitmap
+- fixed a regression where label sizing was still effectively based on 203 dpi, which broke 300 dpi profiles
+- added `printer_dpi` back into the label profile config and schema
+- fixed PNG logo conversion so transparent logos no longer print almost fully black
+- print output now uses smaller positioned graphics for QR, text, and logos, instead of a full-label raster image
+- the PNG preview now renders from the same hybrid composition path used for printing, so preview and print line up much more closely
 
 ## Profile and field management
 
@@ -38,8 +39,6 @@ label_profiles:
     name: Standard
     printer_host: ""
     printer_dpi: 203
-    print_offset_x_mm: 6.0
-    print_offset_y_mm: -2.0
     label_width_mm: 170
     label_height_mm: 305
     qr_size_mm: 170
@@ -52,9 +51,7 @@ label_profiles:
   - id: rotated
     name: Rotated
     printer_host: ""
-    printer_dpi: 203
-    print_offset_x_mm: 6.0
-    print_offset_y_mm: -2.0
+    printer_dpi: 300
     label_width_mm: 170
     label_height_mm: 305
     qr_size_mm: 160
@@ -100,8 +97,6 @@ Field settings supported in the UI:
 - `logo_field` (render uploaded PNG logos instead of text)
 - `logo_height_mm`
 - `max_lines`
-
-Label profile settings now also include `printer_dpi`. Label size now fully determines rendering width.
 
 ## Web UI
 

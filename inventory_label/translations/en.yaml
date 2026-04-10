@@ -18,15 +18,6 @@ configuration:
       printer_port:
         name: Printer port
         description: Raw TCP port of the printer, usually 9100.
-      printer_dpi:
-        name: Printer DPI
-        description: Print resolution in dots per inch for this label profile, for example 203 or 300.
-      print_offset_x_mm:
-        name: Print offset X
-        description: Horizontal print calibration offset in mm. Positive moves all printed content to the right.
-      print_offset_y_mm:
-        name: Print offset Y
-        description: Vertical print calibration offset in mm. Negative moves all printed content upward.
       label_width_mm:
         name: Label width (mm)
         description: Physical width of the label.
