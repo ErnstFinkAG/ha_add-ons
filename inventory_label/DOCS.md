@@ -2,16 +2,14 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.89
+## What changed in v0.1.90
 
-This version fixes native-print scaling and placement so the printed output matches the preview much more closely again. QR stays native ZPL for speed, while text and logos are sent as smaller positioned graphics instead of a full-label raster image.
+This version moves the copies input next to the print button in the preview panel, shows the active label profile at the top of configured fields, and keeps logo tiles in the configured fields area image-only.
 
-- fixed a regression where label sizing was still effectively based on 203 dpi, which broke 300 dpi profiles
-- added `printer_dpi` back into the label profile config and schema
-- restored `print_offset_x_mm` and `print_offset_y_mm` in the profile config and render path
-- fixed PNG logo conversion so transparent logos no longer print almost fully black
-- print output now uses native QR plus smaller positioned graphics for text and logos, instead of a full-label raster image
-- the UI preview path stays unchanged
+- logo selections in configured fields now show only the image checkboxes
+- the copies input now sits directly to the left of the print button in the preview section
+- the active label profile is shown at the top of configured fields
+- the two-column configured-fields layout stays unchanged
 
 ## Profile and field management
 
@@ -40,8 +38,8 @@ label_profiles:
     name: Standard
     printer_host: ""
     printer_dpi: 203
-    print_offset_x_mm: 0.0
-    print_offset_y_mm: 0.0
+    print_offset_x_mm: 0
+    print_offset_y_mm: 0
     label_width_mm: 170
     label_height_mm: 305
     qr_size_mm: 170
@@ -54,9 +52,9 @@ label_profiles:
   - id: rotated
     name: Rotated
     printer_host: ""
-    printer_dpi: 300
-    print_offset_x_mm: 0.0
-    print_offset_y_mm: 0.0
+    printer_dpi: 203
+    print_offset_x_mm: 0
+    print_offset_y_mm: 0
     label_width_mm: 170
     label_height_mm: 305
     qr_size_mm: 160

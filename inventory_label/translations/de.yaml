@@ -15,8 +15,7 @@ configuration:
       printer_host:
         name: Drucker-Host
         description: IP-Adresse oder Hostname des Netzwerkdruckers.
-      printer_port:
-        name: Drucker-Port
+TEMP
         description: Raw-TCP-Port des Druckers, normalerweise 9100.
       label_width_mm:
         name: Labelbreite (mm)
