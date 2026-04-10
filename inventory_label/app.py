@@ -634,29 +634,7 @@ HTML = """
           </div>
         </div>
         <div class="preview-meta">{{ ui.preview_meta }}</div>
-      </form>
-    </div>
 
-    <details class="card details-card">
-      <summary class="details-summary">
-        <span class="details-summary-main">
-          <strong>{{ ui.page_title }} / {{ ui.field_manager_heading }}</strong><br>
-          <span class="muted small">{{ ui.field_manager_intro }}</span>
-        </span>
-        <span class="details-summary-right">
-          <span class="summary-profile-switch">
-            <label for="profile_id_summary">{{ ui.profile_select }}</label>
-            <select id="profile_id_summary" name="profile_id_summary" data-stop-details-toggle="1">
-              {% for profile in label_profiles %}
-                <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
-              {% endfor %}
-            </select>
-          </span>
-          <span class="tag">{{ ui.profile_active }}: {{ active_profile_name or ui.profile_none }}</span>
-        </span>
-      </summary>
-
-      <div class="details-body">
         <div class="top-layout">
           <div class="top-panel">
             <div class="fields-section top-fields">
@@ -769,6 +747,29 @@ HTML = """
           </div>
         </div>
 
+      </form>
+    </div>
+
+    <details class="card details-card">
+      <summary class="details-summary">
+        <span class="details-summary-main">
+          <strong>{{ ui.page_title }} / {{ ui.field_manager_heading }}</strong><br>
+          <span class="muted small">{{ ui.field_manager_intro }}</span>
+        </span>
+        <span class="details-summary-right">
+          <span class="summary-profile-switch">
+            <label for="profile_id_summary">{{ ui.profile_select }}</label>
+            <select id="profile_id_summary" name="profile_id_summary" data-stop-details-toggle="1">
+              {% for profile in label_profiles %}
+                <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
+              {% endfor %}
+            </select>
+          </span>
+          <span class="tag">{{ ui.profile_active }}: {{ active_profile_name or ui.profile_none }}</span>
+        </span>
+      </summary>
+
+      <div class="details-body">
         <div class="field-grid">
         {% for field in active_profile_fields %}
         <div class="field-card">
