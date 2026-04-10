@@ -56,6 +56,8 @@ except Exception:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
 
+APP_VERSION = '0.6.7.7'
+
 # ------------------------------------------------------------
 # Load add-on options
 # ------------------------------------------------------------
@@ -3329,7 +3331,7 @@ class MQTTManager:
             "name": str(cam_name),
             "manufacturer": "QR Inventory",
             "model": "QR Zone Scanner",
-            "sw_version": "0.6.7.6",
+            "sw_version": APP_VERSION,
         }
 
     def _discovery_payload(self, cam_id: str, cam_name: str, zone_name: str) -> dict:
@@ -3373,7 +3375,7 @@ class MQTTManager:
                 "name": "QR Inventory Summary",
                 "manufacturer": "QR Inventory",
                 "model": "Detected List",
-                "sw_version": "0.6.7.6",
+                "sw_version": APP_VERSION,
             },
         }
 
@@ -4207,6 +4209,7 @@ class CameraWorker(threading.Thread):
             time.sleep(self.interval_s)
 
 def main():
+    logger.info('QR Inventory %s starting (decoder_mode=dual_fast, suspect_reject=disabled, pillow=%s, overlay_font=%s)', APP_VERSION, 'yes' if _PIL_OK else 'no', _OVERLAY_FONT_PATH or 'opencv_only')
     MQTT_MANAGER.start()
 
     threading.Thread(target=start_http_server, daemon=True).start()

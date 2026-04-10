@@ -77,7 +77,7 @@ overlay_margin_px: 10
 
 ## Hinweise zu Unicode-QRs und Overlay-Schriften
 
-Seit Version **0.6.7.6** wird wieder der schnellere Dual-Decoder-Pfad genutzt: ZBar dient primär zur Lokalisierung, OpenCV kann den Payload derselben Erkennung überschreiben. Verdächtige ZBar-Strings werden ohne OpenCV-Bestätigung nicht mehr verworfen, damit die Erkennung nicht in einen langsamen Reject-Loop gerät. Zusätzlich werden gleichartige Payload-Varianten pro Zone kanonisiert, wobei OpenCV-bestätigte bzw. weniger verdächtige Varianten bevorzugt werden.
+Seit Version **0.6.7.7** wird wieder der schnellere Dual-Decoder-Pfad genutzt: ZBar dient primär zur Lokalisierung, OpenCV kann den Payload derselben Erkennung überschreiben. Verdächtige ZBar-Strings werden ohne OpenCV-Bestätigung nicht mehr verworfen, damit die Erkennung nicht in einen langsamen Reject-Loop gerät. Zusätzlich werden gleichartige Payload-Varianten pro Zone kanonisiert, wobei OpenCV-bestätigte bzw. weniger verdächtige Varianten bevorzugt werden.
 
 Für Overlay-Texte stehen nun Pixelgrößen zur Verfügung:
 
@@ -175,3 +175,7 @@ title: QR Inventory
 entity: sensor.qr_inventory_detected_list
 print_base_url: http://YOUR_ADDON_HOST:8099
 ```
+
+
+Hinweis zur Fehlersuche:
+Beim Start wird jetzt die tatsächlich laufende Add-on-Version zusammen mit Decoder-Modus und Pillow/Font-Status geloggt. So lässt sich sofort erkennen, ob wirklich das neue Image läuft oder noch ein älterer Build.
