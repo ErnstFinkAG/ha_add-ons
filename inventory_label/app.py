@@ -265,6 +265,7 @@ UI_STRINGS = {
         "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at the configured printer DPI. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone. The red box shows the printable area, and the green box shows the text and footer block area.",
         "fields_heading": "Configured fields",
         "print_field": "Print",
+        "use_for_qr_label": "Use for QR",
         "required": "Required",
         "numeric_only": "Numbers only",
         "position": "Position",
@@ -378,6 +379,7 @@ UI_STRINGS = {
         "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit der konfigurierten Drucker-DPI exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone. Der rote Rahmen zeigt den Druckbereich, der grüne Rahmen den Text- und Footer-Bereich.",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
+        "use_for_qr_label": "Für QR verwenden",
         "required": "Pflichtfeld",
         "numeric_only": "Nur Zahlen",
         "position": "Position",
@@ -653,6 +655,12 @@ HTML = """
                     <input form="label-form" id="print_{{ field.id }}" name="print_{{ field.id }}" type="checkbox" value="1" data-field-id="{{ field.id }}" {% if field.print_enabled %}checked{% endif %}>
                     <label for="print_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.print_field }}</label>
                   </div>
+                  {% if not field.supports_logos %}
+                  <div class="checkline">
+                    <input form="label-form" id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" data-field-id="{{ field.id }}" {% if field.qr_enabled %}checked{% endif %}>
+                    <label for="qr_field_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.use_for_qr_label }}</label>
+                  </div>
+                  {% endif %}
                   {% if field.supports_logos %}
                   <input form="label-form" type="hidden" name="field_{{ field.id }}__present" value="1">
                   <div class="logo-option-grid">
@@ -690,62 +698,9 @@ HTML = """
               </div>
             </div>
           </div>
-
-          <div class="top-panel controls-panel">
-            <div class="headline-row">
-              <div>
-                <h1>{{ ui.page_title }}</h1>
-                <p class="muted">{{ ui.intro_text }}</p>
-              </div>
-            </div>
-
-            <input form="label-form" id="profile_id" name="profile_id" type="hidden" value="{{ active_profile_id }}">
-
-            <div class="row-compact">
-              <div>
-                <label>{{ ui.configured_printer }}</label>
-                <input value="{{ printer_target }}" disabled>
-              </div>
-            </div>
-            <p class="muted small">{{ ui.profile_edit_scope_help }}</p>
-
-            <label>{{ ui.qr_value_label }}</label>
-            <div class="selector-grid">
-              {% for field in qr_field_options %}
-              <label class="selector-option" for="qr_field_{{ field.id }}">
-                <input form="label-form" id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" data-field-id="{{ field.id }}" {% if field.selected %}checked{% endif %}>
-                <div class="selector-text">
-                  <strong>{{ field.name }}</strong>
-                  <span class="muted small">{{ field.value or ui.none }}</span>
-                </div>
-              </label>
-              {% else %}
-              <div class="field-card muted">{{ ui.no_fields_configured }}</div>
-              {% endfor %}
-            </div>
-            <p class="muted small">{{ ui.qr_field_help }}</p>
-            {% if not qr_selected_ids %}
-            <p class="muted small">{{ ui.qr_field_empty }}</p>
-            {% endif %}
-
-            <h2 class="compact-section-title">{{ ui.configured_label_mapping }}</h2>
-            <ul class="config-list">
-              <li><strong>{{ ui.profile_active }}:</strong> <code>{{ active_profile_name or ui.profile_none }}</code></li>
-              <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview or ui.none }}</code></li>
-              <li><strong>{{ ui.requested_label }}:</strong> <code>{{ requested_width_mm }} × {{ requested_height_mm }} mm</code></li>
-              <li><strong>{{ ui.requested_qr }}:</strong> <code>{{ requested_qr_mm }} × {{ requested_qr_mm }} mm</code></li>
-              <li><strong>{{ ui.printer_dpi_label }}:</strong> <code>{{ printer_dpi }}</code></li>
-              <li><strong>QR:</strong> <code>quiet zone {{ qr_quiet_zone_modules }}, ECC {{ qr_error_correction }}</code></li>
-              <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
-              <li><strong>{{ ui.effective_print_width }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
-              <li><strong>{{ ui.language_label }}:</strong> <code>{{ ui.lang }}</code></li>
-              <li><strong>{{ ui.text_block_offset_x_label }}:</strong> <code>{{ text_block_offset_x_mm }} mm</code></li>
-            </ul>
-            {% if width_warning %}
-            <p class="muted">{{ ui.width_warning }}</p>
-            {% endif %}
           </div>
-        </div>
+
+          <input form="label-form" id="profile_id" name="profile_id" type="hidden" value="{{ active_profile_id }}">
 
       </form>
     </div>
@@ -1777,6 +1732,14 @@ def selected_qr_field_ids_from_source(profile: Dict, source: object) -> List[str
         selected = [field.get("id") for field in profile.get("fields", []) if normalize_bool(field.get("always_use_for_qr"), False)]
     valid_ids = {field.get("id") for field in profile.get("fields", []) if not field_supports_logos(field)}
     return [field_id for field_id in selected if field_id in valid_ids]
+
+
+def profile_form_for_target(base_form: Dict[str, object], target_profile_id: str, active_profile_id: str) -> Dict[str, object]:
+    scoped_form = dict(base_form)
+    scoped_form["profile_id"] = target_profile_id
+    if target_profile_id != active_profile_id:
+        scoped_form["qr_field_ids"] = []
+    return scoped_form
 
 
 def qr_payload_from_field_forms(field_forms: List[Dict], selected_field_ids: List[str]) -> str:
@@ -2844,14 +2807,9 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
     ui = get_ui_strings(opts.get("ui_language"))
     qr_selected_ids = normalize_qr_field_ids(form.get("qr_field_ids", []))
     qr_preview = qr_payload_from_field_forms(field_forms, qr_selected_ids) or ui["none"]
-    qr_field_options = [
-        {
-            "id": field["id"],
-            "name": field["name"],
-            "value": normalize_qr_value(field.get("value", "")),
-            "selected": field["id"] in qr_selected_ids,
-        }
-        for field in field_forms if not field_supports_logos(field)
+    field_forms_for_view = [
+        {**field, "qr_enabled": (field.get("id") in qr_selected_ids) if not field_supports_logos(field) else False}
+        for field in field_forms
     ]
     editor_form = editor_form or blank_editor_form()
     label_profiles = opts.get("label_profiles", [])
@@ -2862,7 +2820,7 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         result=result,
         field_result=field_result,
         form=form,
-        field_forms=field_forms,
+        field_forms=field_forms_for_view,
         active_profile_fields=[{**field, "supports_logos": field_supports_logos(field), "logo_options": [{**option, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))]} for field in profile.get("fields", [])],
         label_profiles=label_profiles,
         preview_profiles=preview_profiles,
