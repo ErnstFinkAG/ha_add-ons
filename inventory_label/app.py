@@ -956,13 +956,36 @@ HTML = """
         return String(Math.max(1, Math.min(50, raw)));
       }
 
+      function labelFormControls() {
+        const controls = [];
+        const seen = new Set();
+        document.querySelectorAll("#label-form input, #label-form select, #label-form textarea, [form="label-form"]").forEach((element) => {
+          if (!element || seen.has(element)) return;
+          seen.add(element);
+          controls.push(element);
+        });
+        return controls;
+      }
+
       function buildQuery() {
         const params = new URLSearchParams();
-        const formData = new FormData(form);
-        for (const [key, value] of formData.entries()) {
-          if (key === "copies") continue;
-          params.append(key, String(value));
-        }
+        labelFormControls().forEach((input) => {
+          if (!input || !input.name || input.disabled || input.name === "copies") return;
+          const type = String(input.type || "").toLowerCase();
+          const tagName = String(input.tagName || "").toLowerCase();
+          if (type === "checkbox" || type === "radio") {
+            if (!input.checked) return;
+            params.append(input.name, String(input.value || "1"));
+            return;
+          }
+          if (tagName === "select" && input.multiple) {
+            Array.from(input.options || []).forEach((option) => {
+              if (option.selected) params.append(input.name, String(option.value || ""));
+            });
+            return;
+          }
+          params.append(input.name, String(input.value ?? ""));
+        });
         params.set("copies", normalizedCopies());
         return params;
       }

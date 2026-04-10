@@ -60,6 +60,3 @@ configuration:
       text_block_offset_x_mm:
         name: Text block offset X (mm)
         description: Horizontal offset of the text and footer block in millimeters. Positive values move the text block right.
-      show_in_multi_preview:
-        name: Show in multi preview
-        description: Controls whether this label profile appears in the stacked multi preview and click-to-print area.

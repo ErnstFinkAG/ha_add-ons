@@ -1,5 +1,5 @@
 name: "Inventory Label"
-version: "0.2.17"
+version: "0.2.18"
 slug: "inventory_label"
 description: >-
   Print large QR-code labels to a networked Zebra ZT420/ZT421 with live PNG preview,
