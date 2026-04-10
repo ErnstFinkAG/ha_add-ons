@@ -23,11 +23,10 @@ configuration:
         description: Print resolution in dots per inch for this label profile, for example 203 or 300.
       print_offset_x_mm:
         name: Print offset X (mm)
-        description: Horizontal print calibration in mm. Positive values move the printed content to the right.
+        description: Horizontal print calibration offset in millimeters. Positive values move the print right.
       print_offset_y_mm:
         name: Print offset Y (mm)
-        description: Vertical print calibration in mm. Positive values move the printed content downward.
-
+        description: Vertical print calibration offset in millimeters. Positive values move the print down.
       label_width_mm:
         name: Label width (mm)
         description: Physical width of the label.

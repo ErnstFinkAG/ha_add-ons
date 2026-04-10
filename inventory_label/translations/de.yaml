@@ -22,12 +22,11 @@ configuration:
         name: Drucker-DPI
         description: Druckauflösung in Punkten pro Zoll für dieses Etikettenprofil, zum Beispiel 203 oder 300.
       print_offset_x_mm:
-        name: Druckversatz X (mm)
-        description: Horizontale Druckkalibrierung in mm. Positive Werte verschieben den gedruckten Inhalt nach rechts.
+        name: Druck-Offset X (mm)
+        description: Horizontale Druckkalibrierung in Millimetern. Positive Werte verschieben den Druck nach rechts.
       print_offset_y_mm:
-        name: Druckversatz Y (mm)
-        description: Vertikale Druckkalibrierung in mm. Positive Werte verschieben den gedruckten Inhalt nach unten.
-
+        name: Druck-Offset Y (mm)
+        description: Vertikale Druckkalibrierung in Millimetern. Positive Werte verschieben den Druck nach unten.
       label_width_mm:
         name: Labelbreite (mm)
         description: Physische Breite des Labels.
