@@ -2,15 +2,14 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.2.01
+## What changed in v0.2.02
 
-This version fixes printable-area-box rendering and placement.
+This version adds text-block offset control and a green preview guide for the text/footer area.
 
-- the printable area box is now calculated automatically from the full label size and `printable_area_box_margin_mm`
-- a 305 mm label with 5 mm margin now yields a 295 mm box height
-- preview ignores `print_offset_x_mm` and `print_offset_y_mm`
-- actual print still applies X/Y print offsets
-- QR and footer placement can use the printable-area box when it is enabled
+- new profile option `text_block_offset_x_mm` shifts the text and footer block horizontally
+- preview now draws a green rectangle around the text/footer block area
+- the red printable-area box stays separate from the green text-block guide
+- printable-area-box behavior and preview offset behavior stay unchanged
 
 ## Profile and field management
 
@@ -107,6 +106,7 @@ Field settings supported in the UI:
 - `logo_field` (render uploaded PNG logos instead of text)
 - `logo_height_mm`
 - `max_lines`
+- `text_block_offset_x_mm` (horizontal shift for the text/footer block)
 
 ## Web UI
 

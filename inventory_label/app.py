@@ -47,6 +47,7 @@ DEFAULT_LOGO_GAP_MM = 4.0
 FIELD_GAP_MM = 4.0
 FOOTER_GAP_MM = 3.0
 DEFAULT_PRINTABLE_AREA_BOX_MARGIN_MM = 5.0
+DEFAULT_TEXT_BLOCK_OFFSET_X_MM = 0.0
 SUPPORTED_UI_LANGUAGES = {"en", "de"}
 SUPPORTED_ROTATIONS = {0, 90, 270}
 ALIGNMENTS = {"left", "center", "right"}
@@ -72,6 +73,7 @@ DEFAULT_LABEL_PROFILES = [
         "qr_error_correction": "M",
         "printable_area_box_enabled": False,
         "printable_area_box_margin_mm": DEFAULT_PRINTABLE_AREA_BOX_MARGIN_MM,
+        "text_block_offset_x_mm": DEFAULT_TEXT_BLOCK_OFFSET_X_MM,
     }
 ]
 
@@ -253,7 +255,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at the configured printer DPI. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at the configured printer DPI. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone. The red box shows the printable area, and the green box shows the text and footer block area.",
         "fields_heading": "Configured fields",
         "print_field": "Print",
         "required": "Required",
@@ -333,6 +335,7 @@ UI_STRINGS = {
         "legacy_migrated": "Legacy label_profiles_yaml was detected and migrated. Profiles now live in add-on settings, fields live in the web UI store.",
         "language_label": "Language",
         "profile_settings_source": "Profiles are defined in add-on settings",
+        "text_block_offset_x_label": "Text block offset X",
     },
     "de": {
         "lang": "de",
@@ -353,7 +356,7 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit der konfigurierten Drucker-DPI exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
+        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit der konfigurierten Drucker-DPI exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone. Der rote Rahmen zeigt den Druckbereich, der grüne Rahmen den Text- und Footer-Bereich.",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
         "required": "Pflichtfeld",
@@ -433,6 +436,7 @@ UI_STRINGS = {
         "legacy_migrated": "Altes label_profiles_yaml erkannt und migriert. Profile liegen jetzt in den Add-on-Einstellungen, Felder im Web-UI-Speicher.",
         "language_label": "Sprache",
         "profile_settings_source": "Profile werden in den Add-on-Einstellungen definiert",
+        "text_block_offset_x_label": "Textblock-Offset X",
     },
 }
 
@@ -673,6 +677,7 @@ HTML = """
             <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
             <li><strong>{{ ui.effective_print_width }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
             <li><strong>{{ ui.language_label }}:</strong> <code>{{ ui.lang }}</code></li>
+            <li><strong>{{ ui.text_block_offset_x_label }}:</strong> <code>{{ text_block_offset_x_mm }} mm</code></li>
           </ul>
           {% if width_warning %}
           <p class="muted">{{ ui.width_warning }}</p>
@@ -1330,6 +1335,7 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "qr_error_correction": str(data.get("qr_error_correction") or "M").strip().upper() if str(data.get("qr_error_correction") or "M").strip().upper() in QR_ERROR_CORRECTION_MAP else "M",
         "printable_area_box_enabled": normalize_bool(data.get("printable_area_box_enabled"), False),
         "printable_area_box_margin_mm": normalize_float(data.get("printable_area_box_margin_mm"), DEFAULT_PRINTABLE_AREA_BOX_MARGIN_MM, 0.0, 100.0),
+        "text_block_offset_x_mm": normalize_float(data.get("text_block_offset_x_mm"), DEFAULT_TEXT_BLOCK_OFFSET_X_MM, -100.0, 100.0),
     }
 
 
@@ -2137,6 +2143,48 @@ def printable_area_box_margin_mm(profile: Dict | None = None) -> float:
     return normalize_float((profile or {}).get("printable_area_box_margin_mm"), DEFAULT_PRINTABLE_AREA_BOX_MARGIN_MM, 0.0, 100.0)
 
 
+def text_block_offset_x_mm(profile: Dict | None = None) -> float:
+    return normalize_float((profile or {}).get("text_block_offset_x_mm"), DEFAULT_TEXT_BLOCK_OFFSET_X_MM, -100.0, 100.0)
+
+
+def shift_horizontal_bounds(left: int, right: int, min_left: int, max_right: int, offset_dots: int) -> Tuple[int, int]:
+    left = int(left)
+    right = int(right)
+    min_left = int(min_left)
+    max_right = int(max_right)
+    if right < left:
+        left, right = right, left
+    width = max(0, right - left)
+    available_width = max(0, max_right - min_left)
+    width = min(width, available_width)
+    new_left = left + int(offset_dots)
+    max_left = max(min_left, max_right - width)
+    new_left = max(min_left, min(max_left, new_left))
+    new_right = min(max_right, new_left + width)
+    return new_left, new_right
+
+
+def body_preview_bottom_y(body_end_y: int, profile: Dict) -> int:
+    return max(0, int(body_end_y) - mm_to_dots(FIELD_GAP_MM, profile) - 1)
+
+
+def footer_preview_top_y(current_bottom_after_draw: int, profile: Dict) -> int:
+    return max(0, int(current_bottom_after_draw) + mm_to_dots(FOOTER_GAP_MM, profile))
+
+
+def draw_text_block_preview_box(img: Image.Image, left: int, top: int, right: int, bottom: int, profile: Dict) -> None:
+    left = max(0, min(img.width - 1, int(left)))
+    top = max(0, min(img.height - 1, int(top)))
+    right = max(left, min(img.width - 1, int(right)))
+    bottom = max(top, min(img.height - 1, int(bottom)))
+    if right <= left or bottom <= top:
+        return
+    draw = ImageDraw.Draw(img)
+    outline = (22, 163, 74)
+    line_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
+    draw.rectangle((left, top, right, bottom), outline=outline, width=line_width)
+
+
 def oriented_label_size_mm(profile: Dict | None = None, rotation_degrees: int = 0) -> Tuple[float, float]:
     width_mm = normalize_float((profile or {}).get("label_width_mm"), 170.0, 1.0, 5000.0)
     height_mm = normalize_float((profile or {}).get("label_height_mm"), 305.0, 1.0, 5000.0)
@@ -2222,9 +2270,8 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
     area_left, area_top, area_right, area_bottom = get_printable_area_rect(printable_w, canvas_h, profile, rotation_degrees=0)
     area_width = max(1, area_right - area_left + 1)
     inner_margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    text_left = min(area_right, area_left + inner_margin_x)
-    text_right = max(text_left, area_right - inner_margin_x)
-    text_width = max(1, text_right - text_left + 1)
+    base_text_left = min(area_right, area_left + inner_margin_x)
+    base_text_right = max(base_text_left, area_right - inner_margin_x)
     current_y = max(layout["top_margin_dots"], area_top)
     if has_qr:
         qr_size = min(layout["qr_size_dots"], area_width, max(1, area_bottom - current_y + 1))
@@ -2235,17 +2282,40 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
         if preview:
             preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
             draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
-        text_left = max(area_left + inner_margin_x, qr_left)
-        text_right = min(area_right - inner_margin_x, qr_left + qr_size - 1)
-        if text_right < text_left:
-            text_left = area_left + inner_margin_x
-            text_right = max(text_left, area_right - inner_margin_x)
-        text_width = max(1, text_right - text_left + 1)
+        base_text_left = max(area_left + inner_margin_x, qr_left)
+        base_text_right = min(area_right - inner_margin_x, qr_left + qr_size - 1)
+        if base_text_right < base_text_left:
+            base_text_left = area_left + inner_margin_x
+            base_text_right = max(base_text_left, area_right - inner_margin_x)
         current_y = qr_top + qr_size + mm_to_dots(8, profile)
-    draw_body_blocks(img, draw, current_y, text_left, text_width, body_blocks, profile)
+
+    text_left, text_right = shift_horizontal_bounds(
+        base_text_left,
+        base_text_right,
+        area_left + inner_margin_x,
+        max(area_left + inner_margin_x, area_right - inner_margin_x),
+        mm_to_dot_offset(text_block_offset_x_mm(profile), profile),
+    )
+    text_width = max(1, text_right - text_left + 1)
+    text_block_top = current_y
+    body_end_y = current_y
+    if body_blocks:
+        body_end_y = draw_body_blocks(img, draw, current_y, text_left, text_width, body_blocks, profile)
+    footer_top_y = None
+    footer_bottom_y = None
     if footer_blocks:
         footer_bottom = (area_bottom + 1) - layout["footer_bottom_margin_dots"]
-        draw_footer_blocks(img, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
+        footer_current_bottom = draw_footer_blocks(img, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
+        footer_top_y = footer_preview_top_y(footer_current_bottom, profile)
+        footer_bottom_y = footer_bottom - 1
+
+    if preview and (body_blocks or footer_blocks):
+        block_top = text_block_top
+        block_bottom = body_preview_bottom_y(body_end_y, profile) if body_blocks else text_block_top
+        if footer_top_y is not None and footer_bottom_y is not None:
+            block_top = min(block_top, footer_top_y) if body_blocks else footer_top_y
+            block_bottom = max(block_bottom, footer_bottom_y)
+        draw_text_block_preview_box(img, text_left, block_top, text_right, block_bottom, profile)
     return img
 
 
@@ -2261,9 +2331,8 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
     area_height = max(1, area_bottom - area_top + 1)
     left_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
     right_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    text_left = min(area_right, area_left + left_margin)
-    text_right = max(text_left, area_right - right_margin)
-    text_width = max(1, text_right - text_left + 1)
+    base_text_left = min(area_right, area_left + left_margin)
+    base_text_right = max(base_text_left, area_right - right_margin)
     text_top = max(layout["top_margin_dots"], area_top)
     if has_qr:
         qr_size = min(layout["qr_size_dots"], area_height, area_width)
@@ -2275,13 +2344,37 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
             preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
             draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
         inter_block_gap = mm_to_dots(8, profile)
-        text_left = min(area_right + 1, qr_left + qr_size + inter_block_gap)
-        text_width = max(1, (area_right + 1) - text_left - right_margin)
+        base_text_left = min(area_right + 1, qr_left + qr_size + inter_block_gap)
+        base_text_right = max(base_text_left, area_right - right_margin)
         text_top = area_top + mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
+
+    text_left, text_right = shift_horizontal_bounds(
+        base_text_left,
+        base_text_right,
+        min(area_right, area_left + left_margin),
+        max(min(area_right, area_left + left_margin), area_right - right_margin),
+        mm_to_dot_offset(text_block_offset_x_mm(profile), profile),
+    )
+    text_width = max(1, text_right - text_left + 1)
+    text_block_top = text_top
+    body_end_y = text_top
+    if body_blocks:
+        body_end_y = draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
+    footer_top_y = None
+    footer_bottom_y = None
     if footer_blocks:
         footer_bottom = (area_bottom + 1) - layout["footer_bottom_margin_dots"]
-        draw_footer_blocks(landscape, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
+        footer_current_bottom = draw_footer_blocks(landscape, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
+        footer_top_y = footer_preview_top_y(footer_current_bottom, profile)
+        footer_bottom_y = footer_bottom - 1
+
+    if preview and (body_blocks or footer_blocks):
+        block_top = text_block_top
+        block_bottom = body_preview_bottom_y(body_end_y, profile) if body_blocks else text_block_top
+        if footer_top_y is not None and footer_bottom_y is not None:
+            block_top = min(block_top, footer_top_y) if body_blocks else footer_top_y
+            block_bottom = max(block_bottom, footer_bottom_y)
+        draw_text_block_preview_box(landscape, text_left, block_top, text_right, block_bottom, profile)
     if rotation_degrees == 90:
         return landscape.transpose(Image.Transpose.ROTATE_270)
     return landscape.transpose(Image.Transpose.ROTATE_90)
@@ -2647,6 +2740,7 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         print_rotation_degrees=profile.get("print_rotation_degrees", 0),
         effective_width_mm=dots_to_mm(layout["effective_width_dots"], profile),
         printer_dpi=profile.get("printer_dpi", DEFAULT_PRINTER_DPI),
+        text_block_offset_x_mm=profile.get("text_block_offset_x_mm", DEFAULT_TEXT_BLOCK_OFFSET_X_MM),
         effective_width_dots=layout["effective_width_dots"],
         width_warning=layout["width_warning"],
         preview_display_width_mm=preview_display_width_mm,
