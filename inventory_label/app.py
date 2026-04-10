@@ -2150,13 +2150,17 @@ def get_printable_area_rect(width: int, height: int, profile: Dict | None = None
         return 0, 0, width - 1, height - 1
 
     inset_dots = max(0, mm_to_dot_offset(printable_area_box_margin_mm(profile), profile))
-    inner_width = max(1, width - (inset_dots * 2))
-    inner_height = max(1, height - (inset_dots * 2))
+    max_horizontal_inset = max(0, (width - 1) // 2)
+    max_vertical_inset = max(0, (height - 1) // 2)
+    inset_x = min(inset_dots, max_horizontal_inset)
+    inset_y = min(inset_dots, max_vertical_inset)
 
-    left = max(0, (width - inner_width) // 2)
-    top = max(0, (height - inner_height) // 2)
-    right = min(width - 1, left + inner_width - 1)
-    bottom = min(height - 1, top + inner_height - 1)
+    # Anchor the printable-area box directly to the physical label edges so the
+    # visible box size is exactly: label_size - (2 * configured_margin).
+    left = inset_x
+    top = inset_y
+    right = max(left, width - inset_x - 1)
+    bottom = max(top, height - inset_y - 1)
 
     if apply_offsets:
         offset_x = mm_to_dot_offset((profile or {}).get("print_offset_x_mm", 0.0), profile)
