@@ -55,7 +55,7 @@ except Exception:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
 
-APP_VERSION = "0.6.6.7"
+APP_VERSION = "0.6.6.8"
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -1990,6 +1990,65 @@ def _opencv_decode_subprocess(gray_img: np.ndarray):
     except Exception:
         return None
 
+def _payload_needs_text_reconciliation(payload: str) -> bool:
+    s = str(payload or "").strip()
+    if not s:
+        return False
+    if "�" in s:
+        return True
+    return any(ord(ch) > 127 for ch in s)
+
+
+def _crop_quad_bbox_for_decode(gray_img: np.ndarray, quad_pts, border_px: int | None = None):
+    try:
+        if gray_img is None or getattr(gray_img, "size", 0) == 0:
+            return None
+        pts = np.array(quad_pts, dtype=np.float32).reshape(-1, 2)
+        if pts.shape[0] != 4:
+            return None
+        h, w = gray_img.shape[:2]
+        minx = max(0, int(np.floor(np.min(pts[:, 0]))))
+        miny = max(0, int(np.floor(np.min(pts[:, 1]))))
+        maxx = min(w - 1, int(np.ceil(np.max(pts[:, 0]))))
+        maxy = min(h - 1, int(np.ceil(np.max(pts[:, 1]))))
+        if maxx <= minx or maxy <= miny:
+            return None
+        crop = gray_img[miny:maxy + 1, minx:maxx + 1]
+        if crop is None or crop.size == 0:
+            return None
+        bp = int(border_px) if border_px is not None else max(12, int(round(0.20 * float(min(crop.shape[:2])))))
+        bp = max(0, bp)
+        if bp > 0:
+            crop = cv2.copyMakeBorder(crop, bp, bp, bp, bp, cv2.BORDER_CONSTANT, value=255)
+        return crop
+    except Exception:
+        return None
+
+
+def _reconcile_payload_with_opencv(zbar_payload: str, gray_variant: np.ndarray, quad_pts, cam_id: str, zone_name: str):
+    payload = str(zbar_payload or "").strip()
+    if not payload or not _payload_needs_text_reconciliation(payload):
+        return payload
+    try:
+        crop = _crop_quad_bbox_for_decode(gray_variant, quad_pts, border_px=cutout_border_min_px)
+        if crop is None or crop.size == 0:
+            return payload
+        out = _opencv_decode_subprocess(crop)
+        if not out or not out.get("ok"):
+            return payload
+        op_payload = str(out.get("payload") or "").strip()
+        if not op_payload:
+            return payload
+        if op_payload != payload:
+            logger.info(
+                "Decoder text reconciliation: cam=%s zone=%s zbar=%r opencv=%r; using OpenCV payload",
+                cam_id, zone_name, payload, op_payload,
+            )
+        return op_payload
+    except Exception:
+        return payload
+
+
 # ------------------------------------------------------------
 # Scaling helper
 # ------------------------------------------------------------
@@ -2192,6 +2251,7 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
 
                 rh, rw = v.shape[:2]
                 quad = best_quad.astype(np.float32)
+                best_payload = _reconcile_payload_with_opencv(best_payload, v, quad, str(cam_id), str(zname))
                 quad[:, 0] = np.clip(quad[:, 0], 0, rw - 1)
                 quad[:, 1] = np.clip(quad[:, 1], 0, rh - 1)
 
@@ -2426,6 +2486,7 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
                     quad = quad.astype(np.float32)
                     quad[:, 0] = np.clip(quad[:, 0], 0, rw - 1)
                     quad[:, 1] = np.clip(quad[:, 1], 0, rh - 1)
+                    payload = _reconcile_payload_with_opencv(payload, v, quad, str(cam_id), str(zname))
 
                     pts_roi = quad / max(1e-6, eff)
                     pts_full = pts_roi + np.array([x1p, y1p], dtype=np.float32)
@@ -2873,7 +2934,12 @@ def draw_overlay(frame, detections, zones_dict):
                 max_width=max(40, w - x1),
             )
 
-    for d in detections:
+    overlay_detections = []
+    decoded_overlay = _dedupe_zone_detections([d for d in (detections or []) if isinstance(d, dict) and bool(d.get("decoded", False))])
+    overlay_detections.extend(decoded_overlay)
+    overlay_detections.extend([d for d in (detections or []) if isinstance(d, dict) and (not bool(d.get("decoded", False)))])
+
+    for d in overlay_detections:
         pts_list = d.get("points")
         if not pts_list or d.get("no_quad"):
             continue

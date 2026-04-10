@@ -1,3 +1,9 @@
+## Version 0.6.6.8
+
+- Overlay zeichnet dekodierte QR-Labels jetzt dedupliziert, damit identische Payloads nicht doppelt im selben Bild erscheinen.
+- ZBar-Treffer mit nicht-ASCII Payloads werden pro QR-Ausschnitt gegen OpenCV gegengeprüft; wenn OpenCV einen anderen Text liefert, wird der OpenCV-Text bevorzugt.
+- Behebt damit doppelte Overlay-Labels und Fälle wie `Büetigen`, die im Overlay aus dem fehlerhaften ZBar-Text kamen.
+
 ## Version 0.6.6.7
 
 - Fix for pixel-based overlay font settings when no system TrueType font is present.
