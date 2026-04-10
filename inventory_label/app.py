@@ -34,8 +34,8 @@ APP = Flask(__name__)
 APP.logger.handlers.clear()
 APP.logger.propagate = True
 
-DEFAULT_PRINTER_DPI = 203
-PRINTER_MAX_WIDTH_MM = 168.0
+DOTS_PER_MM = 203 / 25.4
+PRINTER_MAX_WIDTH_DOTS = 1344
 INGRESS_ALLOWED_IP = "172.30.32.2"
 LOCAL_ALLOWED_IPS = {"127.0.0.1", "::1", None}
 OPTIONS_PATH = "/data/options.json"
@@ -59,7 +59,6 @@ DEFAULT_LABEL_PROFILES = [
         "name": "Standard",
         "printer_host": "",
         "printer_port": None,
-        "printer_dpi": DEFAULT_PRINTER_DPI,
         "label_width_mm": 170,
         "label_height_mm": 305,
         "qr_size_mm": 170,
@@ -241,7 +240,6 @@ UI_STRINGS = {
         "qr_field_empty": "No QR field selected. No QR code will be generated.",
         "copies": "Copies",
         "configured_printer": "Configured printer",
-        "printer_dpi_label": "Printer DPI",
         "not_configured": "Not configured",
         "printer_not_configured": "Printer host and port are not configured for this label profile.",
         "print_label_button": "Print label",
@@ -249,7 +247,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at the configured printer DPI. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at 203 dpi. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
         "fields_heading": "Configured fields",
         "print_field": "Print",
         "required": "Required",
@@ -262,7 +260,7 @@ UI_STRINGS = {
         "current_qr_payload": "Current QR payload",
         "requested_label": "Requested label",
         "requested_qr": "Requested QR",
-        "effective_print_width": "Effective print width on ZT420/ZT421 at the configured DPI",
+        "effective_print_width": "Effective print width on ZT420/ZT421 @ 203 dpi",
         "print_rotation": "Print rotation",
         "width_warning": "Requested width exceeds the printer's 168 mm printable width. The add-on clamps the printed width automatically.",
         "sent_labels_message": "Sent {copies} label(s) to {host}:{port}. QR payload: {qr_payload}",
@@ -341,7 +339,6 @@ UI_STRINGS = {
         "qr_field_empty": "Kein QR-Feld ausgewählt. Es wird kein QR-Code erzeugt.",
         "copies": "Anzahl",
         "configured_printer": "Konfigurierter Drucker",
-        "printer_dpi_label": "Drucker-DPI",
         "not_configured": "Nicht konfiguriert",
         "printer_not_configured": "Drucker-Host und Port sind für dieses Etikettenprofil nicht konfiguriert.",
         "print_label_button": "Etikett drucken",
@@ -349,7 +346,7 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit der konfigurierten Drucker-DPI exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
+        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit 203 dpi exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
         "required": "Pflichtfeld",
@@ -362,7 +359,7 @@ UI_STRINGS = {
         "current_qr_payload": "Aktueller QR-Inhalt",
         "requested_label": "Gewünschtes Label",
         "requested_qr": "Gewünschter QR",
-        "effective_print_width": "Effektive Druckbreite auf ZT420/ZT421 mit der konfigurierten DPI",
+        "effective_print_width": "Effektive Druckbreite auf ZT420/ZT421 @ 203 dpi",
         "print_rotation": "Drehung",
         "width_warning": "Die gewünschte Breite überschreitet die druckbare Breite von 168 mm. Das Add-on begrenzt die Druckbreite automatisch.",
         "sent_labels_message": "{copies} Etikett(en) an {host}:{port} gesendet. QR-Inhalt: {qr_payload}",
@@ -664,7 +661,6 @@ HTML = """
             <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview or ui.none }}</code></li>
             <li><strong>{{ ui.requested_label }}:</strong> <code>{{ requested_width_mm }} × {{ requested_height_mm }} mm</code></li>
             <li><strong>{{ ui.requested_qr }}:</strong> <code>{{ requested_qr_mm }} × {{ requested_qr_mm }} mm</code></li>
-            <li><strong>{{ ui.printer_dpi_label }}:</strong> <code>{{ printer_dpi }}</code></li>
             <li><strong>QR:</strong> <code>quiet zone {{ qr_quiet_zone_modules }}, ECC {{ qr_error_correction }}</code></li>
             <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
             <li><strong>{{ ui.effective_print_width }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
@@ -1218,31 +1214,6 @@ def normalize_position(value: object, default: str = "body") -> str:
     return pos if pos in FIELD_POSITIONS else default
 
 
-def normalize_printer_dpi(value: object, default: int = DEFAULT_PRINTER_DPI) -> int:
-    return normalize_int(value, default, 100, 600)
-
-
-def dots_per_mm(profile: Dict | None = None, dpi: int | None = None) -> float:
-    resolved_dpi = normalize_printer_dpi(dpi if dpi is not None else (profile or {}).get("printer_dpi"), DEFAULT_PRINTER_DPI)
-    return resolved_dpi / 25.4
-
-
-def mm_to_dots(mm_value: float, profile: Dict | None = None, dpi: int | None = None) -> int:
-    return max(1, int(round(float(mm_value) * dots_per_mm(profile, dpi))))
-
-
-def mm_to_dot(mm_value: float, profile: Dict | None = None, dpi: int | None = None) -> int:
-    return mm_to_dots(mm_value, profile, dpi)
-
-
-def dots_to_mm(dots: int, profile: Dict | None = None, dpi: int | None = None) -> float:
-    return round(dots / dots_per_mm(profile, dpi), 1)
-
-
-def printer_max_width_dots(profile: Dict | None = None) -> int:
-    return mm_to_dots(PRINTER_MAX_WIDTH_MM, profile)
-
-
 def sanitize_id(value: str, fallback: str) -> str:
     normalized = re.sub(r"[^a-z0-9_-]+", "_", value.strip().lower()).strip("_")
     return normalized or fallback
@@ -1333,7 +1304,6 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "name": name,
         "printer_host": normalize_string(data.get("printer_host"), ""),
         "printer_port": normalize_optional_port(data.get("printer_port")),
-        "printer_dpi": normalize_printer_dpi(data.get("printer_dpi"), DEFAULT_PRINTER_DPI),
         "label_width_mm": normalize_float(data.get("label_width_mm"), 170.0, 50.0, 500.0),
         "label_height_mm": normalize_float(data.get("label_height_mm"), 305.0, 50.0, 1000.0),
         "qr_size_mm": normalize_float(data.get("qr_size_mm"), 170.0, 10.0, 300.0),
@@ -1807,13 +1777,21 @@ def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     return body, (footer_logo_rows + footer_texts)
 
 
+def mm_to_dots(mm_value: float) -> int:
+    return max(1, int(round(float(mm_value) * DOTS_PER_MM)))
+
+
+def dots_to_mm(dots: int) -> float:
+    return round(dots / DOTS_PER_MM, 1)
+
+
 def effective_layout(profile: Dict) -> Dict:
-    requested_width_dots = mm_to_dots(profile["label_width_mm"], profile)
-    requested_height_dots = mm_to_dots(profile["label_height_mm"], profile)
-    qr_size_dots = mm_to_dots(profile["qr_size_mm"], profile)
-    top_margin_dots = mm_to_dots(profile["top_margin_mm"], profile)
-    footer_bottom_margin_dots = mm_to_dots(profile.get("footer_bottom_margin_mm", 0.0), profile)
-    effective_width_dots = min(requested_width_dots, printer_max_width_dots(profile))
+    requested_width_dots = mm_to_dots(profile["label_width_mm"])
+    requested_height_dots = mm_to_dots(profile["label_height_mm"])
+    qr_size_dots = mm_to_dots(profile["qr_size_mm"])
+    top_margin_dots = mm_to_dots(profile["top_margin_mm"])
+    footer_bottom_margin_dots = mm_to_dots(profile.get("footer_bottom_margin_mm", 0.0))
+    effective_width_dots = min(requested_width_dots, PRINTER_MAX_WIDTH_DOTS)
     return {
         "requested_width_dots": requested_width_dots,
         "requested_height_dots": requested_height_dots,
@@ -1821,7 +1799,7 @@ def effective_layout(profile: Dict) -> Dict:
         "top_margin_dots": top_margin_dots,
         "footer_bottom_margin_dots": footer_bottom_margin_dots,
         "effective_width_dots": effective_width_dots,
-        "width_warning": requested_width_dots > printer_max_width_dots(profile),
+        "width_warning": requested_width_dots > PRINTER_MAX_WIDTH_DOTS,
     }
 
 
@@ -1926,8 +1904,8 @@ def wrap_text_lines(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageF
     return trimmed
 
 
-def fit_block_lines(draw: ImageDraw.ImageDraw, text: str, block: Dict, max_width: int, profile: Dict) -> Tuple[ImageFont.ImageFont, List[str], int]:
-    start_size = max(10, mm_to_dots(block["font_size_mm"], profile))
+def fit_block_lines(draw: ImageDraw.ImageDraw, text: str, block: Dict, max_width: int) -> Tuple[ImageFont.ImageFont, List[str], int]:
+    start_size = max(10, mm_to_dots(block["font_size_mm"]))
     min_size = max(10, int(start_size * 0.6))
     best_font = load_font(block["font_family"], block["bold"], block["italic"], start_size)
     best_lines = wrap_text_lines(draw, text, best_font, max_width, normalize_int(block.get("max_lines"), 3, 1, 8))
@@ -1980,9 +1958,9 @@ def load_logo_image(storage_name: object) -> Image.Image:
         return img.convert("RGBA").copy()
 
 
-def fit_logo_image(block: Dict, max_width: int, profile: Dict) -> Image.Image:
+def fit_logo_image(block: Dict, max_width: int) -> Image.Image:
     logo = load_logo_image(block.get("storage_name"))
-    target_h = max(1, mm_to_dots(block.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM), profile))
+    target_h = max(1, mm_to_dots(block.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM)))
     scale = target_h / max(1, logo.height)
     width = max(1, int(round(logo.width * scale)))
     height = max(1, int(round(logo.height * scale)))
@@ -1993,17 +1971,17 @@ def fit_logo_image(block: Dict, max_width: int, profile: Dict) -> Image.Image:
     return logo.resize((width, height), Image.Resampling.LANCZOS)
 
 
-def fit_logo_row_images(block: Dict, max_width: int, profile: Dict) -> List[Image.Image]:
+def fit_logo_row_images(block: Dict, max_width: int) -> List[Image.Image]:
     logos = []
     for option in normalize_logo_options(block.get("logos", [])):
         storage_name = option.get("storage_name")
         if not storage_name:
             continue
         logo_block = {"storage_name": storage_name, "logo_height_mm": block.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM)}
-        logos.append(fit_logo_image(logo_block, max_width, profile))
+        logos.append(fit_logo_image(logo_block, max_width))
     if not logos:
         return []
-    gap = mm_to_dots(DEFAULT_LOGO_GAP_MM, profile)
+    gap = mm_to_dots(DEFAULT_LOGO_GAP_MM)
     total_width = sum(logo.width for logo in logos) + (gap * max(0, len(logos) - 1))
     if total_width <= max_width:
         return logos
@@ -2030,10 +2008,10 @@ def draw_aligned_logo(img: Image.Image, logo: Image.Image, y: int, box_left: int
     return y + logo_h
 
 
-def draw_aligned_logo_row(img: Image.Image, logos: List[Image.Image], y: int, box_left: int, box_width: int, alignment: str, profile: Dict) -> int:
+def draw_aligned_logo_row(img: Image.Image, logos: List[Image.Image], y: int, box_left: int, box_width: int, alignment: str) -> int:
     if not logos:
         return y
-    gap = mm_to_dots(DEFAULT_LOGO_GAP_MM, profile)
+    gap = mm_to_dots(DEFAULT_LOGO_GAP_MM)
     total_width = sum(logo.width for logo in logos) + (gap * max(0, len(logos) - 1))
     max_height = max(logo.height for logo in logos)
     if alignment == "left":
@@ -2053,50 +2031,50 @@ def draw_aligned_logo_row(img: Image.Image, logos: List[Image.Image], y: int, bo
     return top_y + max_height
 
 
-def draw_body_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, start_y: int, box_left: int, box_width: int, body_blocks: List[Dict], profile: Dict) -> int:
+def draw_body_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, start_y: int, box_left: int, box_width: int, body_blocks: List[Dict]) -> int:
     current_y = start_y
     for block in body_blocks:
         if block.get("type") == "logo_row":
-            logos = fit_logo_row_images(block, box_width, profile)
-            current_y = draw_aligned_logo_row(img, logos, current_y, box_left, box_width, block["alignment"], profile)
+            logos = fit_logo_row_images(block, box_width)
+            current_y = draw_aligned_logo_row(img, logos, current_y, box_left, box_width, block["alignment"])
         elif block.get("type") == "logo":
-            logo = fit_logo_image(block, box_width, profile)
+            logo = fit_logo_image(block, box_width)
             current_y = draw_aligned_logo(img, logo, current_y, box_left, box_width, block["alignment"])
         else:
-            font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width, profile)
+            font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
             spacing = max(4, resolved // 7)
             current_y = draw_aligned_lines(draw, lines, current_y, box_left, box_width, font, block["alignment"], block["underline"], spacing)
-        current_y += mm_to_dots(FIELD_GAP_MM, profile)
+        current_y += mm_to_dots(FIELD_GAP_MM)
     return current_y
 
 
-def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int, profile: Dict) -> Tuple[int, object, object, int]:
+def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int) -> Tuple[int, object, object, int]:
     if block.get("type") == "logo_row":
-        logos = fit_logo_row_images(block, box_width, profile)
+        logos = fit_logo_row_images(block, box_width)
         return (max((logo.height for logo in logos), default=0), logos, None, 0)
     if block.get("type") == "logo":
-        logo = fit_logo_image(block, box_width, profile)
+        logo = fit_logo_image(block, box_width)
         return logo.height, logo, None, 0
-    font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width, profile)
+    font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
     spacing = max(4, resolved // 7)
     line_h = text_line_height(draw, font)
     total = (line_h * len(lines)) + (max(0, len(lines) - 1) * spacing)
     return total, font, lines, spacing
 
 
-def draw_footer_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, bottom_y: int, box_left: int, box_width: int, footer_blocks: List[Dict], profile: Dict) -> int:
+def draw_footer_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, bottom_y: int, box_left: int, box_width: int, footer_blocks: List[Dict]) -> int:
     current_bottom = bottom_y
     for block in reversed(footer_blocks):
-        current_bottom -= max(0, mm_to_dots(float(block.get("footer_bottom_margin_mm", 0.0)), profile))
-        total_h, payload, lines, spacing = block_height(draw, block, box_width, profile)
+        current_bottom -= max(0, int(round(float(block.get("footer_bottom_margin_mm", 0.0)) * DOTS_PER_MM)))
+        total_h, payload, lines, spacing = block_height(draw, block, box_width)
         top_y = current_bottom - total_h
         if block.get("type") == "logo_row":
-            draw_aligned_logo_row(img, payload, top_y, box_left, box_width, block["alignment"], profile)
+            draw_aligned_logo_row(img, payload, top_y, box_left, box_width, block["alignment"])
         elif block.get("type") == "logo":
             draw_aligned_logo(img, payload, top_y, box_left, box_width, block["alignment"])
         else:
             draw_aligned_lines(draw, lines, top_y, box_left, box_width, payload, block["alignment"], block["underline"], spacing)
-        current_bottom = top_y - mm_to_dots(FOOTER_GAP_MM, profile)
+        current_bottom = top_y - mm_to_dots(FOOTER_GAP_MM)
     return current_bottom
 
 
@@ -2117,7 +2095,7 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
     img = Image.new("RGBA", (printable_w, canvas_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(img)
     has_qr = bool(normalize_qr_value(qr_value))
-    margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
     text_width = max(1, printable_w - (margin_x * 2))
     current_y = layout["top_margin_dots"]
     if has_qr:
@@ -2127,15 +2105,15 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
         qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
         img.paste(qr_img, (qr_left, qr_top))
         if preview:
-            preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
+            preview_border_width = max(2, int(round(DOTS_PER_MM * 0.5)))
             draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
-        margin_x = max((printable_w - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
+        margin_x = max((printable_w - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM))
         text_width = max(1, printable_w - (margin_x * 2))
-        current_y = qr_top + qr_size + mm_to_dots(8, profile)
-    draw_body_blocks(img, draw, current_y, margin_x, text_width, body_blocks, profile)
+        current_y = qr_top + qr_size + mm_to_dots(8)
+    draw_body_blocks(img, draw, current_y, margin_x, text_width, body_blocks)
     if footer_blocks:
         footer_bottom = canvas_h - layout["footer_bottom_margin_dots"]
-        draw_footer_blocks(img, draw, footer_bottom, margin_x, text_width, footer_blocks, profile)
+        draw_footer_blocks(img, draw, footer_bottom, margin_x, text_width, footer_blocks)
     return img
 
 
@@ -2146,8 +2124,8 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
     landscape = Image.new("RGBA", (logical_w, logical_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(landscape)
     has_qr = bool(normalize_qr_value(qr_value))
-    left_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    right_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    left_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
+    right_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
     text_left = left_margin
     text_width = max(1, logical_w - text_left - right_margin)
     text_top = layout["top_margin_dots"]
@@ -2158,16 +2136,16 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
         qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
         landscape.paste(qr_img, (qr_left, qr_top))
         if preview:
-            preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
+            preview_border_width = max(2, int(round(DOTS_PER_MM * 0.5)))
             draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
-        inter_block_gap = mm_to_dots(8, profile)
+        inter_block_gap = mm_to_dots(8)
         text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
         text_width = max(1, logical_w - text_left - right_margin)
-        text_top = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
+        text_top = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
+    draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks)
     if footer_blocks:
         footer_bottom = logical_h - layout["footer_bottom_margin_dots"]
-        draw_footer_blocks(landscape, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
+        draw_footer_blocks(landscape, draw, footer_bottom, text_left, text_width, footer_blocks)
     if rotation_degrees == 90:
         return landscape.transpose(Image.Transpose.ROTATE_270)
     return landscape.transpose(Image.Transpose.ROTATE_90)
@@ -2267,33 +2245,6 @@ def rotate_graphic_for_rotation(img: Image.Image, rotation_degrees: int) -> Imag
     return img
 
 
-def prepare_graphic_image(img: Image.Image, threshold: int = 180) -> Image.Image:
-    if img.mode == "1":
-        return img
-    rgba = img.convert("RGBA")
-    white = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-    white.alpha_composite(rgba)
-    gray = white.convert("L")
-    return gray.point(lambda value: 255 if value >= threshold else 0, mode="1")
-
-
-def render_text_line_image(line: str, font: ImageFont.ImageFont, underline: bool, line_h: int, underline_offset: int, underline_thickness: int) -> Tuple[Image.Image, Tuple[int, int]]:
-    probe = ImageDraw.Draw(Image.new("RGB", (4, 4), color=(255, 255, 255)))
-    bbox = probe.textbbox((0, 0), line, font=font)
-    text_w = max(1, bbox[2] - bbox[0])
-    text_h = max(1, bbox[3] - bbox[1])
-    img_h = text_h
-    if underline:
-        img_h = max(img_h, line_h + underline_offset + underline_thickness)
-    canvas = Image.new("RGBA", (text_w, img_h), color=(255, 255, 255, 255))
-    draw = ImageDraw.Draw(canvas)
-    draw.text((-bbox[0], -bbox[1]), line, font=font, fill=(0, 0, 0, 255))
-    if underline:
-        underline_y = min(img_h - 1, line_h + underline_offset)
-        draw.rectangle((0, underline_y, max(0, text_w - 1), min(img_h - 1, underline_y + underline_thickness - 1)), fill=(0, 0, 0, 255))
-    return prepare_graphic_image(canvas), (bbox[0], bbox[1])
-
-
 def line_alignment_x(box_left: int, box_width: int, text_width: int, alignment: str) -> int:
     if alignment == "left":
         return int(round(box_left))
@@ -2302,8 +2253,8 @@ def line_alignment_x(box_left: int, box_width: int, text_width: int, alignment: 
     return int(round(box_left + ((box_width - text_width) / 2)))
 
 
-def logical_text_lines(draw: ImageDraw.ImageDraw, block: Dict, box_left: int, box_width: int, top_y: int, profile: Dict) -> Tuple[List[Dict], int]:
-    font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width, profile)
+def logical_text_lines(draw: ImageDraw.ImageDraw, block: Dict, box_left: int, box_width: int, top_y: int) -> Tuple[List[Dict], int]:
+    font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
     spacing = max(4, resolved // 7)
     line_h = text_line_height(draw, font)
     underline_thickness = max(1, line_h // 18)
@@ -2314,26 +2265,38 @@ def logical_text_lines(draw: ImageDraw.ImageDraw, block: Dict, box_left: int, bo
         bbox = draw.textbbox((0, 0), line, font=font)
         text_w = max(1, bbox[2] - bbox[0])
         x = line_alignment_x(box_left, box_width, text_w, block["alignment"])
-        text_image, bbox_offset = render_text_line_image(line, font, bool(block.get("underline")), line_h, underline_offset, underline_thickness)
         elements.append({
-            "type": "graphic",
-            "x": x + bbox_offset[0],
-            "y": current_y + bbox_offset[1],
-            "width": text_image.width,
-            "height": text_image.height,
-            "image": text_image,
+            "type": "text",
+            "x": x,
+            "y": current_y,
+            "width": text_w,
+            "height": line_h,
+            "text": line,
+            "font_size": resolved,
         })
+        if block.get("underline"):
+            underline_img = Image.new("1", (max(1, text_w), underline_thickness), color=1)
+            underline_draw = ImageDraw.Draw(underline_img)
+            underline_draw.rectangle((0, 0, text_w - 1, underline_thickness - 1), fill=0)
+            elements.append({
+                "type": "graphic",
+                "x": x,
+                "y": current_y + line_h + underline_offset,
+                "width": text_w,
+                "height": underline_thickness,
+                "image": underline_img,
+            })
         current_y += line_h
         if idx < len(lines) - 1:
             current_y += spacing
     return elements, current_y
 
 
-def logical_logo_row_elements(block: Dict, box_left: int, box_width: int, top_y: int, profile: Dict) -> Tuple[List[Dict], int]:
-    logos = fit_logo_row_images(block, box_width, profile)
+def logical_logo_row_elements(block: Dict, box_left: int, box_width: int, top_y: int) -> Tuple[List[Dict], int]:
+    logos = fit_logo_row_images(block, box_width)
     if not logos:
         return [], int(round(top_y))
-    gap = mm_to_dots(DEFAULT_LOGO_GAP_MM, profile)
+    gap = mm_to_dots(DEFAULT_LOGO_GAP_MM)
     total_width = sum(logo.width for logo in logos) + (gap * max(0, len(logos) - 1))
     max_height = max(logo.height for logo in logos)
     if block["alignment"] == "left":
@@ -2352,7 +2315,7 @@ def logical_logo_row_elements(block: Dict, box_left: int, box_width: int, top_y:
             "y": logo_y,
             "width": logo.width,
             "height": logo.height,
-            "image": prepare_graphic_image(logo),
+            "image": logo.convert("1"),
         })
         current_x += logo.width
         if idx < len(logos) - 1:
@@ -2360,20 +2323,20 @@ def logical_logo_row_elements(block: Dict, box_left: int, box_width: int, top_y:
     return elements, int(round(top_y + max_height))
 
 
-def logical_block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int, profile: Dict) -> int:
-    total_h, _, _, _ = block_height(draw, block, box_width, profile)
+def logical_block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int) -> int:
+    total_h, _, _, _ = block_height(draw, block, box_width)
     return int(total_h)
 
 
-def logical_footer_block_elements(draw: ImageDraw.ImageDraw, block: Dict, box_left: int, box_width: int, top_y: int, profile: Dict) -> List[Dict]:
+def logical_footer_block_elements(draw: ImageDraw.ImageDraw, block: Dict, box_left: int, box_width: int, top_y: int) -> List[Dict]:
     if block.get("type") == "logo_row":
-        elements, _ = logical_logo_row_elements(block, box_left, box_width, top_y, profile)
+        elements, _ = logical_logo_row_elements(block, box_left, box_width, top_y)
         return elements
-    elements, _ = logical_text_lines(draw, block, box_left, box_width, top_y, profile)
+    elements, _ = logical_text_lines(draw, block, box_left, box_width, top_y)
     return elements
 
 
-def build_native_print_context(qr_value: str, field_forms: List[Dict], profile: Dict) -> Dict:
+def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
     layout = effective_layout(profile)
     printable_w = layout["effective_width_dots"]
     label_h = layout["requested_height_dots"]
@@ -2382,125 +2345,62 @@ def build_native_print_context(qr_value: str, field_forms: List[Dict], profile: 
     draw = make_measure_draw()
     logical_width = printable_w if rotation == 0 else label_h
     logical_height = label_h if rotation == 0 else printable_w
-    margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
     text_left = margin_x
     text_width = max(1, logical_width - (margin_x * 2))
-    current_y = layout["top_margin_dots"]
+    current_y = layout["top_margin_dots"] if rotation == 0 else layout["top_margin_dots"]
     elements: List[Dict] = []
-    qr_bbox: Tuple[int, int, int, int] | None = None
 
     qr_text = normalize_qr_value(qr_value)
     if qr_text:
-        qr_target_size = min(layout["qr_size_dots"], printable_w if rotation == 0 else logical_height)
+        qr_target_size = min(layout["qr_size_dots"], logical_width if rotation == 0 else logical_height)
+        qr_mag, qr_actual_size = qr_native_size(qr_text, qr_target_size, profile)
         if rotation == 0:
-            qr_left = max((printable_w - qr_target_size) // 2, 0)
-            qr_top = layout["top_margin_dots"]
-            margin_x = max((printable_w - qr_target_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
+            qr_box_left = max((printable_w - qr_target_size) // 2, 0)
+            qr_left = qr_box_left + max(0, (qr_target_size - qr_actual_size) // 2)
+            qr_top = layout["top_margin_dots"] + max(0, (qr_target_size - qr_actual_size) // 2)
+            margin_x = max((printable_w - qr_target_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM))
             text_left = margin_x
             text_width = max(1, printable_w - (margin_x * 2))
-            current_y = qr_top + qr_target_size + mm_to_dots(8, profile)
+            current_y = layout["top_margin_dots"] + qr_target_size + mm_to_dots(8)
         else:
-            qr_left = min(max(layout["top_margin_dots"], 0), max(0, logical_width - qr_target_size))
-            qr_top = max((logical_height - qr_target_size) // 2, 0)
-            inter_block_gap = mm_to_dots(8, profile)
-            text_left = min(logical_width, qr_left + qr_target_size + inter_block_gap)
-            text_width = max(1, logical_width - text_left - mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
-            current_y = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-        qr_image = build_qr_image(qr_text, qr_target_size, profile)
+            qr_box_left = min(max(layout["top_margin_dots"], 0), max(0, logical_width - qr_target_size))
+            qr_left = qr_box_left + max(0, (qr_target_size - qr_actual_size) // 2)
+            qr_box_top = max((logical_height - qr_target_size) // 2, 0)
+            qr_top = qr_box_top + max(0, (qr_target_size - qr_actual_size) // 2)
+            inter_block_gap = mm_to_dots(8)
+            text_left = min(logical_width, qr_box_left + qr_target_size + inter_block_gap)
+            text_width = max(1, logical_width - text_left - mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM))
+            current_y = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM)
         elements.append({
-            "type": "graphic",
+            "type": "qr",
             "x": qr_left,
             "y": qr_top,
-            "width": qr_target_size,
-            "height": qr_target_size,
-            "image": qr_image,
+            "width": qr_actual_size,
+            "height": qr_actual_size,
+            "magnification": qr_mag,
+            "data": qr_text,
         })
-        qr_bbox = (qr_left, qr_top, qr_target_size, qr_target_size)
 
     for block in body_blocks:
         if block.get("type") == "logo_row":
-            block_elements, current_y = logical_logo_row_elements(block, text_left, text_width, current_y, profile)
+            block_elements, current_y = logical_logo_row_elements(block, text_left, text_width, current_y)
         else:
-            block_elements, current_y = logical_text_lines(draw, block, text_left, text_width, current_y, profile)
+            block_elements, current_y = logical_text_lines(draw, block, text_left, text_width, current_y)
         elements.extend(block_elements)
-        current_y += mm_to_dots(FIELD_GAP_MM, profile)
+        current_y += mm_to_dots(FIELD_GAP_MM)
 
     if footer_blocks:
         current_bottom = logical_height - layout["footer_bottom_margin_dots"]
         for block in reversed(footer_blocks):
-            current_bottom -= max(0, mm_to_dots(float(block.get("footer_bottom_margin_mm", 0.0)), profile))
-            total_h = logical_block_height(draw, block, text_width, profile)
+            current_bottom -= max(0, int(round(float(block.get("footer_bottom_margin_mm", 0.0)) * DOTS_PER_MM)))
+            total_h = logical_block_height(draw, block, text_width)
             top_y = current_bottom - total_h
-            elements.extend(logical_footer_block_elements(draw, block, text_left, text_width, top_y, profile))
-            current_bottom = top_y - mm_to_dots(FOOTER_GAP_MM, profile)
+            elements.extend(logical_footer_block_elements(draw, block, text_left, text_width, top_y))
+            current_bottom = top_y - mm_to_dots(FOOTER_GAP_MM)
 
-    return {
-        "layout": layout,
-        "printable_w": printable_w,
-        "label_h": label_h,
-        "rotation": rotation,
-        "logical_width": logical_width,
-        "logical_height": logical_height,
-        "elements": elements,
-        "qr_bbox": qr_bbox,
-    }
-
-
-def render_native_output_image(qr_value: str, field_forms: List[Dict], profile: Dict, include_requested_canvas: bool = False, include_qr_outline: bool = False) -> Image.Image:
-    context = build_native_print_context(qr_value, field_forms, profile)
-    printable_w = context["printable_w"]
-    label_h = context["label_h"]
-    rotation = context["rotation"]
-    logical_width = context["logical_width"]
-    logical_height = context["logical_height"]
-    printable_image = Image.new("RGBA", (printable_w, label_h), color=(255, 255, 255, 255))
-    for element in context["elements"]:
-        tx, ty, tw, th = transform_logical_bbox(
-            element["x"],
-            element["y"],
-            element["width"],
-            element["height"],
-            rotation,
-            logical_width,
-            logical_height,
-        )
-        tx = max(0, int(tx))
-        ty = max(0, int(ty))
-        image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation).convert("RGBA")
-        printable_image.alpha_composite(image, (tx, ty))
-
-    final_image = printable_image
-    qr_outline_offset_x = 0
-    if include_requested_canvas:
-        requested_w = context["layout"]["requested_width_dots"]
-        if requested_w > printable_w:
-            canvas = Image.new("RGBA", (requested_w, label_h), color=(255, 255, 255, 255))
-            printable_left = max((requested_w - printable_w) // 2, 0)
-            draw_background_for_preview(canvas, requested_w, label_h, printable_left, printable_w)
-            canvas.alpha_composite(printable_image, (printable_left, 0))
-            final_image = canvas
-            qr_outline_offset_x = printable_left
-
-    if include_qr_outline and context.get("qr_bbox"):
-        draw = ImageDraw.Draw(final_image)
-        qx, qy, qw, qh = context["qr_bbox"]
-        tx, ty, tw, th = transform_logical_bbox(qx, qy, qw, qh, rotation, logical_width, logical_height)
-        tx += qr_outline_offset_x
-        preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
-        draw.rectangle((tx, ty, tx + tw - 1, ty + th - 1), outline=(220, 38, 38), width=preview_border_width)
-
-    if include_requested_canvas:
-        return orient_preview_for_display(final_image, rotation)
-    return final_image
-
-
-def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
-    context = build_native_print_context(qr_value, field_forms, profile)
-    printable_w = context["printable_w"]
-    label_h = context["label_h"]
-    rotation = context["rotation"]
-    logical_width = context["logical_width"]
-    logical_height = context["logical_height"]
+    orientation = zpl_orientation_for_rotation(rotation)
+    qr_error = str(profile.get("qr_error_correction") or "M").strip().upper() or "M"
     commands = [
         "^XA",
         "^CI28",
@@ -2508,7 +2408,7 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
         f"^LL{label_h}",
         "^LH0,0",
     ]
-    for element in context["elements"]:
+    for element in elements:
         tx, ty, tw, th = transform_logical_bbox(
             element["x"],
             element["y"],
@@ -2520,14 +2420,25 @@ def build_native_zpl(qr_value: str, field_forms: List[Dict], copies: int, profil
         )
         tx = max(0, int(tx))
         ty = max(0, int(ty))
+        if element["type"] == "qr":
+            qr_payload = f"{qr_error}A,{element['data']}"
+            commands.append(f"^FO{tx},{ty}^BQ{orientation},2,{element['magnification']}")
+            commands.append(f"^FH^FD{zpl_hex_encode(qr_payload)}^FS")
+            continue
+        if element["type"] == "text":
+            font_size = max(10, int(element.get("font_size", 10)))
+            commands.append(f"^FO{tx},{ty}^A0{orientation},{font_size},{font_size}")
+            commands.append(f"^FH^FD{zpl_hex_encode(element['text'])}^FS")
+            continue
         if element["type"] == "graphic":
-            image = rotate_graphic_for_rotation(prepare_graphic_image(element["image"]), rotation)
+            image = rotate_graphic_for_rotation(element["image"], rotation).convert("1")
             total_bytes, bytes_per_row, graphic_hex = image_to_gfa(image)
             commands.append(f"^FO{tx},{ty}^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_hex}^FS")
             continue
     commands.append(f"^PQ{copies},0,1,N")
     commands.append("^XZ")
     return "\n".join(commands)
+
 
 def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
     try:
@@ -2839,7 +2750,6 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         printer_host=profile.get("printer_host", ""),
         printer_port=profile.get("printer_port", ""),
         printer_target=format_printer_target(profile, opts),
-        printer_dpi=profile.get("printer_dpi", DEFAULT_PRINTER_DPI),
         qr_preview=qr_preview,
         requested_width_mm=profile.get("label_width_mm", 0),
         requested_height_mm=profile.get("label_height_mm", 0),
@@ -2847,7 +2757,7 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         qr_quiet_zone_modules=profile.get("qr_quiet_zone_modules", 0),
         qr_error_correction=profile.get("qr_error_correction", "M"),
         print_rotation_degrees=profile.get("print_rotation_degrees", 0),
-        effective_width_mm=dots_to_mm(layout["effective_width_dots"], profile),
+        effective_width_mm=dots_to_mm(layout["effective_width_dots"]),
         effective_width_dots=layout["effective_width_dots"],
         width_warning=layout["width_warning"],
         preview_display_width_mm=preview_display_width_mm,
@@ -3084,18 +2994,15 @@ def preview_png():
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("active_profile_id"), qr_value)
-        try:
-            img = render_native_output_image(qr_value, field_forms, opts["active_profile"], include_requested_canvas=True, include_qr_outline=True)
-        except Exception:
-            LOGGER.exception("Native preview render failed, falling back to legacy preview renderer")
-            img = render_label_image(qr_value, field_forms, opts["active_profile"], preview=True)
+        img = render_label_image(qr_value, field_forms, opts["active_profile"], preview=True)
         bio = BytesIO()
-        img.save(bio, format="PNG", dpi=(normalize_printer_dpi(opts["active_profile"].get("printer_dpi")), normalize_printer_dpi(opts["active_profile"].get("printer_dpi"))), optimize=True)
+        img.save(bio, format="PNG", dpi=(203, 203), optimize=True)
         bio.seek(0)
         return send_file(bio, mimetype="image/png", download_name="label-preview.png")
     except Exception as exc:
         LOGGER.exception("PNG preview failed")
         return Response(ui_text(opts, "preview_failed_message", error=exc), status=400, mimetype="text/plain; charset=utf-8")
+
 
 @APP.route("/api/print", methods=["POST"])
 def api_print():
