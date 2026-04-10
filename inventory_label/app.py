@@ -560,6 +560,11 @@ HTML = """
     .details-summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; list-style: none; cursor: pointer; padding: 18px 20px; }
     .details-summary::-webkit-details-marker { display: none; }
     .details-summary strong { font-size: 1.2rem; }
+    .details-summary-main { min-width: 0; }
+    .details-summary-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .summary-profile-switch { display: flex; flex-direction: column; gap: 4px; min-width: 220px; }
+    .summary-profile-switch label { margin: 0; font-size: 0.86rem; color: var(--muted); font-weight: 600; }
+    .summary-profile-switch select { margin: 0; padding: 8px 12px; }
     .details-body { padding: 0 20px 20px; }
     .move-button { min-width: 48px; padding: 12px 14px; }
     .small { font-size: 0.92rem; }
@@ -634,11 +639,21 @@ HTML = """
 
     <details class="card details-card">
       <summary class="details-summary">
-        <span>
+        <span class="details-summary-main">
           <strong>{{ ui.page_title }} / {{ ui.field_manager_heading }}</strong><br>
           <span class="muted small">{{ ui.field_manager_intro }}</span>
         </span>
-        <span class="tag">{{ ui.profile_active }}: {{ active_profile_name or ui.profile_none }}</span>
+        <span class="details-summary-right">
+          <span class="summary-profile-switch">
+            <label for="profile_id_summary">{{ ui.profile_select }}</label>
+            <select id="profile_id_summary" name="profile_id_summary" data-stop-details-toggle="1">
+              {% for profile in label_profiles %}
+                <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
+              {% endfor %}
+            </select>
+          </span>
+          <span class="tag">{{ ui.profile_active }}: {{ active_profile_name or ui.profile_none }}</span>
+        </span>
       </summary>
 
       <div class="details-body">
@@ -959,6 +974,7 @@ HTML = """
     (function () {
       const form = document.getElementById("label-form");
       const profileSelect = document.getElementById("profile_id");
+      const summaryProfileSelect = document.getElementById("profile_id_summary");
       const previewImages = Array.from(document.querySelectorAll("[data-preview-image]"));
       const previewPngLinks = Array.from(document.querySelectorAll("[data-preview-png-link]"));
       const previewZplLinks = Array.from(document.querySelectorAll("[data-preview-zpl-link]"));
@@ -1147,13 +1163,29 @@ HTML = """
         renderExistingLogos(data.logo_options || []);
       }
 
-      if (profileSelect) {
-        profileSelect.addEventListener("change", () => {
-          const url = new URL(`${ingressBase}/`, window.location.origin);
-          if (profileSelect.value) url.searchParams.set("profile_id", profileSelect.value);
-          window.location.href = url.toString();
-        });
+      function navigateToProfile(profileId) {
+        const url = new URL(`${ingressBase}/`, window.location.origin);
+        if (profileId) url.searchParams.set("profile_id", profileId);
+        window.location.href = url.toString();
       }
+
+      [profileSelect, summaryProfileSelect].forEach((select) => {
+        if (!select) return;
+        select.addEventListener("change", () => {
+          const nextValue = select.value || "";
+          if (profileSelect && profileSelect !== select) profileSelect.value = nextValue;
+          if (summaryProfileSelect && summaryProfileSelect !== select) summaryProfileSelect.value = nextValue;
+          navigateToProfile(nextValue);
+        });
+      });
+
+      document.querySelectorAll("[data-stop-details-toggle='1']").forEach((element) => {
+        ["click", "mousedown", "pointerdown", "touchstart"].forEach((eventName) => {
+          element.addEventListener(eventName, (event) => {
+            event.stopPropagation();
+          });
+        });
+      });
 
       document.querySelectorAll("#label-form input, #label-form select, #label-form textarea, [form=\"label-form\"]").forEach((input) => {
         if (input.dataset && input.dataset.numberOnly === "1") {
