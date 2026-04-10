@@ -956,6 +956,72 @@ def _safe_label(s: str, max_len: int = 96) -> str:
         return s[: max_len - 1] + "…"
     return s
 
+def _safe_log_value(value, max_len: int = 240) -> str:
+    s = str(value if value is not None else "")
+    s = s.replace("\n", "\\n").replace("\r", "\\r")
+    if len(s) > max_len:
+        return s[: max_len - 1] + "…"
+    return s
+
+def _build_raw_qr_readout(raw_bytes: bytes | None = None, text: str | None = None) -> dict:
+    info = {
+        "text": str(text or ""),
+        "byte_len": None,
+        "hex": None,
+        "base64": None,
+        "utf8_strict": None,
+        "utf8_replace": None,
+        "utf8_ignore": None,
+        "latin1": None,
+        "big5": None,
+        "decode_errors": {},
+    }
+
+    if raw_bytes is None:
+        return info
+
+    try:
+        raw = bytes(raw_bytes)
+    except Exception:
+        raw = b""
+
+    info["byte_len"] = int(len(raw))
+    info["hex"] = raw.hex()
+    info["base64"] = base64.b64encode(raw).decode("ascii") if raw else ""
+
+    for label, encoding, errors in (
+        ("utf8_strict", "utf-8", "strict"),
+        ("utf8_replace", "utf-8", "replace"),
+        ("utf8_ignore", "utf-8", "ignore"),
+        ("latin1", "latin-1", "strict"),
+        ("big5", "big5", "strict"),
+    ):
+        try:
+            info[label] = raw.decode(encoding, errors=errors)
+        except Exception as e:
+            info["decode_errors"][label] = f"{type(e).__name__}: {e}"
+
+    return info
+
+def _log_raw_qr_readout(cam_id: str, zone_name: str, source: str, raw_bytes: bytes | None = None, text: str | None = None):
+    info = _build_raw_qr_readout(raw_bytes=raw_bytes, text=text)
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "QR raw readout cam=%s zone=%s src=%s bytes=%s text=%r utf8_strict=%r utf8_replace=%r utf8_ignore=%r latin1=%r big5=%r hex=%s",
+            cam_id,
+            zone_name,
+            source,
+            info.get("byte_len"),
+            info.get("text"),
+            _safe_log_value(info.get("utf8_strict")),
+            _safe_log_value(info.get("utf8_replace")),
+            _safe_log_value(info.get("utf8_ignore")),
+            _safe_log_value(info.get("latin1")),
+            _safe_log_value(info.get("big5")),
+            _safe_log_value(info.get("hex"), 320),
+        )
+    return info
+
 def _encode_png(img):
     ok, buf = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 1])
     return buf.tobytes() if ok else None
@@ -1948,13 +2014,16 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
                 best_area = -1.0
                 best_quad = None
                 best_payload = None
+                best_raw_readout = None
                 for r in res:
+                    raw_bytes = bytes(getattr(r, "data", b"") or b"")
                     try:
-                        payload = (r.data.decode("utf-8", errors="ignore") or "").strip()
+                        payload = (raw_bytes.decode("utf-8", errors="ignore") or "").strip()
                     except Exception:
                         payload = ""
                     if not payload:
                         continue
+                    raw_readout = _log_raw_qr_readout(cam_id, zname, "zbar", raw_bytes=raw_bytes, text=payload)
                     quad = _zbar_poly_to_quad(r.polygon)
                     if quad is None:
                         continue
@@ -1963,9 +2032,13 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
                         best_area = area
                         best_quad = quad
                         best_payload = payload
+                        best_raw_readout = raw_readout
 
                 if best_quad is None or not best_payload:
                     continue
+
+                if best_raw_readout is not None:
+                    dbg["zbar"]["best_raw_readout"] = best_raw_readout
 
                 rh, rw = v.shape[:2]
                 quad = best_quad.astype(np.float32)
@@ -2045,6 +2118,12 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
                     out = _opencv_decode_subprocess(v)
                     dbg["opencv_subproc"]["last"] = {"scale": scale_tag, "pre": pre_name, "out": out}
                     if out and out.get("ok") and out.get("payload") and out.get("points"):
+                        dbg["opencv_subproc"]["last_raw_readout"] = _log_raw_qr_readout(
+                            cam_id,
+                            zname,
+                            "opencv_subproc",
+                            text=(out.get("payload") or "").strip(),
+                        )
                         pts = np.array(out["points"], dtype=np.float32).reshape(-1, 2)
                         if pts.shape[0] != 4:
                             continue
@@ -2191,12 +2270,14 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
                     continue
                 rh, rw = v.shape[:2]
                 for r in res:
+                    raw_bytes = bytes(getattr(r, "data", b"") or b"")
                     try:
-                        payload = (r.data.decode("utf-8", errors="ignore") or "").strip()
+                        payload = (raw_bytes.decode("utf-8", errors="ignore") or "").strip()
                     except Exception:
                         payload = ""
                     if not payload:
                         continue
+                    raw_readout = _log_raw_qr_readout(cam_id, zname, "zbar_multi", raw_bytes=raw_bytes, text=payload)
                     quad = _zbar_poly_to_quad(r.polygon)
                     if quad is None:
                         continue
@@ -2230,6 +2311,7 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
                             "zone_ov": ov,
                             "scale": scale_tag,
                             "pre": pre_name,
+                            "raw_readout": raw_readout,
                         },
                         "decoded": True,
                     })
