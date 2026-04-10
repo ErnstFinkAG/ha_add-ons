@@ -59,6 +59,8 @@ DEFAULT_LABEL_PROFILES = [
         "printer_host": "",
         "printer_port": None,
         "printer_dpi": DEFAULT_PRINTER_DPI,
+        "print_offset_x_mm": 6.0,
+        "print_offset_y_mm": -2.0,
         "label_width_mm": 170,
         "label_height_mm": 305,
         "qr_size_mm": 170,
@@ -241,6 +243,8 @@ UI_STRINGS = {
         "copies": "Copies",
         "configured_printer": "Configured printer",
         "printer_dpi_label": "Printer DPI",
+        "print_offset_x_label": "Print offset X",
+        "print_offset_y_label": "Print offset Y",
         "not_configured": "Not configured",
         "printer_not_configured": "Printer host and port are not configured for this label profile.",
         "print_label_button": "Print label",
@@ -340,6 +344,8 @@ UI_STRINGS = {
         "copies": "Anzahl",
         "configured_printer": "Konfigurierter Drucker",
         "printer_dpi_label": "Drucker-DPI",
+        "print_offset_x_label": "Druckoffset X",
+        "print_offset_y_label": "Druckoffset Y",
         "not_configured": "Nicht konfiguriert",
         "printer_not_configured": "Drucker-Host und Port sind für dieses Etikettenprofil nicht konfiguriert.",
         "print_label_button": "Etikett drucken",
@@ -662,6 +668,8 @@ HTML = """
             <li><strong>{{ ui.requested_label }}:</strong> <code>{{ requested_width_mm }} × {{ requested_height_mm }} mm</code></li>
             <li><strong>{{ ui.requested_qr }}:</strong> <code>{{ requested_qr_mm }} × {{ requested_qr_mm }} mm</code></li>
             <li><strong>{{ ui.printer_dpi_label }}:</strong> <code>{{ printer_dpi }}</code></li>
+            <li><strong>{{ ui.print_offset_x_label }}:</strong> <code>{{ print_offset_x_mm }} mm</code></li>
+            <li><strong>{{ ui.print_offset_y_label }}:</strong> <code>{{ print_offset_y_mm }} mm</code></li>
             <li><strong>QR:</strong> <code>quiet zone {{ qr_quiet_zone_modules }}, ECC {{ qr_error_correction }}</code></li>
             <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
             <li><strong>{{ ui.effective_print_width }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
@@ -1313,6 +1321,8 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "printer_host": normalize_string(data.get("printer_host"), ""),
         "printer_port": normalize_optional_port(data.get("printer_port")),
         "printer_dpi": normalize_printer_dpi(data.get("printer_dpi"), DEFAULT_PRINTER_DPI),
+        "print_offset_x_mm": normalize_float(data.get("print_offset_x_mm"), 6.0, -50.0, 50.0),
+        "print_offset_y_mm": normalize_float(data.get("print_offset_y_mm"), -2.0, -50.0, 50.0),
         "label_width_mm": normalize_float(data.get("label_width_mm"), 170.0, 50.0, 500.0),
         "label_height_mm": normalize_float(data.get("label_height_mm"), 305.0, 50.0, 1000.0),
         "qr_size_mm": normalize_float(data.get("qr_size_mm"), 170.0, 10.0, 300.0),
@@ -2167,6 +2177,30 @@ def orient_preview_for_display(img: Image.Image, rotation_degrees: int) -> Image
     return img
 
 
+def apply_profile_print_offset(img: Image.Image, profile: Dict) -> Image.Image:
+    offset_x = mm_to_dot_offset(profile.get("print_offset_x_mm", 0.0), profile)
+    offset_y = mm_to_dot_offset(profile.get("print_offset_y_mm", 0.0), profile)
+    if offset_x == 0 and offset_y == 0:
+        return img
+    width, height = img.size
+    background = (255, 255, 255, 255) if img.mode == "RGBA" else 255 if img.mode in {"L", "1"} else (255, 255, 255)
+    shifted = Image.new(img.mode, (width, height), color=background)
+    src_left = max(0, -offset_x)
+    src_top = max(0, -offset_y)
+    src_right = min(width, width - max(offset_x, 0))
+    src_bottom = min(height, height - max(offset_y, 0))
+    if src_right <= src_left or src_bottom <= src_top:
+        return shifted
+    region = img.crop((src_left, src_top, src_right, src_bottom))
+    dest_left = max(offset_x, 0)
+    dest_top = max(offset_y, 0)
+    if img.mode == "RGBA":
+        shifted.alpha_composite(region.convert("RGBA"), (dest_left, dest_top))
+    else:
+        shifted.paste(region, (dest_left, dest_top))
+    return shifted
+
+
 def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, preview: bool) -> Image.Image:
     layout = effective_layout(profile)
     requested_w = layout["requested_width_dots"]
@@ -2175,6 +2209,7 @@ def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, pr
     rotation_degrees = profile["print_rotation_degrees"]
     body_blocks, footer_blocks = fields_to_blocks(field_forms)
     printable_image = render_portrait_content(printable_w, requested_h, qr_value, body_blocks, footer_blocks, profile, preview) if rotation_degrees == 0 else render_rotated_content(printable_w, requested_h, qr_value, body_blocks, footer_blocks, profile, preview, rotation_degrees)
+    printable_image = apply_profile_print_offset(printable_image, profile)
     if not preview:
         return printable_image
     if requested_w <= printable_w:
@@ -2601,6 +2636,8 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         printer_port=profile.get("printer_port", ""),
         printer_target=format_printer_target(profile, opts),
         printer_dpi=profile.get("printer_dpi", DEFAULT_PRINTER_DPI),
+        print_offset_x_mm=profile.get("print_offset_x_mm", 0.0),
+        print_offset_y_mm=profile.get("print_offset_y_mm", 0.0),
         qr_preview=qr_preview,
         requested_width_mm=profile.get("label_width_mm", 0),
         requested_height_mm=profile.get("label_height_mm", 0),
