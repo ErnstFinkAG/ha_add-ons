@@ -2079,23 +2079,54 @@ def _crop_quad_for_opencv(gray_variant: np.ndarray, quad_pts, border_frac: float
         return None
 
 
-def _opencv_confirm_variants(gray_variant: np.ndarray, quad_pts, attempts_max: int = 8):
+def _opencv_confirm_variants(gray_variant: np.ndarray, quad_pts, attempts_max: int = 8, extra_imgs=None):
     attempts = []
     seen = set()
 
     def _maybe_add(tag, img):
         if img is None or getattr(img, 'size', 0) == 0:
             return
-        key = (str(tag), int(img.shape[1]), int(img.shape[0]))
+        key = (int(img.shape[1]), int(img.shape[0]), str(tag))
         if key in seen:
             return
         seen.add(key)
         attempts.append((str(tag), np.ascontiguousarray(img)))
 
-    crop = _crop_quad_for_opencv(gray_variant, quad_pts)
-    warp = _warp_quad_for_opencv(gray_variant, quad_pts)
-    _maybe_add('crop', crop)
-    _maybe_add('warp', warp)
+    def _add_with_border(tag_prefix, img):
+        if img is None or getattr(img, 'size', 0) == 0:
+            return
+        _maybe_add(tag_prefix, img)
+        try:
+            bh, bw = img.shape[:2]
+            border = max(12, int(round(min(bh, bw) * 0.10)))
+            border = min(border, 160)
+            if border > 0:
+                bordered = cv2.copyMakeBorder(img, border, border, border, border, cv2.BORDER_CONSTANT, value=255)
+                _maybe_add(f'{tag_prefix}_border', bordered)
+        except Exception:
+            pass
+        try:
+            crop = _crop_quad_for_opencv(img, quad_pts)
+            _maybe_add(f'{tag_prefix}_crop', crop)
+        except Exception:
+            pass
+        try:
+            warp = _warp_quad_for_opencv(img, quad_pts)
+            _maybe_add(f'{tag_prefix}_warp', warp)
+        except Exception:
+            pass
+
+    base_imgs = []
+    if gray_variant is not None and getattr(gray_variant, 'size', 0) > 0:
+        base_imgs.append(('full', gray_variant))
+    for idx, img in enumerate(extra_imgs or []):
+        if img is None or getattr(img, 'size', 0) == 0:
+            continue
+        tag = 'aux' if idx == 0 else f'aux{idx + 1}'
+        base_imgs.append((tag, img))
+
+    for tag_prefix, img in base_imgs:
+        _add_with_border(tag_prefix, img)
 
     for base_tag, base_img in list(attempts):
         bh, bw = base_img.shape[:2]
@@ -2118,16 +2149,18 @@ def _opencv_confirm_variants(gray_variant: np.ndarray, quad_pts, attempts_max: i
             pass
 
     tried = []
+    last = None
     for tag, img in attempts[:max(1, int(attempts_max))]:
         out = _opencv_decode_subprocess(img)
         payload = str((out or {}).get('payload') or '').strip()
-        tried.append({
+        last = {
             'tag': tag,
             'shape': [int(img.shape[0]), int(img.shape[1])],
             'ok': bool((out or {}).get('ok')),
             'payload': payload,
             'method': (out or {}).get('method'),
-        })
+        }
+        tried.append(last)
         if payload:
             return {
                 'payload': payload,
@@ -2139,8 +2172,8 @@ def _opencv_confirm_variants(gray_variant: np.ndarray, quad_pts, attempts_max: i
     return {
         'payload': '',
         'out': None,
-        'tag': None,
-        'shape': None,
+        'tag': (last or {}).get('tag'),
+        'shape': (last or {}).get('shape'),
         'attempts': tried,
     }
 
@@ -2163,14 +2196,14 @@ def _log_opencv_confirmation(cam_id: str, zone_name: str, src: str, zbar_payload
     )
 
 
-def _reconcile_payload_with_opencv(zbar_payload: str, gray_variant: np.ndarray, quad_pts, cam_id: str, zone_name: str, src: str = 'zbar'):
+def _reconcile_payload_with_opencv(zbar_payload: str, gray_variant: np.ndarray, quad_pts, cam_id: str, zone_name: str, src: str = 'zbar', extra_imgs=None):
     final_payload = str(zbar_payload or '').strip()
     chosen_src = str(src or 'zbar')
     suspect = _payload_looks_suspicious(final_payload)
     if not opencv_subprocess_fallback:
         return {'payload': final_payload, 'src': chosen_src, 'mismatch': False, 'opencv': None, 'decision': 'zbar', 'suspect': suspect}
 
-    confirm = _opencv_confirm_variants(gray_variant, quad_pts, attempts_max=max(4, min(12, int(opencv_fallback_attempts or 8))))
+    confirm = _opencv_confirm_variants(gray_variant, quad_pts, attempts_max=max(6, min(16, int(opencv_fallback_attempts or 8) + 4)), extra_imgs=extra_imgs)
     opencv_payload = str(confirm.get('payload') or '').strip()
     mismatch = bool(opencv_payload and final_payload and opencv_payload != final_payload)
 
@@ -2400,7 +2433,7 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
                     quad = _zbar_poly_to_quad(r.polygon)
                     if quad is None:
                         continue
-                    recon = _reconcile_payload_with_opencv(payload, v, quad, str(cam_id), str(zname), src="zbar")
+                    recon = _reconcile_payload_with_opencv(payload, roi_s, quad, str(cam_id), str(zname), src="zbar", extra_imgs=[v, roi_decode])
                     payload = str(recon.get("payload") or "").strip()
                     if not payload:
                         continue
@@ -2647,7 +2680,7 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
                     quad = _zbar_poly_to_quad(r.polygon)
                     if quad is None:
                         continue
-                    recon = _reconcile_payload_with_opencv(payload, v, quad, str(cam_id), str(zname), src="zbar_multi")
+                    recon = _reconcile_payload_with_opencv(payload, roi_s, quad, str(cam_id), str(zname), src="zbar_multi", extra_imgs=[v, roi])
                     payload = str(recon.get("payload") or "").strip()
                     if not payload:
                         continue
@@ -2785,11 +2818,13 @@ def _scan_zone_worker_task(task: dict):
 
 
 def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
+    dec, miss = _scan_zone_single(frame_gray, cam_id, zname, box, pad_px, scales)
+    if dec is not None:
+        return [dec], None
     multi = _scan_zone_multi_decoded(frame_gray, cam_id, zname, box, pad_px, scales)
     if multi:
         return multi, None
-    dec, miss = _scan_zone_single(frame_gray, cam_id, zname, box, pad_px, scales)
-    return ([dec] if dec is not None else []), miss
+    return [], miss
 
 # ------------------------------------------------------------
 # Detection entrypoint
@@ -3247,7 +3282,7 @@ class MQTTManager:
             "name": str(cam_name),
             "manufacturer": "QR Inventory",
             "model": "QR Zone Scanner",
-            "sw_version": "0.6.7.0",
+            "sw_version": "0.6.7.1",
         }
 
     def _discovery_payload(self, cam_id: str, cam_name: str, zone_name: str) -> dict:
@@ -3291,7 +3326,7 @@ class MQTTManager:
                 "name": "QR Inventory Summary",
                 "manufacturer": "QR Inventory",
                 "model": "Detected List",
-                "sw_version": "0.6.7.0",
+                "sw_version": "0.6.7.1",
             },
         }
 
