@@ -2,14 +2,14 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.2.04
+## What changed in v0.2.05
 
-This version fixes stacked previews and click-to-print so profiles without QR defaults no longer inherit live QR selections from the active profile.
+This version adds a per-profile option to control whether a label appears in the stacked multi preview and click-to-print area.
 
-- non-active preview tiles now use each profile's own QR defaults instead of inheriting the active profile's live QR field selection
-- profiles configured without QR now stay QR-free in preview and keep the text block in the correct position
-- click-to-print follows the same QR-selection rule as preview
-- matching field IDs still reuse entered values, while missing fields fall back to that profile's defaults
+- new `show_in_multi_preview` option per label profile
+- profiles with `show_in_multi_preview: false` are hidden from stacked previews
+- hidden profiles are also excluded from click-to-print in the multi preview area
+- profile editing and direct single-profile use stay unchanged
 
 ## Profile and field management
 
@@ -51,6 +51,7 @@ label_profiles:
     qr_error_correction: M
     printable_area_box_enabled: true
     printable_area_box_margin_mm: 5
+    show_in_multi_preview: true
 
   - id: rotated
     name: Rotated
@@ -69,6 +70,7 @@ label_profiles:
     qr_error_correction: M
     printable_area_box_enabled: true
     printable_area_box_margin_mm: 5
+    show_in_multi_preview: true
 ```
 
 ## Field management in the web UI
@@ -113,6 +115,8 @@ Field settings supported in the UI:
 Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, field inputs can offer suggested values while still accepting free text, and fields can be marked as footer text so their values stay anchored at the bottom of the label. Footer fields can also have their own additional bottom margin in mm. Fields can now also be configured as logo fields with uploaded PNG choices that are shown as selectable checkboxes in the label form. Multiple logos can be selected and rendered on one label. In the field editor, each uploaded logo can also be marked as selected by default so it appears in preview immediately.
 
 In the add-on web UI you can:
+
+- hide selected profiles from the stacked multi preview by setting `show_in_multi_preview: false` in the add-on configuration
 
 - choose the active label profile
 - build the QR content by selecting one or more defined fields

@@ -49,6 +49,7 @@ FIELD_GAP_MM = 4.0
 FOOTER_GAP_MM = 3.0
 DEFAULT_PRINTABLE_AREA_BOX_MARGIN_MM = 5.0
 DEFAULT_TEXT_BLOCK_OFFSET_X_MM = 0.0
+DEFAULT_SHOW_IN_MULTI_PREVIEW = True
 SUPPORTED_UI_LANGUAGES = {"en", "de"}
 SUPPORTED_ROTATIONS = {0, 90, 270}
 ALIGNMENTS = {"left", "center", "right"}
@@ -75,6 +76,7 @@ DEFAULT_LABEL_PROFILES = [
         "printable_area_box_enabled": False,
         "printable_area_box_margin_mm": DEFAULT_PRINTABLE_AREA_BOX_MARGIN_MM,
         "text_block_offset_x_mm": DEFAULT_TEXT_BLOCK_OFFSET_X_MM,
+        "show_in_multi_preview": DEFAULT_SHOW_IN_MULTI_PREVIEW,
     }
 ]
 
@@ -1365,6 +1367,7 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "printable_area_box_enabled": normalize_bool(data.get("printable_area_box_enabled"), False),
         "printable_area_box_margin_mm": normalize_float(data.get("printable_area_box_margin_mm"), DEFAULT_PRINTABLE_AREA_BOX_MARGIN_MM, 0.0, 100.0),
         "text_block_offset_x_mm": normalize_float(data.get("text_block_offset_x_mm"), DEFAULT_TEXT_BLOCK_OFFSET_X_MM, -100.0, 100.0),
+        "show_in_multi_preview": normalize_bool(data.get("show_in_multi_preview"), DEFAULT_SHOW_IN_MULTI_PREVIEW),
     }
 
 
@@ -2495,6 +2498,8 @@ def preview_profiles_from_form(form: Dict[str, object], label_profiles: List[Dic
     previews: List[Dict] = []
     active_profile_id = normalize_string(form.get("profile_id"), "")
     for profile in label_profiles:
+        if not normalize_bool(profile.get("show_in_multi_preview"), DEFAULT_SHOW_IN_MULTI_PREVIEW):
+            continue
         preview_form = dict(form)
         preview_form["profile_id"] = profile.get("id", "")
         use_live_qr = profile.get("id", "") == active_profile_id
