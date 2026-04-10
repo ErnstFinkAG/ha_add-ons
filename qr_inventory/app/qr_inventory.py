@@ -4,6 +4,7 @@ import copy
 import os
 import sys
 import base64
+import difflib
 import html
 import logging
 import re
@@ -17,6 +18,17 @@ from urllib.parse import urlparse, unquote, parse_qs, quote
 
 import cv2
 import numpy as np
+import unicodedata
+
+APP_VERSION = "0.6.7.4"
+
+# Optional Pillow (Unicode-safe overlay text)
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    _PIL_OK = True
+except Exception:
+    Image = ImageDraw = ImageFont = None
+    _PIL_OK = False
 
 # Optional MQTT
 try:
@@ -203,6 +215,9 @@ if overlay_alignment_direction not in ("horizontal", "vertical", "both"):
 overlay_alignment_width = max(1, _opt_int("overlay_alignment_width", 2))
 overlay_margin_enabled = _opt_bool("overlay_margin_enabled", False)
 overlay_margin_px = max(0, _opt_int("overlay_margin_px", 10))
+overlay_zone_label_font_px = max(8, _opt_int("overlay_zone_label_font_px", 18))
+overlay_zone_status_font_px = max(8, _opt_int("overlay_zone_status_font_px", 16))
+overlay_payload_font_px = max(8, _opt_int("overlay_payload_font_px", 20))
 overlay_detected_list_enabled = _opt_bool("detected_list_enabled", False)
 detected_list_regex = str(opts.get("detected_list_regex") or "").strip()
 DETECTED_LIST_REGEX_TEXT = detected_list_regex
@@ -513,6 +528,253 @@ def build_detected_list_summary(states: dict):
         "lines": lines,
         "text": "\n".join(lines),
     }
+
+
+
+_CJK_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
+_OVERLAY_FONT = None
+_OVERLAY_FONT_PATH = None
+_OVERLAY_FONT_LOGGED = False
+
+def _payload_cjk_count(payload: str) -> int:
+    try:
+        return len(_CJK_RE.findall(str(payload or "")))
+    except Exception:
+        return 0
+
+def _payload_suspicion_score(payload: str) -> int:
+    s = str(payload or "")
+    score = 0
+    for ch in s:
+        o = ord(ch)
+        if o < 128:
+            continue
+        if _CJK_RE.match(ch):
+            score += 5
+            continue
+        try:
+            name = unicodedata.name(ch, "")
+        except Exception:
+            name = ""
+        if "LATIN" in name:
+            continue
+        score += 1
+    return score
+
+def _overlay_font_candidates():
+    return [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+    ]
+
+def _log_overlay_font_once(message: str, level=logging.INFO):
+    global _OVERLAY_FONT_LOGGED
+    if _OVERLAY_FONT_LOGGED:
+        return
+    logger.log(level, message)
+    _OVERLAY_FONT_LOGGED = True
+
+def _get_overlay_font(font_px: int):
+    global _OVERLAY_FONT, _OVERLAY_FONT_PATH
+    if not _PIL_OK or ImageFont is None:
+        _log_overlay_font_once("Overlay font: Pillow not available; falling back to OpenCV text rendering.", logging.WARNING)
+        return None
+    if _OVERLAY_FONT_PATH is None:
+        for cand in _overlay_font_candidates():
+            if os.path.exists(cand):
+                _OVERLAY_FONT_PATH = cand
+                break
+        if _OVERLAY_FONT_PATH:
+            _log_overlay_font_once(f"Overlay font: using truetype font at {_OVERLAY_FONT_PATH}")
+        else:
+            _log_overlay_font_once("Overlay font: no truetype font found; falling back to OpenCV text rendering.", logging.WARNING)
+    key = int(max(8, font_px))
+    cache = _OVERLAY_FONT if isinstance(_OVERLAY_FONT, dict) else {}
+    if key in cache:
+        return cache[key]
+    font = None
+    if _OVERLAY_FONT_PATH:
+        try:
+            font = ImageFont.truetype(_OVERLAY_FONT_PATH, key)
+        except Exception:
+            font = None
+    if font is None:
+        try:
+            font = ImageFont.load_default()
+        except Exception:
+            font = None
+    cache[key] = font
+    _OVERLAY_FONT = cache
+    return font
+
+def _pil_text_size(font, text: str):
+    text = str(text or "")
+    if font is None:
+        return (0, 0)
+    try:
+        bbox = font.getbbox(text)
+        return max(0, int(bbox[2] - bbox[0])), max(0, int(bbox[3] - bbox[1]))
+    except Exception:
+        try:
+            return font.getsize(text)
+        except Exception:
+            return (0, 0)
+
+def _fit_text_to_width(text: str, font, max_w: int) -> str:
+    s = str(text or "")
+    if max_w <= 0 or not s or font is None:
+        return s
+    tw, _ = _pil_text_size(font, s)
+    if tw <= max_w:
+        return s
+    ell = "…"
+    lo = 0
+    hi = len(s)
+    best = ell
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        cand = s[:mid].rstrip() + ell
+        cw, _ = _pil_text_size(font, cand)
+        if cw <= max_w:
+            best = cand
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+def _draw_text_box(img: np.ndarray, x: int, y_bottom: int, text: str, bg_bgr, fg_bgr=(255,255,255), font_px: int = 18, pad: int = 3, max_width: int | None = None):
+    text = str(text or "")
+    h, w = img.shape[:2]
+    x = int(max(0, min(w - 1, x)))
+    y_bottom = int(max(0, min(h - 1, y_bottom)))
+    max_width = int(max_width) if max_width is not None else max(1, w - x - 1)
+    font = _get_overlay_font(font_px)
+    if font is not None and _PIL_OK:
+        fitted = _fit_text_to_width(text, font, max(8, max_width - pad * 2))
+        tw, th = _pil_text_size(font, fitted)
+        ascent, descent = (th, 0)
+        try:
+            ascent, descent = font.getmetrics()
+        except Exception:
+            pass
+        box_h = max(th, ascent + descent) + pad * 2
+        x1 = x
+        y1 = max(0, y_bottom - box_h)
+        x2 = min(w - 1, x + tw + pad * 2)
+        y2 = min(h - 1, y_bottom)
+        if x2 > x1 and y2 > y1:
+            pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            draw = ImageDraw.Draw(pil_img)
+            draw.rectangle([x1, y1, x2, y2], fill=(int(bg_bgr[2]), int(bg_bgr[1]), int(bg_bgr[0])))
+            draw.text((x1 + pad, y1 + pad - 1), fitted, font=font, fill=(int(fg_bgr[2]), int(fg_bgr[1]), int(fg_bgr[0])))
+            img[:, :, :] = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+        return fitted
+    font_cv = cv2.FONT_HERSHEY_SIMPLEX
+    scale = max(0.4, float(font_px) / 28.0)
+    thickness = max(1, int(round(float(font_px) / 12.0)))
+    fitted = text
+    while fitted:
+        (tw, th), base = cv2.getTextSize(fitted, font_cv, scale, thickness)
+        if tw <= max(8, max_width - pad * 2):
+            break
+        fitted = fitted[:-2].rstrip() + "…" if len(fitted) > 2 else "…"
+    (tw, th), base = cv2.getTextSize(fitted, font_cv, scale, thickness)
+    x1 = x
+    y1 = max(0, y_bottom - th - base - pad * 2)
+    x2 = min(w - 1, x + tw + pad * 2)
+    y2 = min(h - 1, y_bottom)
+    cv2.rectangle(img, (x1, y1), (x2, y2), bg_bgr, -1)
+    cv2.putText(img, fitted, (x + pad, y_bottom - pad), font_cv, scale, fg_bgr, thickness, cv2.LINE_AA)
+    return fitted
+
+def _detection_group_key(det: dict):
+    centroid = (det or {}).get("centroid") or [0, 0]
+    try:
+        cx = int(round(float(centroid[0]) / 8.0))
+    except Exception:
+        cx = 0
+    try:
+        cy = int(round(float(centroid[1]) / 8.0))
+    except Exception:
+        cy = 0
+    edge_px = _edge_px_from_det(det)
+    try:
+        eb = int(round(float(edge_px or 0.0) / 8.0))
+    except Exception:
+        eb = 0
+    zone = str((det or {}).get("zone") or "")
+    return (zone, cx, cy, eb)
+
+def _detection_preference_key(det: dict):
+    payload = str((det or {}).get("payload") or "").strip()
+    src = str(((det or {}).get("diag") or {}).get("src") or "")
+    score = float((det or {}).get("score") or 0.0)
+    return (1 if "opencv" in src.lower() else 0, -_payload_cjk_count(payload), -_payload_suspicion_score(payload), score, len(payload))
+
+
+def _payload_primary_id(payload: str) -> str:
+    s = str(payload or "").strip()
+    m = re.match(r"^(\d{4,})", s)
+    return str(m.group(1)) if m else ""
+
+
+def _normalize_payload_for_similarity(payload: str) -> str:
+    s = unicodedata.normalize("NFKD", str(payload or ""))
+    chars = []
+    for ch in s:
+        if unicodedata.combining(ch):
+            continue
+        o = ord(ch)
+        if o < 128 and ch.isalnum():
+            chars.append(ch.lower())
+        else:
+            chars.append(" ")
+    return re.sub(r"\s+", " ", "".join(chars)).strip()
+
+
+def _same_payload_variant_family(payload_a: str, payload_b: str) -> bool:
+    a = str(payload_a or "").strip()
+    b = str(payload_b or "").strip()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    aid = _payload_primary_id(a)
+    bid = _payload_primary_id(b)
+    if aid and bid and aid != bid:
+        return False
+    na = _normalize_payload_for_similarity(a)
+    nb = _normalize_payload_for_similarity(b)
+    if not na or not nb:
+        return False
+    try:
+        ratio = difflib.SequenceMatcher(None, na, nb).ratio()
+    except Exception:
+        return False
+    return ratio >= 0.93
+
+
+def _canonicalize_zone_payload_variants(detections):
+    deduped = _dedupe_zone_detections(detections)
+    if len(deduped) <= 1:
+        return deduped
+    reps = []
+    for det in sorted(deduped, key=_detection_preference_key, reverse=True):
+        payload = str((det or {}).get("payload") or "").strip()
+        matched_idx = None
+        for idx, rep in enumerate(reps):
+            if _same_payload_variant_family(payload, str((rep or {}).get("payload") or "").strip()):
+                matched_idx = idx
+                break
+        if matched_idx is None:
+            reps.append(det)
+            continue
+        if _detection_preference_key(det) > _detection_preference_key(reps[matched_idx]):
+            reps[matched_idx] = det
+    return sorted(reps, key=_zone_detection_sort_key)
+
 
 def _print_styles_css() -> str:
     return """
@@ -2292,18 +2554,9 @@ def _dedupe_zone_detections(detections):
         payload = str(det.get("payload") or "").strip()
         if not payload:
             continue
-        centroid = det.get("centroid") or [0, 0]
-        try:
-            cx = int(round(float(centroid[0])))
-        except Exception:
-            cx = 0
-        try:
-            cy = int(round(float(centroid[1])))
-        except Exception:
-            cy = 0
-        key = (payload, int(round(cx / 8.0)), int(round(cy / 8.0)))
+        key = _detection_group_key(det)
         prev = best.get(key)
-        if prev is None or float(det.get("score") or 0.0) > float(prev.get("score") or 0.0):
+        if prev is None or _detection_preference_key(det) > _detection_preference_key(prev):
             best[key] = det
     return sorted(best.values(), key=_zone_detection_sort_key)
 
@@ -2557,7 +2810,7 @@ def compute_zone_status(zones_dict: dict, detections: list):
                 candidate_by_zone[z] = d
 
     for zname in zones_dict.keys():
-        dets = _dedupe_zone_detections(decoded_by_zone.get(zname) or [])
+        dets = _canonicalize_zone_payload_variants(decoded_by_zone.get(zname) or [])
         if dets:
             best = sorted(dets, key=lambda d: (float(d.get("score") or 0.0), _zone_detection_sort_key(d)), reverse=True)[0]
             status[zname] = {"kind": "decoded", "det": best, "dets": dets}
@@ -2683,7 +2936,6 @@ def draw_overlay(frame, detections, zones_dict):
     MISSBG = (80, 80, 80)
     CAND_BG = (255, 255, 0)
 
-    font = cv2.FONT_HERSHEY_SIMPLEX
     pad = 3
 
     zone_status = compute_zone_status(zones_dict, detections) if overlay_show_zone_status else {}
@@ -2765,11 +3017,7 @@ def draw_overlay(frame, detections, zones_dict):
 
             x1, y1, x2, y2 = zone_bbox
             zl = _safe_label(str(zname), 32)
-            (tw, th), base = cv2.getTextSize(zl, font, 0.55, 2)
-            zbx2 = min(w - 1, x1 + tw + pad * 2)
-            zby2 = min(h - 1, y1 + th + base + pad * 2)
-            cv2.rectangle(out, (x1, y1), (zbx2, zby2), ORANGE, -1)
-            cv2.putText(out, zl, (x1 + pad, y1 + th + pad), font, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+            _draw_text_box(out, x1, y1 + max(24, overlay_zone_label_font_px + 8), zl, ORANGE, (255, 255, 255), font_px=overlay_zone_label_font_px, pad=pad, max_width=max(40, w - x1 - 1))
 
             st = zone_status.get(zname, {"kind": "none", "det": None, "dets": []})
             det = st.get("det")
@@ -2808,14 +3056,22 @@ def draw_overlay(frame, detections, zones_dict):
                 bg, fg = MISSBG, (255, 255, 255)
 
             text = _safe_label(text, 64)
-            (stw, sth), sbase = cv2.getTextSize(text, font, 0.5, 1)
-            sy1 = min(h - 1, zby2 + 2)
-            sy2 = min(h - 1, sy1 + sth + sbase + pad * 2)
-            sx2 = min(w - 1, x1 + stw + pad * 2)
-            cv2.rectangle(out, (x1, sy1), (sx2, sy2), bg, -1)
-            cv2.putText(out, text, (x1 + pad, sy1 + sth + pad), font, 0.5, fg, 1, cv2.LINE_AA)
+            status_bottom = min(h - 1, y1 + max(46, overlay_zone_label_font_px + overlay_zone_status_font_px + 14))
+            _draw_text_box(out, x1, status_bottom, text, bg, fg, font_px=overlay_zone_status_font_px, pad=pad, max_width=max(40, w - x1 - 1))
 
-    for d in detections:
+    overlay_detections = []
+    if isinstance(zone_status, dict) and zone_status:
+        overlay_detections.extend(_decoded_detections_from_zone_status(zone_status))
+        for zname, st in zone_status.items():
+            if not isinstance(st, dict):
+                continue
+            if st.get("kind") == "candidate" and isinstance(st.get("det"), dict):
+                overlay_detections.append(st.get("det"))
+    else:
+        overlay_detections.extend(_dedupe_zone_detections([d for d in (detections or []) if isinstance(d, dict) and d.get("decoded", False)]))
+        overlay_detections.extend([d for d in (detections or []) if isinstance(d, dict) and (not d.get("decoded", False))])
+
+    for d in overlay_detections:
         pts_list = d.get("points")
         if not pts_list or d.get("no_quad"):
             continue
@@ -2842,16 +3098,11 @@ def draw_overlay(frame, detections, zones_dict):
             ep = _edge_px_from_det(d)
             if ep is not None:
                 label = f"{label} {ep}px"
-        label = _safe_label(label, 96)
+        label = _safe_label(label, 160)
 
         x, y = int(pts[0, 0, 0]), int(pts[0, 0, 1])
-        (tw, th), base = cv2.getTextSize(label, font, 0.6, 2)
-        x1 = max(0, x)
-        y1 = max(0, y - th - base - pad * 2)
-        x2 = min(w - 1, x + tw + pad * 2)
-        y2 = min(h - 1, y)
-        cv2.rectangle(out, (x1, y1), (x2, y2), color, -1)
-        cv2.putText(out, label, (x + pad, y - pad), font, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+        y_bottom = max(0, y)
+        _draw_text_box(out, x, y_bottom, label, color, (255, 255, 255), font_px=overlay_payload_font_px, pad=pad, max_width=max(80, w - x - 1))
 
     _draw_margin_helper_box(out)
     _draw_alignment_helper_lines(out)
@@ -2962,7 +3213,7 @@ class MQTTManager:
             "name": str(cam_name),
             "manufacturer": "QR Inventory",
             "model": "QR Zone Scanner",
-            "sw_version": "0.6.7.2",
+            "sw_version": APP_VERSION,
         }
 
     def _discovery_payload(self, cam_id: str, cam_name: str, zone_name: str) -> dict:
@@ -3006,7 +3257,7 @@ class MQTTManager:
                 "name": "QR Inventory Summary",
                 "manufacturer": "QR Inventory",
                 "model": "Detected List",
-                "sw_version": "0.6.7.2",
+                "sw_version": APP_VERSION,
             },
         }
 

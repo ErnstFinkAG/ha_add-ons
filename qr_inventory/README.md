@@ -169,3 +169,16 @@ print_base_url: http://YOUR_ADDON_HOST:8099
 - ZBar is used for localization / detection and OpenCV is used to override payload text when it can decode the same crop
 - removed the newer aggressive OpenCV-first confirmation path that slowed scans and left some zones unresolved
 - keeps the Unicode-safe overlay rendering and font support
+
+
+## 0.6.7.4
+
+- Overlay payload labels now use a Unicode-capable Pillow renderer so characters like `ü` render correctly when a TrueType font is available.
+- Added pixel-based font size options for zone labels, zone status, and payload labels.
+- Canonicalizes same-QR payload variants per zone so an OpenCV-decoded value can win over a corrupted ZBar variant before MQTT and overlay rendering.
+
+```yaml
+overlay_zone_label_font_px: 18
+overlay_zone_status_font_px: 16
+overlay_payload_font_px: 20
+```

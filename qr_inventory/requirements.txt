@@ -1,3 +1,4 @@
 requests
 pyzbar
 paho-mqtt>=2,<3
+Pillow
