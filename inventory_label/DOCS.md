@@ -2,14 +2,14 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.94
+## What changed in v0.1.96
 
-This version restores the print offset X/Y settings in the Home Assistant add-on configuration schema and fixes the PNG/ZPL preview rendering path, which broke because several helper functions were no longer receiving the active profile during layout/rendering.
+This version lets the printable area box use a configurable margin in mm and moves QR placement inside that printable area.
 
-- add-on settings now expose `printer_dpi`, `print_offset_x_mm`, and `print_offset_y_mm` again in the schema
-- default profile configuration includes `printer_port: 9100`
-- PNG preview rendering works again
-- ZPL preview/print rendering uses the same repaired profile-aware layout path
+- added `printable_area_box_margin_mm` per label profile
+- the red printable-area preview box and the printed box now use the configured margin
+- QR placement is now constrained to the printable area box instead of touching the label edge
+- the profile summary shows the current printable-area box margin
 
 ## Profile and field management
 
@@ -46,6 +46,7 @@ label_profiles:
     qr_quiet_zone_modules: 3
     qr_error_correction: M
     printable_area_box_enabled: false
+    printable_area_box_margin_mm: 5.0
 
   - id: rotated
     name: Rotated
@@ -59,6 +60,7 @@ label_profiles:
     qr_quiet_zone_modules: 4
     qr_error_correction: M
     printable_area_box_enabled: false
+    printable_area_box_margin_mm: 5.0
 ```
 
 ## Field management in the web UI

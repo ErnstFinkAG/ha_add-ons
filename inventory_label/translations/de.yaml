@@ -53,4 +53,7 @@ configuration:
         description: Fehlerkorrekturstufe des QR-Codes.
       printable_area_box_enabled:
         name: Druckbereich-Rahmen
-        description: Druckt einen Rahmen 5 mm innerhalb der Labelkanten und zeigt ihn in der PNG-Vorschau rot an.
+        description: Druckt einen Rahmen innerhalb der Labelkanten und zeigt ihn in der PNG-Vorschau rot an.
+      printable_area_box_margin_mm:
+        name: Druckbereich-Rahmen Abstand (mm)
+        description: Abstand zu den Labelkanten für den Druckbereich-Rahmen und die QR-Positionierung.
