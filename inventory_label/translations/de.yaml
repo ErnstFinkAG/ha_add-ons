@@ -51,3 +51,6 @@ configuration:
       qr_error_correction:
         name: QR-Fehlerkorrektur
         description: Fehlerkorrekturstufe des QR-Codes.
+      printable_area_box_enabled:
+        name: Druckbereich-Rahmen
+        description: Druckt einen Rahmen 5 mm innerhalb der Labelkanten und zeigt ihn in der PNG-Vorschau rot an.

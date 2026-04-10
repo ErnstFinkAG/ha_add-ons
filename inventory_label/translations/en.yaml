@@ -51,3 +51,6 @@ configuration:
       qr_error_correction:
         name: QR error correction
         description: QR error correction level.
+      printable_area_box_enabled:
+        name: Printable area box
+        description: Print a rectangle 5 mm inside the label edges and show it in red in the PNG preview.
