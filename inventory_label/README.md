@@ -2,15 +2,14 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.2.03
+## What changed in v0.2.04
 
-This version renders all configured label profiles as clickable previews and prints the clicked profile on its own configured printer.
+This version fixes stacked previews and click-to-print so profiles without QR defaults no longer inherit live QR selections from the active profile.
 
-- preview now shows every configured label profile stacked below each other
-- each preview uses that profile's own size, rotation, and printer settings
-- clicking a preview prints that exact label profile on its configured printer
-- PNG and ZPL preview links are now available per preview card
-- matching field IDs reuse the values entered in the active profile, while missing fields fall back to that profile's defaults
+- non-active preview tiles now use each profile's own QR defaults instead of inheriting the active profile's live QR field selection
+- profiles configured without QR now stay QR-free in preview and keep the text block in the correct position
+- click-to-print follows the same QR-selection rule as preview
+- matching field IDs still reuse entered values, while missing fields fall back to that profile's defaults
 
 ## Profile and field management
 

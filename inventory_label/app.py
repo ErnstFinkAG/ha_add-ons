@@ -16,6 +16,7 @@ import qrcode
 import yaml
 from flask import Flask, Response, jsonify, render_template_string, request, send_file
 from PIL import Image, ImageDraw, ImageFont
+from werkzeug.datastructures import MultiDict
 
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 root_logger = logging.getLogger()
@@ -634,8 +635,8 @@ HTML = """
                       <span class="muted small">{{ preview_item.printer_target }}</span>
                     </div>
                     <div class="preview-tile-links">
-                      <a class="button-link secondary" data-preview-zpl-link data-profile-id="{{ preview_item.id }}" href="{{ ingress_base }}/preview?{{ preview_item.preview_query }}">{{ ui.preview_zpl }}</a>
-                      <a class="button-link secondary" data-preview-png-link data-profile-id="{{ preview_item.id }}" href="{{ ingress_base }}/preview.png?{{ preview_item.preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
+                      <a class="button-link secondary" data-preview-zpl-link data-profile-id="{{ preview_item.id }}" data-use-live-qr="{{ '1' if preview_item.use_live_qr else '0' }}" href="{{ ingress_base }}/preview?{{ preview_item.preview_query }}">{{ ui.preview_zpl }}</a>
+                      <a class="button-link secondary" data-preview-png-link data-profile-id="{{ preview_item.id }}" data-use-live-qr="{{ '1' if preview_item.use_live_qr else '0' }}" href="{{ ingress_base }}/preview.png?{{ preview_item.preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
                     </div>
                   </div>
                   <button
@@ -646,7 +647,7 @@ HTML = """
                     title="{{ ui.click_preview_to_print }}"
                     {% if not preview_item.can_print %}disabled{% endif %}
                   >
-                    <img data-preview-image data-profile-id="{{ preview_item.id }}" src="{{ ingress_base }}/preview.png?{{ preview_item.preview_query }}" alt="{{ preview_item.name }}">
+                    <img data-preview-image data-profile-id="{{ preview_item.id }}" data-use-live-qr="{{ '1' if preview_item.use_live_qr else '0' }}" src="{{ ingress_base }}/preview.png?{{ preview_item.preview_query }}" alt="{{ preview_item.name }}">
                   </button>
                   {% if not preview_item.can_print %}
                   <div class="muted small" style="margin-top:8px;">{{ ui.preview_print_unavailable }}</div>
@@ -958,26 +959,31 @@ HTML = """
         return params;
       }
 
+      function applyProfileSpecificParams(params, element) {
+        const profileId = element.getAttribute("data-profile-id") || "";
+        const useLiveQr = element.getAttribute("data-use-live-qr") === "1";
+        if (!useLiveQr) {
+          params.delete("qr_field_ids");
+          params.delete("qr_fields");
+        }
+        if (profileId) params.set("profile_id", profileId);
+        return params;
+      }
+
       function applyPreviewUpdate() {
         const params = buildQuery();
         previewNonce += 1;
         previewImages.forEach((img) => {
-          const profileId = img.getAttribute("data-profile-id") || "";
-          const pngParams = new URLSearchParams(params);
-          if (profileId) pngParams.set("profile_id", profileId);
+          const pngParams = applyProfileSpecificParams(new URLSearchParams(params), img);
           pngParams.set("_", String(previewNonce));
           img.src = `${ingressBase}/preview.png?${pngParams.toString()}`;
         });
         previewPngLinks.forEach((link) => {
-          const profileId = link.getAttribute("data-profile-id") || "";
-          const pngParams = new URLSearchParams(params);
-          if (profileId) pngParams.set("profile_id", profileId);
+          const pngParams = applyProfileSpecificParams(new URLSearchParams(params), link);
           link.href = `${ingressBase}/preview.png?${pngParams.toString()}`;
         });
         previewZplLinks.forEach((link) => {
-          const profileId = link.getAttribute("data-profile-id") || "";
-          const zplParams = new URLSearchParams(params);
-          if (profileId) zplParams.set("profile_id", profileId);
+          const zplParams = applyProfileSpecificParams(new URLSearchParams(params), link);
           link.href = `${ingressBase}/preview?${zplParams.toString()}`;
         });
       }
@@ -1579,21 +1585,26 @@ def default_form_from_profile(profile: Dict | None) -> Dict[str, object]:
     return form
 
 
-def form_data_from_request(opts: Dict) -> Tuple[Dict[str, object], List[Dict]]:
+def form_data_from_source(opts: Dict, source: object) -> Tuple[Dict[str, object], List[Dict]]:
     profile = opts.get("active_profile") or {}
     defaults = default_form_from_profile(profile)
-    selected_qr_fields = selected_qr_field_ids_from_source(profile, request.values)
+    selected_qr_fields = selected_qr_field_ids_from_source(profile, source)
+    getter = getattr(source, "get", None)
     form: Dict[str, object] = {
-        "profile_id": request.values.get("profile_id", defaults.get("profile_id", "")),
+        "profile_id": getter("profile_id", defaults.get("profile_id", "")) if getter else defaults.get("profile_id", ""),
         "qr_field_ids": selected_qr_fields,
-        "copies": request.values.get("copies", defaults.get("copies", "1")),
+        "copies": getter("copies", defaults.get("copies", "1")) if getter else defaults.get("copies", "1"),
     }
-    field_forms = build_field_forms(profile, request.values)
+    field_forms = build_field_forms(profile, source)
     for field in field_forms:
         form[field_value_name(field["id"])] = field["value"]
         if field["print_enabled"]:
             form[field_print_name(field["id"])] = "1"
     return form, field_forms
+
+
+def form_data_from_request(opts: Dict) -> Tuple[Dict[str, object], List[Dict]]:
+    return form_data_from_source(opts, request.values)
 
 
 def validate_required_text(value: object, label: str, language: str) -> str:
@@ -2482,9 +2493,13 @@ def preview_query_from_form(form: Dict[str, object], field_forms: List[Dict]) ->
 
 def preview_profiles_from_form(form: Dict[str, object], label_profiles: List[Dict], language_or_options: object) -> List[Dict]:
     previews: List[Dict] = []
+    active_profile_id = normalize_string(form.get("profile_id"), "")
     for profile in label_profiles:
         preview_form = dict(form)
         preview_form["profile_id"] = profile.get("id", "")
+        use_live_qr = profile.get("id", "") == active_profile_id
+        if not use_live_qr:
+            preview_form["qr_field_ids"] = []
         preview_field_forms = build_field_forms(profile, preview_form)
         previews.append({
             "id": profile.get("id", ""),
@@ -2492,6 +2507,7 @@ def preview_profiles_from_form(form: Dict[str, object], label_profiles: List[Dic
             "preview_query": preview_query_from_form(preview_form, preview_field_forms),
             "printer_target": format_printer_target(profile, language_or_options),
             "can_print": bool(normalize_string(profile.get("printer_host"), "") and normalize_optional_port(profile.get("printer_port"))),
+            "use_live_qr": use_live_qr,
         })
     return previews
 
@@ -2859,7 +2875,11 @@ def print_label():
     page_profile_id = request.form.get("profile_id") or target_profile_id
     print_opts = load_runtime_options(target_profile_id)
     profile = print_opts.get("active_profile") or {}
-    form, field_forms = form_data_from_request(print_opts)
+    print_source = MultiDict(request.form)
+    if target_profile_id and page_profile_id and target_profile_id != page_profile_id:
+        print_source.setlist("qr_field_ids", [])
+        print_source.setlist("qr_fields", [])
+    form, field_forms = form_data_from_source(print_opts, print_source)
     result = {"success": False, "message": ui_text(print_opts, "unknown_error")}
     try:
         field_forms = validate_field_forms(field_forms, print_opts["ui_language"])
