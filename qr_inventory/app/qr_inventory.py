@@ -55,7 +55,7 @@ except Exception:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
 
-APP_VERSION = "0.6.6.6"
+APP_VERSION = "0.6.6.7"
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -999,6 +999,13 @@ def _find_overlay_font_path():
 
 _OVERLAY_FONT_PATH = _find_overlay_font_path() if _PIL_OK else None
 _OVERLAY_FONT_CACHE = {}
+if _PIL_OK:
+    if _OVERLAY_FONT_PATH:
+        logger.info("Overlay font: using truetype font at %s", _OVERLAY_FONT_PATH)
+    else:
+        logger.warning("Overlay font: no truetype font found; falling back to Pillow default font. Pixel font sizing support depends on Pillow's default font implementation.")
+else:
+    logger.warning("Overlay font: Pillow not available; overlay text uses OpenCV renderer only")
 
 
 def _overlay_font_px(font_scale: float, thickness: int = 1) -> int:
@@ -1041,10 +1048,16 @@ def _get_overlay_font(font_px: int):
         if _OVERLAY_FONT_PATH:
             font = ImageFont.truetype(_OVERLAY_FONT_PATH, size=size)
         else:
-            font = ImageFont.load_default()
+            try:
+                font = ImageFont.load_default(size=size)
+            except TypeError:
+                font = ImageFont.load_default()
     except Exception:
         try:
-            font = ImageFont.load_default()
+            try:
+                font = ImageFont.load_default(size=size)
+            except TypeError:
+                font = ImageFont.load_default()
         except Exception:
             font = None
     _OVERLAY_FONT_CACHE[size] = font

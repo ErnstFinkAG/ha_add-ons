@@ -1,3 +1,9 @@
+## Version 0.6.6.7
+
+- Fix for pixel-based overlay font settings when no system TrueType font is present.
+- Pillow fallback now uses a size-aware default font where supported, so `overlay_zone_label_font_px`, `overlay_zone_status_font_px`, and `overlay_payload_font_px` actually change the rendered size in more environments.
+- Startup log now reports which overlay font path is being used.
+
 # QR Inventory Add-on
 
 ## Version 0.6.6.6
