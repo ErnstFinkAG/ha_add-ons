@@ -757,13 +757,15 @@ HTML = """
           <span class="muted small">{{ ui.field_manager_intro }}</span>
         </span>
         <span class="details-summary-right">
-          <span class="summary-profile-switch">
+          <span class="summary-profile-switch" data-stop-details-toggle="1">
             <label for="profile_id_summary">{{ ui.profile_select }}</label>
-            <select id="profile_id_summary" name="profile_id_summary" data-stop-details-toggle="1">
-              {% for profile in label_profiles %}
-                <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
-              {% endfor %}
-            </select>
+            <form method="get" action="{{ ingress_base }}/" style="margin:0;" data-stop-details-toggle="1">
+              <select id="profile_id_summary" name="profile_id" data-stop-details-toggle="1" onchange="this.form.submit()">
+                {% for profile in label_profiles %}
+                  <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
+                {% endfor %}
+              </select>
+            </form>
           </span>
           <span class="tag">{{ ui.profile_active }}: {{ active_profile_name or ui.profile_none }}</span>
         </span>
@@ -1158,21 +1160,11 @@ HTML = """
         renderExistingLogos(data.logo_options || []);
       }
 
-      function navigateToProfile(profileId) {
-        const url = new URL(`${ingressBase}/`, window.location.origin);
-        if (profileId) url.searchParams.set("profile_id", profileId);
-        window.location.href = url.toString();
-      }
-
-      [profileSelect, summaryProfileSelect].forEach((select) => {
-        if (!select) return;
-        select.addEventListener("change", () => {
-          const nextValue = select.value || "";
-          if (profileSelect && profileSelect !== select) profileSelect.value = nextValue;
-          if (summaryProfileSelect && summaryProfileSelect !== select) summaryProfileSelect.value = nextValue;
-          navigateToProfile(nextValue);
+      if (summaryProfileSelect && profileSelect) {
+        summaryProfileSelect.addEventListener("change", () => {
+          profileSelect.value = summaryProfileSelect.value || "";
         });
-      });
+      }
 
       document.querySelectorAll("[data-stop-details-toggle='1']").forEach((element) => {
         ["click", "mousedown", "pointerdown", "touchstart"].forEach((eventName) => {
