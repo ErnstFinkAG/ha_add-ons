@@ -18,7 +18,7 @@ from urllib.parse import urlparse, unquote, parse_qs, quote
 import cv2
 import numpy as np
 
-# Optional Pillow (Unicode-capable overlay text)
+# Optional Pillow for Unicode-capable overlay text
 try:
     from PIL import Image, ImageDraw, ImageFont
     _PIL_OK = True
@@ -54,8 +54,6 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
-
-APP_VERSION = "0.6.6.8"
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -971,13 +969,21 @@ def _safe_label(s: str, max_len: int = 96) -> str:
         return s[: max_len - 1] + "…"
     return s
 
+def _encode_png(img):
+    ok, buf = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+    return buf.tobytes() if ok else None
 
-def _bgr_to_rgb(color):
+def _edge_px_from_det(det):
+    diag = det.get("diag") or {}
+    edge = diag.get("edge_px", None)
     try:
-        b, g, r = [int(c) for c in color]
-        return (r, g, b)
+        return int(round(float(edge))) if edge is not None else None
     except Exception:
-        return (255, 255, 255)
+        return None
+
+def _overlay_has_unicode_text(text: str) -> bool:
+    s = str(text or "")
+    return any(ord(ch) > 127 for ch in s)
 
 
 def _find_overlay_font_path():
@@ -1003,21 +1009,9 @@ if _PIL_OK:
     if _OVERLAY_FONT_PATH:
         logger.info("Overlay font: using truetype font at %s", _OVERLAY_FONT_PATH)
     else:
-        logger.warning("Overlay font: no truetype font found; falling back to Pillow default font. Pixel font sizing support depends on Pillow's default font implementation.")
+        logger.warning("Overlay font: no truetype font found; Unicode overlay text may render incorrectly until a scalable font is installed.")
 else:
     logger.warning("Overlay font: Pillow not available; overlay text uses OpenCV renderer only")
-
-
-def _overlay_font_px(font_scale: float, thickness: int = 1) -> int:
-    try:
-        fs = max(0.3, float(font_scale))
-    except Exception:
-        fs = 0.6
-    try:
-        th = max(1, int(thickness))
-    except Exception:
-        th = 1
-    return max(12, int(round((fs * 28.0) + (th * 2.0) + 4.0)))
 
 
 def _overlay_font_scale_from_px(font_px: int | None, thickness: int = 1, fallback_scale: float = 0.6) -> float:
@@ -1029,7 +1023,7 @@ def _overlay_font_scale_from_px(font_px: int | None, thickness: int = 1, fallbac
     try:
         px = max(10, int(font_px))
     except Exception:
-        px = _overlay_font_px(fallback_scale, thickness)
+        px = 18
     try:
         th = max(1, int(thickness))
     except Exception:
@@ -1038,95 +1032,54 @@ def _overlay_font_scale_from_px(font_px: int | None, thickness: int = 1, fallbac
 
 
 def _get_overlay_font(font_px: int):
-    if not _PIL_OK:
+    if (not _PIL_OK) or (not _OVERLAY_FONT_PATH):
         return None
     size = max(10, int(font_px))
     font = _OVERLAY_FONT_CACHE.get(size)
     if font is not None:
         return font
     try:
-        if _OVERLAY_FONT_PATH:
-            font = ImageFont.truetype(_OVERLAY_FONT_PATH, size=size)
-        else:
-            try:
-                font = ImageFont.load_default(size=size)
-            except TypeError:
-                font = ImageFont.load_default()
+        font = ImageFont.truetype(_OVERLAY_FONT_PATH, size=size)
     except Exception:
-        try:
-            try:
-                font = ImageFont.load_default(size=size)
-            except TypeError:
-                font = ImageFont.load_default()
-        except Exception:
-            font = None
+        font = None
     _OVERLAY_FONT_CACHE[size] = font
     return font
 
 
-def _measure_pil_text(font, text: str):
-    if font is None:
-        return (0, 0, 0, 0)
-    try:
-        bbox = font.getbbox(str(text or ""))
-        return int(bbox[0]), int(bbox[1]), max(1, int(bbox[2] - bbox[0])), max(1, int(bbox[3] - bbox[1]))
-    except Exception:
-        return (0, 0, 0, 0)
-
-
-def _overlay_text_metrics(text: str, font_scale: float = 0.6, thickness: int = 2, font_px: int | None = None):
+def _measure_text_for_overlay(text: str, font_scale: float = 0.6, thickness: int = 1, font_px: int | None = None, font=None):
     text = str(text or "")
-    if _PIL_OK:
-        px = max(10, int(font_px)) if font_px is not None else _overlay_font_px(font_scale, thickness)
-        font = _get_overlay_font(px)
-        if font is not None:
-            bx0, by0, tw, th = _measure_pil_text(font, text or "Ag")
-            baseline = max(0, int(-by0))
-            return tw, th, baseline
-    scale = _overlay_font_scale_from_px(font_px, thickness, font_scale)
-    (tw, th), base = cv2.getTextSize(text or "Ag", cv2.FONT_HERSHEY_SIMPLEX, float(scale), int(thickness))
+    if font is None and _PIL_OK and _OVERLAY_FONT_PATH and (font_px is not None):
+        font = _get_overlay_font(font_px)
+    if font is not None:
+        try:
+            dummy = Image.new("RGB", (8, 8), (0, 0, 0))
+            draw = ImageDraw.Draw(dummy)
+            bbox = draw.textbbox((0, 0), text, font=font)
+            tw = max(1, int(bbox[2] - bbox[0]))
+            th = max(1, int(bbox[3] - bbox[1]))
+            return tw, th, 0
+        except Exception:
+            pass
+    fs = _overlay_font_scale_from_px(font_px, thickness, font_scale)
+    (tw, th), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, fs, max(1, int(thickness)))
     return int(tw), int(th), int(base)
 
 
-def _ellipsize_text_pil(text: str, font, max_text_width: int) -> str:
-    text = str(text or "")
-    if max_text_width <= 0 or font is None:
-        return ""
-    if _measure_pil_text(font, text)[2] <= max_text_width:
-        return text
+def _ellipsize_overlay_text(text: str, max_width: int, font_scale: float = 0.6, thickness: int = 1, font_px: int | None = None, font=None):
+    s = str(text or "")
+    if max_width is None or max_width <= 0:
+        return s
+    tw, _, _ = _measure_text_for_overlay(s, font_scale, thickness, font_px, font=font)
+    if tw <= max_width:
+        return s
     ell = "…"
-    if _measure_pil_text(font, ell)[2] > max_text_width:
-        return ""
-    lo, hi = 0, len(text)
+    lo, hi = 0, len(s)
     best = ell
     while lo <= hi:
         mid = (lo + hi) // 2
-        cand = text[:mid].rstrip() + ell
-        if _measure_pil_text(font, cand)[2] <= max_text_width:
-            best = cand
-            lo = mid + 1
-        else:
-            hi = mid - 1
-    return best
-
-
-def _ellipsize_text_cv2(text: str, max_text_width: int, font_scale: float = 0.6, thickness: int = 2, font_px: int | None = None) -> str:
-    text = str(text or "")
-    if max_text_width <= 0:
-        return ""
-    scale = _overlay_font_scale_from_px(font_px, thickness, font_scale)
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    if cv2.getTextSize(text, font, float(scale), int(thickness))[0][0] <= max_text_width:
-        return text
-    ell = "..."
-    if cv2.getTextSize(ell, font, float(scale), int(thickness))[0][0] > max_text_width:
-        return ""
-    lo, hi = 0, len(text)
-    best = ell
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        cand = text[:mid].rstrip() + ell
-        if cv2.getTextSize(cand, font, float(scale), int(thickness))[0][0] <= max_text_width:
+        cand = (s[:mid].rstrip() + ell) if mid < len(s) else s
+        cw, _, _ = _measure_text_for_overlay(cand, font_scale, thickness, font_px, font=font)
+        if cw <= max_width:
             best = cand
             lo = mid + 1
         else:
@@ -1135,61 +1088,86 @@ def _ellipsize_text_cv2(text: str, max_text_width: int, font_scale: float = 0.6,
 
 
 def _draw_overlay_label(img: np.ndarray, text: str, x: int, y: int, bg_bgr, fg_bgr, font_scale: float = 0.6, thickness: int = 2, padding: int = 3, font_px: int | None = None, max_width: int | None = None):
-    text = str(text or "")
     h, w = img.shape[:2]
-    x1 = max(0, min(w - 1, int(x)))
-    y1 = max(0, min(h - 1, int(y)))
-    if max_width is None:
-        max_width = max(1, w - x1)
-    else:
-        max_width = max(1, min(int(max_width), w - x1))
-    max_text_width = max(1, max_width - (padding * 2))
+    x = max(0, int(x))
+    y = max(0, int(y))
+    thickness = max(1, int(thickness))
+    pad = max(1, int(padding))
+    use_pil = bool(_PIL_OK and _OVERLAY_FONT_PATH)
+    font = _get_overlay_font(font_px or 18) if use_pil else None
+    avail_w = None
+    if max_width is not None:
+        avail_w = max(1, int(max_width) - pad * 2)
+    elif x < w:
+        avail_w = max(1, (w - x) - pad * 2)
+    text = _ellipsize_overlay_text(str(text or ""), avail_w, font_scale=font_scale, thickness=thickness, font_px=font_px, font=font)
 
-    if _PIL_OK:
+    if use_pil and font is not None:
         try:
-            px = max(10, int(font_px)) if font_px is not None else _overlay_font_px(font_scale, thickness)
-            font = _get_overlay_font(px)
-            if font is not None:
-                render_text = _ellipsize_text_pil(text, font, max_text_width)
-                bx0, by0, tw, th = _measure_pil_text(font, render_text)
-                x2 = min(w - 1, x1 + tw + padding * 2)
-                y2 = min(h - 1, y1 + th + padding * 2)
-                rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                pil_img = Image.fromarray(rgb)
-                draw = ImageDraw.Draw(pil_img)
-                draw.rectangle([x1, y1, x2, y2], fill=_bgr_to_rgb(bg_bgr))
-                tx = x1 + padding - int(bx0)
-                ty = y1 + padding - int(by0)
-                if render_text:
-                    draw.text((tx, ty), render_text, font=font, fill=_bgr_to_rgb(fg_bgr))
-                img[:, :, :] = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-                return (x1, y1, x2, y2)
+            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(rgb)
+            draw = ImageDraw.Draw(pil_img)
+            bbox = draw.textbbox((0, 0), text, font=font)
+            tw = max(1, int(bbox[2] - bbox[0]))
+            th = max(1, int(bbox[3] - bbox[1]))
+            x1 = max(0, min(w - 1, x))
+            y1 = max(0, min(h - 1, y))
+            x2 = max(x1, min(w - 1, x1 + tw + pad * 2))
+            y2 = max(y1, min(h - 1, y1 + th + pad * 2))
+            draw.rectangle([x1, y1, x2, y2], fill=(int(bg_bgr[2]), int(bg_bgr[1]), int(bg_bgr[0])))
+            draw.text((x1 + pad, y1 + pad - int(bbox[1])), text, font=font, fill=(int(fg_bgr[2]), int(fg_bgr[1]), int(fg_bgr[0])))
+            img[:, :] = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            return x1, y1, x2, y2
         except Exception:
-            logger.debug("Pillow overlay text render failed; falling back to cv2.putText", exc_info=True)
+            pass
 
-    scale = _overlay_font_scale_from_px(font_px, thickness, font_scale)
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    render_text = _ellipsize_text_cv2(text, max_text_width, font_scale=font_scale, thickness=thickness, font_px=font_px)
-    (tw, th), base = cv2.getTextSize(render_text or "", font, float(scale), int(thickness))
-    x2 = min(w - 1, x1 + tw + padding * 2)
-    y2 = min(h - 1, y1 + th + base + padding * 2)
+    fs = _overlay_font_scale_from_px(font_px, thickness, font_scale)
+    (tw, th), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, fs, thickness)
+    x1 = max(0, min(w - 1, x))
+    y1 = max(0, min(h - 1, y))
+    x2 = max(x1, min(w - 1, x1 + tw + pad * 2))
+    y2 = max(y1, min(h - 1, y1 + th + base + pad * 2))
     cv2.rectangle(img, (x1, y1), (x2, y2), bg_bgr, -1)
-    if render_text:
-        cv2.putText(img, render_text, (x1 + padding, y1 + th + padding), font, float(scale), fg_bgr, int(thickness), cv2.LINE_AA)
-    return (x1, y1, x2, y2)
+    cv2.putText(img, text, (x1 + pad, y1 + th + pad), cv2.FONT_HERSHEY_SIMPLEX, fs, fg_bgr, thickness, cv2.LINE_AA)
+    return x1, y1, x2, y2
 
 
-def _encode_png(img):
-    ok, buf = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 1])
-    return buf.tobytes() if ok else None
-
-def _edge_px_from_det(det):
-    diag = det.get("diag") or {}
-    edge = diag.get("edge_px", None)
+def _safe_decode_qr_bytes(raw) -> str:
+    if raw is None:
+        return ""
     try:
-        return int(round(float(edge))) if edge is not None else None
+        if isinstance(raw, str):
+            return raw.strip()
+        return bytes(raw).decode("utf-8", errors="ignore").strip()
     except Exception:
-        return None
+        return ""
+
+
+def _debug_log_raw_qr_readout(raw, cam_id: str, zone_name: str, src: str):
+    if (not logger.isEnabledFor(logging.DEBUG)) or raw is None:
+        return
+    try:
+        raw_bytes = bytes(raw)
+    except Exception:
+        return
+    try:
+        utf8_ignore = raw_bytes.decode("utf-8", errors="ignore")
+    except Exception:
+        utf8_ignore = ""
+    try:
+        utf8_replace = raw_bytes.decode("utf-8", errors="replace")
+    except Exception:
+        utf8_replace = ""
+    logger.debug(
+        "QR raw readout cam=%s zone=%s src=%s bytes=%s hex=%s utf8_ignore=%r utf8_replace=%r",
+        cam_id,
+        zone_name,
+        src,
+        len(raw_bytes),
+        raw_bytes.hex(),
+        utf8_ignore,
+        utf8_replace,
+    )
 
 # ------------------------------------------------------------
 # Stream info
@@ -1990,64 +1968,69 @@ def _opencv_decode_subprocess(gray_img: np.ndarray):
     except Exception:
         return None
 
-def _payload_needs_text_reconciliation(payload: str) -> bool:
-    s = str(payload or "").strip()
-    if not s:
-        return False
-    if "�" in s:
-        return True
-    return any(ord(ch) > 127 for ch in s)
 
-
-def _crop_quad_bbox_for_decode(gray_img: np.ndarray, quad_pts, border_px: int | None = None):
+def _crop_quad_for_opencv(gray_variant: np.ndarray, quad_pts, border_frac: float = 0.20, border_min_px: int = 16):
     try:
-        if gray_img is None or getattr(gray_img, "size", 0) == 0:
+        if gray_variant is None or gray_variant.size == 0:
             return None
         pts = np.array(quad_pts, dtype=np.float32).reshape(-1, 2)
         if pts.shape[0] != 4:
             return None
-        h, w = gray_img.shape[:2]
+        g = np.ascontiguousarray(gray_variant)
+        h, w = g.shape[:2]
         minx = max(0, int(np.floor(np.min(pts[:, 0]))))
         miny = max(0, int(np.floor(np.min(pts[:, 1]))))
         maxx = min(w - 1, int(np.ceil(np.max(pts[:, 0]))))
         maxy = min(h - 1, int(np.ceil(np.max(pts[:, 1]))))
         if maxx <= minx or maxy <= miny:
             return None
-        crop = gray_img[miny:maxy + 1, minx:maxx + 1]
-        if crop is None or crop.size == 0:
+        crop = g[miny:maxy + 1, minx:maxx + 1].copy()
+        if crop.size == 0:
             return None
-        bp = int(border_px) if border_px is not None else max(12, int(round(0.20 * float(min(crop.shape[:2])))))
-        bp = max(0, bp)
-        if bp > 0:
-            crop = cv2.copyMakeBorder(crop, bp, bp, bp, bp, cv2.BORDER_CONSTANT, value=255)
+        pts_local = pts.copy()
+        pts_local[:, 0] -= float(minx)
+        pts_local[:, 1] -= float(miny)
+        mask = np.zeros(crop.shape[:2], dtype=np.uint8)
+        cv2.fillPoly(mask, [pts_local.astype(np.int32)], 255)
+        crop[mask == 0] = 255
+        border = max(int(border_min_px), int(round(min(crop.shape[:2]) * float(border_frac))))
+        crop = cv2.copyMakeBorder(crop, border, border, border, border, cv2.BORDER_CONSTANT, value=255)
         return crop
     except Exception:
         return None
 
 
-def _reconcile_payload_with_opencv(zbar_payload: str, gray_variant: np.ndarray, quad_pts, cam_id: str, zone_name: str):
-    payload = str(zbar_payload or "").strip()
-    if not payload or not _payload_needs_text_reconciliation(payload):
-        return payload
-    try:
-        crop = _crop_quad_bbox_for_decode(gray_variant, quad_pts, border_px=cutout_border_min_px)
-        if crop is None or crop.size == 0:
-            return payload
-        out = _opencv_decode_subprocess(crop)
-        if not out or not out.get("ok"):
-            return payload
-        op_payload = str(out.get("payload") or "").strip()
-        if not op_payload:
-            return payload
-        if op_payload != payload:
-            logger.info(
-                "Decoder text reconciliation: cam=%s zone=%s zbar=%r opencv=%r; using OpenCV payload",
-                cam_id, zone_name, payload, op_payload,
+def _reconcile_payload_with_opencv(zbar_payload: str, gray_variant: np.ndarray, quad_pts, cam_id: str, zone_name: str, src: str = "zbar"):
+    final_payload = str(zbar_payload or "").strip()
+    chosen_src = str(src or "zbar")
+    if not opencv_subprocess_fallback:
+        return {"payload": final_payload, "src": chosen_src, "mismatch": False, "opencv": None}
+    crop = _crop_quad_for_opencv(gray_variant, quad_pts)
+    if crop is None:
+        return {"payload": final_payload, "src": chosen_src, "mismatch": False, "opencv": None}
+    out = _opencv_decode_subprocess(crop)
+    opencv_payload = str((out or {}).get("payload") or "").strip()
+    mismatch = bool(opencv_payload and final_payload and opencv_payload != final_payload)
+    if opencv_payload:
+        if mismatch:
+            logger.warning(
+                "QR decoder mismatch cam=%s zone=%s src=%s zbar=%r opencv=%r choosing=opencv",
+                cam_id,
+                zone_name,
+                src,
+                final_payload,
+                opencv_payload,
             )
-        return op_payload
-    except Exception:
-        return payload
-
+            chosen_src = f"{chosen_src}+opencv"
+        else:
+            chosen_src = f"{chosen_src}+opencv_agree"
+        final_payload = opencv_payload
+    return {
+        "payload": final_payload,
+        "src": chosen_src,
+        "mismatch": mismatch,
+        "opencv": out if opencv_payload else None,
+    }
 
 # ------------------------------------------------------------
 # Scaling helper
@@ -2230,28 +2213,33 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
                 best_area = -1.0
                 best_quad = None
                 best_payload = None
+                best_src = "zbar"
                 for r in res:
-                    try:
-                        payload = (r.data.decode("utf-8", errors="ignore") or "").strip()
-                    except Exception:
-                        payload = ""
+                    raw_bytes = getattr(r, "data", b"") or b""
+                    _debug_log_raw_qr_readout(raw_bytes, str(cam_id), str(zname), "zbar")
+                    payload = _safe_decode_qr_bytes(raw_bytes)
                     if not payload:
                         continue
                     quad = _zbar_poly_to_quad(r.polygon)
                     if quad is None:
+                        continue
+                    recon = _reconcile_payload_with_opencv(payload, v, quad, str(cam_id), str(zname), src="zbar")
+                    payload = str(recon.get("payload") or "").strip()
+                    if not payload:
                         continue
                     area = float(abs(cv2.contourArea(quad.astype(np.float32))))
                     if area > best_area:
                         best_area = area
                         best_quad = quad
                         best_payload = payload
+                        best_src = str(recon.get("src") or "zbar")
+                        dbg["zbar"]["last_reconcile"] = recon
 
                 if best_quad is None or not best_payload:
                     continue
 
                 rh, rw = v.shape[:2]
                 quad = best_quad.astype(np.float32)
-                best_payload = _reconcile_payload_with_opencv(best_payload, v, quad, str(cam_id), str(zname))
                 quad[:, 0] = np.clip(quad[:, 0], 0, rw - 1)
                 quad[:, 1] = np.clip(quad[:, 1], 0, rh - 1)
 
@@ -2278,7 +2266,7 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
                     "centroid": [cx, cy],
                     "zone": zname,
                     "score": score,
-                    "diag": {"edge_px": edge_px, "lap_var": lap, "contrast": con, "src": "zbar", "zone_ov": ov},
+                    "diag": {"edge_px": edge_px, "lap_var": lap, "contrast": con, "src": best_src, "zone_ov": ov},
                     "decoded": True,
                 }
 
@@ -2474,19 +2462,21 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
                     continue
                 rh, rw = v.shape[:2]
                 for r in res:
-                    try:
-                        payload = (r.data.decode("utf-8", errors="ignore") or "").strip()
-                    except Exception:
-                        payload = ""
+                    raw_bytes = getattr(r, "data", b"") or b""
+                    _debug_log_raw_qr_readout(raw_bytes, str(cam_id), str(zname), "zbar_multi")
+                    payload = _safe_decode_qr_bytes(raw_bytes)
                     if not payload:
                         continue
                     quad = _zbar_poly_to_quad(r.polygon)
                     if quad is None:
                         continue
+                    recon = _reconcile_payload_with_opencv(payload, v, quad, str(cam_id), str(zname), src="zbar_multi")
+                    payload = str(recon.get("payload") or "").strip()
+                    if not payload:
+                        continue
                     quad = quad.astype(np.float32)
                     quad[:, 0] = np.clip(quad[:, 0], 0, rw - 1)
                     quad[:, 1] = np.clip(quad[:, 1], 0, rh - 1)
-                    payload = _reconcile_payload_with_opencv(payload, v, quad, str(cam_id), str(zname))
 
                     pts_roi = quad / max(1e-6, eff)
                     pts_full = pts_roi + np.array([x1p, y1p], dtype=np.float32)
@@ -2510,7 +2500,7 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
                             "edge_px": edge_px,
                             "lap_var": lap,
                             "contrast": con,
-                            "src": "zbar_multi",
+                            "src": str(recon.get("src") or "zbar_multi"),
                             "zone_ov": ov,
                             "scale": scale_tag,
                             "pre": pre_name,
@@ -2884,9 +2874,7 @@ def draw_overlay(frame, detections, zones_dict):
             zl = _safe_label(str(zname), 32)
             _, _, zbx2, zby2 = _draw_overlay_label(
                 out, zl, x1, y1, ORANGE, (255, 255, 255),
-                font_scale=0.55, thickness=2, padding=pad,
-                font_px=overlay_zone_label_font_px,
-                max_width=max(40, w - x1),
+                font_scale=0.55, thickness=2, padding=pad, font_px=overlay_zone_label_font_px
             )
 
             st = zone_status.get(zname, {"kind": "none", "det": None, "dets": []})
@@ -2929,17 +2917,13 @@ def draw_overlay(frame, detections, zones_dict):
             sy1 = min(h - 1, zby2 + 2)
             _draw_overlay_label(
                 out, text, x1, sy1, bg, fg,
-                font_scale=0.5, thickness=1, padding=pad,
-                font_px=overlay_zone_status_font_px,
-                max_width=max(40, w - x1),
+                font_scale=0.5, thickness=1, padding=pad, font_px=overlay_zone_status_font_px
             )
 
-    overlay_detections = []
     decoded_overlay = _dedupe_zone_detections([d for d in (detections or []) if isinstance(d, dict) and bool(d.get("decoded", False))])
-    overlay_detections.extend(decoded_overlay)
-    overlay_detections.extend([d for d in (detections or []) if isinstance(d, dict) and (not bool(d.get("decoded", False)))])
+    unresolved_overlay = [d for d in (detections or []) if isinstance(d, dict) and (not bool(d.get("decoded", False)))]
 
-    for d in overlay_detections:
+    for d in decoded_overlay + unresolved_overlay:
         pts_list = d.get("points")
         if not pts_list or d.get("no_quad"):
             continue
@@ -2969,14 +2953,12 @@ def draw_overlay(frame, detections, zones_dict):
         label = _safe_label(label, 96)
 
         x, y = int(pts[0, 0, 0]), int(pts[0, 0, 1])
-        _, label_h, base = _overlay_text_metrics(label, font_scale=0.6, thickness=2, font_px=overlay_payload_font_px)
+        label_w, label_h, base = _measure_text_for_overlay(label, font_scale=0.6, thickness=2, font_px=overlay_payload_font_px)
         x1 = max(0, x)
         y1 = max(0, y - label_h - base - pad * 2)
         _draw_overlay_label(
             out, label, x1, y1, color, (255, 255, 255),
-            font_scale=0.6, thickness=2, padding=pad,
-            font_px=overlay_payload_font_px,
-            max_width=max(40, w - x1),
+            font_scale=0.6, thickness=2, padding=pad, font_px=overlay_payload_font_px, max_width=max(1, w - x1)
         )
 
     _draw_margin_helper_box(out)
@@ -3088,7 +3070,7 @@ class MQTTManager:
             "name": str(cam_name),
             "manufacturer": "QR Inventory",
             "model": "QR Zone Scanner",
-            "sw_version": APP_VERSION,
+            "sw_version": "0.6.6.9",
         }
 
     def _discovery_payload(self, cam_id: str, cam_name: str, zone_name: str) -> dict:
@@ -3132,7 +3114,7 @@ class MQTTManager:
                 "name": "QR Inventory Summary",
                 "manufacturer": "QR Inventory",
                 "model": "Detected List",
-                "sw_version": APP_VERSION,
+                "sw_version": "0.6.6.9",
             },
         }
 

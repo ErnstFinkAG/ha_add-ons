@@ -1,22 +1,4 @@
-## Version 0.6.6.8
-
-- Overlay zeichnet dekodierte QR-Labels jetzt dedupliziert, damit identische Payloads nicht doppelt im selben Bild erscheinen.
-- ZBar-Treffer mit nicht-ASCII Payloads werden pro QR-Ausschnitt gegen OpenCV gegengeprüft; wenn OpenCV einen anderen Text liefert, wird der OpenCV-Text bevorzugt.
-- Behebt damit doppelte Overlay-Labels und Fälle wie `Büetigen`, die im Overlay aus dem fehlerhaften ZBar-Text kamen.
-
-## Version 0.6.6.7
-
-- Fix for pixel-based overlay font settings when no system TrueType font is present.
-- Pillow fallback now uses a size-aware default font where supported, so `overlay_zone_label_font_px`, `overlay_zone_status_font_px`, and `overlay_payload_font_px` actually change the rendered size in more environments.
-- Startup log now reports which overlay font path is being used.
-
 # QR Inventory Add-on
-
-## Version 0.6.6.6
-
-- Pixelbasierte Overlay-Schriftgrößen für Zonen, Status und Payloads.
-- Unicode-fähige Overlay-Beschriftung via Pillow.
-- Lange Payload-Labels werden mit Ellipse gekürzt statt kleiner skaliert.
 
 Dieses Add-on nimmt in konfigurierbaren Intervallen Standbilder von **einer oder mehreren** RTSP/RTSPS-Kameras, erkennt QR-Codes, ordnet sie Zonen zu und stellt Live-Daten per HTTP und MQTT bereit.
 
@@ -88,16 +70,24 @@ overlay_alignment_direction: both
 overlay_alignment_width: 2
 overlay_margin_enabled: true
 overlay_margin_px: 10
+```
+
+- `overlay_alignment_direction`: `horizontal`, `vertical` oder `both`
+- Linien und Margin-Box wirken nur auf das Overlay, nicht auf die Erkennung
+
+## Hinweise zu Unicode-QRs und Overlay-Schriften
+
+Seit Version **0.6.6.9** werden ZBar-Ergebnisse zusätzlich gegen OpenCV geprüft. Wenn beide Decoder unterschiedliche Texte liefern, gewinnt der OpenCV-Text. Das behebt Fälle wie `Büetigen` vs. `B羹etigen`.
+
+Für Overlay-Texte stehen nun Pixelgrößen zur Verfügung:
+
+```yaml
 overlay_zone_label_font_px: 18
 overlay_zone_status_font_px: 16
 overlay_payload_font_px: 20
 ```
 
-- `overlay_alignment_direction`: `horizontal`, `vertical` oder `both`
-- `overlay_zone_label_font_px`: Schriftgröße der Zonennamen in Pixeln
-- `overlay_zone_status_font_px`: Schriftgröße der Zonenstatus in Pixeln
-- `overlay_payload_font_px`: Schriftgröße der Payload-Labels in Pixeln
-- Linien und Margin-Box wirken nur auf das Overlay, nicht auf die Erkennung
+Damit Unicode-Zeichen wie `ü` im Overlay korrekt gezeichnet werden, installiert das Add-on zusätzlich eine DejaVu-Schrift im Container.
 
 ## MQTT
 
