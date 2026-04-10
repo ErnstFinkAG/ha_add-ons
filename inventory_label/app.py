@@ -1152,27 +1152,39 @@ HTML = """
         });
       });
 
-      document.querySelectorAll("#label-form input, #label-form select, #label-form textarea, [form=\"label-form\"]").forEach((input) => {
+      function isLabelFormControl(element) {
+        if (!element || !(element instanceof HTMLElement)) return false;
+        const tagName = String(element.tagName || "").toLowerCase();
+        if (!["input", "select", "textarea"].includes(tagName)) return false;
+        if (element.closest && element.closest("#label-form")) return true;
+        return element.getAttribute && element.getAttribute("form") === "label-form";
+      }
+
+      function handleLivePreviewEvent(event) {
+        const input = event && event.target ? event.target : null;
+        if (!isLabelFormControl(input)) return;
+        const type = String(input.type || "").toLowerCase();
         if (input.dataset && input.dataset.numberOnly === "1") {
-          input.addEventListener("input", () => { sanitizeNumericInput(input); schedulePreviewUpdate(); });
-          input.addEventListener("change", () => { sanitizeNumericInput(input); applyPreviewUpdate(); });
+          sanitizeNumericInput(input);
+        }
+        if (type === "checkbox") {
+          window.requestAnimationFrame(() => {
+            applyPreviewUpdate();
+            const fieldId = input.getAttribute("data-field-id") || "";
+            if (fieldId && input.name === `print_${fieldId}`) persistFieldCheckbox(fieldId, "print_by_default", input.checked);
+            if (fieldId && input.name === "qr_field_ids") persistFieldCheckbox(fieldId, "always_use_for_qr", input.checked);
+          });
           return;
         }
-        if (input.type === "checkbox") {
-          const handleCheckboxPreview = () => {
-            window.setTimeout(() => {
-              applyPreviewUpdate();
-              const fieldId = input.getAttribute("data-field-id") || "";
-              if (fieldId && input.name === `print_${fieldId}`) persistFieldCheckbox(fieldId, "print_by_default", input.checked);
-              if (fieldId && input.name === "qr_field_ids") persistFieldCheckbox(fieldId, "always_use_for_qr", input.checked);
-            }, 0);
-          };
-          input.addEventListener("click", handleCheckboxPreview);
-          input.addEventListener("change", handleCheckboxPreview);
+        if (event.type === "input" || event.type === "keyup") {
+          schedulePreviewUpdate();
         } else {
-          input.addEventListener("input", schedulePreviewUpdate);
-          input.addEventListener("change", applyPreviewUpdate);
+          applyPreviewUpdate();
         }
+      }
+
+      ["input", "change", "keyup", "click"].forEach((eventName) => {
+        document.addEventListener(eventName, handleLivePreviewEvent, true);
       });
 
       const footerTextCheckbox = document.getElementById("editor_footer_text");
