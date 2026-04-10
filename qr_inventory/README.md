@@ -12,6 +12,13 @@ Dieses Add-on nimmt in konfigurierbaren Intervallen Standbilder von **einer oder
 - Druckansichten für alle Projekte oder einzelne Projekte
 - Optional mehrere QR-Codes pro Zone
 - Retention/Bestätigung über `required`
+- ZBar + OpenCV Abgleich für problematische Unicode-QR-Payloads (z. B. `Büetigen` statt `B羹etigen`)
+
+## Version 0.6.6.3
+
+- Behebt einen Decoder-Fall, bei dem ZBar einzelne Unicode-Zeichen in QR-Texten falsch liefern konnte.
+- Nutzt weiterhin ZBar für schnelle Treffer, gleicht den finalen Payload aber zusätzlich mit OpenCV ab und bevorzugt bei Abweichungen den OpenCV-Text.
+- Ergänzt Debug-Logs um den Raw-Readout inklusive Hex und mehreren Dekodier-Ansichten.
 
 ## Kamera-Konfiguration
 

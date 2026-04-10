@@ -45,6 +45,8 @@ except Exception:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
 
+APP_VERSION = "0.6.6.3"
+
 # ------------------------------------------------------------
 # Load add-on options
 # ------------------------------------------------------------
@@ -956,72 +958,6 @@ def _safe_label(s: str, max_len: int = 96) -> str:
         return s[: max_len - 1] + "…"
     return s
 
-def _safe_log_value(value, max_len: int = 240) -> str:
-    s = str(value if value is not None else "")
-    s = s.replace("\n", "\\n").replace("\r", "\\r")
-    if len(s) > max_len:
-        return s[: max_len - 1] + "…"
-    return s
-
-def _build_raw_qr_readout(raw_bytes: bytes | None = None, text: str | None = None) -> dict:
-    info = {
-        "text": str(text or ""),
-        "byte_len": None,
-        "hex": None,
-        "base64": None,
-        "utf8_strict": None,
-        "utf8_replace": None,
-        "utf8_ignore": None,
-        "latin1": None,
-        "big5": None,
-        "decode_errors": {},
-    }
-
-    if raw_bytes is None:
-        return info
-
-    try:
-        raw = bytes(raw_bytes)
-    except Exception:
-        raw = b""
-
-    info["byte_len"] = int(len(raw))
-    info["hex"] = raw.hex()
-    info["base64"] = base64.b64encode(raw).decode("ascii") if raw else ""
-
-    for label, encoding, errors in (
-        ("utf8_strict", "utf-8", "strict"),
-        ("utf8_replace", "utf-8", "replace"),
-        ("utf8_ignore", "utf-8", "ignore"),
-        ("latin1", "latin-1", "strict"),
-        ("big5", "big5", "strict"),
-    ):
-        try:
-            info[label] = raw.decode(encoding, errors=errors)
-        except Exception as e:
-            info["decode_errors"][label] = f"{type(e).__name__}: {e}"
-
-    return info
-
-def _log_raw_qr_readout(cam_id: str, zone_name: str, source: str, raw_bytes: bytes | None = None, text: str | None = None):
-    info = _build_raw_qr_readout(raw_bytes=raw_bytes, text=text)
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(
-            "QR raw readout cam=%s zone=%s src=%s bytes=%s text=%r utf8_strict=%r utf8_replace=%r utf8_ignore=%r latin1=%r big5=%r hex=%s",
-            cam_id,
-            zone_name,
-            source,
-            info.get("byte_len"),
-            info.get("text"),
-            _safe_log_value(info.get("utf8_strict")),
-            _safe_log_value(info.get("utf8_replace")),
-            _safe_log_value(info.get("utf8_ignore")),
-            _safe_log_value(info.get("latin1")),
-            _safe_log_value(info.get("big5")),
-            _safe_log_value(info.get("hex"), 320),
-        )
-    return info
-
 def _encode_png(img):
     ok, buf = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 1])
     return buf.tobytes() if ok else None
@@ -1783,6 +1719,152 @@ def _zbar_poly_to_quad(poly_pts):
     except Exception:
         return None
 
+
+def _qr_text_from_raw_bytes(raw_bytes: bytes) -> str:
+    try:
+        return bytes(raw_bytes or b"").decode("utf-8", errors="ignore").strip()
+    except Exception:
+        return ""
+
+
+def _qr_decode_variants(raw_bytes: bytes) -> dict:
+    raw = bytes(raw_bytes or b"")
+    out = {
+        "bytes": len(raw),
+        "hex": raw.hex(),
+        "text": _qr_text_from_raw_bytes(raw),
+    }
+    for enc, key in (
+        ("utf-8", "utf8_strict"),
+        ("utf-8", "utf8_replace"),
+        ("utf-8", "utf8_ignore"),
+        ("latin-1", "latin1"),
+        ("big5", "big5"),
+    ):
+        errors = "strict"
+        if key.endswith("_replace"):
+            errors = "replace"
+        elif key.endswith("_ignore"):
+            errors = "ignore"
+        try:
+            out[key] = raw.decode(enc, errors=errors)
+        except Exception:
+            out[key] = None
+    return out
+
+
+def _log_qr_raw_readout(cam_id: str, zone_name: str, src: str, raw_bytes: bytes):
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    info = _qr_decode_variants(raw_bytes)
+    logger.debug(
+        "QR raw readout cam=%s zone=%s src=%s bytes=%s hex=%s text=%r utf8_strict=%r utf8_replace=%r utf8_ignore=%r latin1=%r big5=%r",
+        cam_id,
+        zone_name,
+        src,
+        info.get("bytes"),
+        info.get("hex"),
+        info.get("text"),
+        info.get("utf8_strict"),
+        info.get("utf8_replace"),
+        info.get("utf8_ignore"),
+        info.get("latin1"),
+        info.get("big5"),
+    )
+
+
+def _opencv_decode_quad_crop(gray_img: np.ndarray, quad_pts, quiet_zone_px: int = 16):
+    try:
+        if gray_img is None or gray_img.size == 0:
+            return None
+        pts = np.array(quad_pts, dtype=np.float32).reshape(-1, 2)
+        if pts.shape[0] != 4:
+            return None
+        h, w = gray_img.shape[:2]
+        if h <= 1 or w <= 1:
+            return None
+
+        min_xy = np.floor(np.min(pts, axis=0)).astype(int)
+        max_xy = np.ceil(np.max(pts, axis=0)).astype(int)
+        side_px = max(1.0, float(min(max_xy[0] - min_xy[0], max_xy[1] - min_xy[1])))
+        pad = max(int(quiet_zone_px), int(round(side_px * 0.08)))
+
+        x0 = max(0, int(min_xy[0]) - pad)
+        y0 = max(0, int(min_xy[1]) - pad)
+        x1 = min(w, int(max_xy[0]) + pad + 1)
+        y1 = min(h, int(max_xy[1]) + pad + 1)
+        if x1 <= x0 or y1 <= y0:
+            return None
+
+        crop = gray_img[y0:y1, x0:x1]
+        if crop is None or crop.size == 0:
+            return None
+
+        border = max(quiet_zone_px, int(round(side_px * 0.08)))
+        crop = cv2.copyMakeBorder(crop, border, border, border, border, cv2.BORDER_CONSTANT, value=255)
+
+        detector = cv2.QRCodeDetector()
+
+        out = detector.detectAndDecode(crop)
+        if isinstance(out, tuple) and len(out) >= 2:
+            payload, pts_found = out[0], out[1]
+        else:
+            payload, pts_found = "", None
+        payload = (payload or "").strip()
+        if payload:
+            return {
+                "payload": payload,
+                "points": pts_found.tolist() if pts_found is not None else None,
+                "method": "detectAndDecode",
+                "crop_box": [int(x0), int(y0), int(x1), int(y1)],
+                "border_px": int(border),
+            }
+
+        out2 = detector.detectAndDecodeCurved(crop)
+        if isinstance(out2, tuple) and len(out2) >= 2:
+            payload2, pts2 = out2[0], out2[1]
+        else:
+            payload2, pts2 = "", None
+        payload2 = (payload2 or "").strip()
+        if payload2:
+            return {
+                "payload": payload2,
+                "points": pts2.tolist() if pts2 is not None else None,
+                "method": "detectAndDecodeCurved",
+                "crop_box": [int(x0), int(y0), int(x1), int(y1)],
+                "border_px": int(border),
+            }
+    except Exception:
+        return None
+    return None
+
+
+def _choose_qr_payload(zbar_payload: str, opencv_info: dict | None, cam_id: str, zone_name: str, src: str):
+    final_payload = str(zbar_payload or "").strip()
+    chosen_src = str(src or "zbar")
+    opencv_payload = str((opencv_info or {}).get("payload") or "").strip()
+    mismatch = bool(opencv_payload and final_payload and opencv_payload != final_payload)
+    if opencv_payload:
+        if mismatch:
+            logger.warning(
+                "QR decoder mismatch cam=%s zone=%s src=%s zbar=%r opencv=%r choosing=opencv",
+                cam_id,
+                zone_name,
+                src,
+                final_payload,
+                opencv_payload,
+            )
+            chosen_src = f"{chosen_src}+opencv"
+        final_payload = opencv_payload
+        if not mismatch and chosen_src == src:
+            chosen_src = f"{chosen_src}+opencv_agree"
+    return {
+        "payload": final_payload,
+        "src": chosen_src,
+        "mismatch": mismatch,
+        "opencv": opencv_info if opencv_payload else None,
+    }
+
 # ------------------------------------------------------------
 # OpenCV subprocess decode
 # ------------------------------------------------------------
@@ -1799,13 +1881,21 @@ if img is None:
     sys.exit(0)
 
 q = cv2.QRCodeDetector()
-payload, pts = q.detectAndDecode(img)
+out = q.detectAndDecode(img)
+if isinstance(out, tuple) and len(out) >= 2:
+    payload, pts = out[0], out[1]
+else:
+    payload, pts = "", None
 payload = (payload or "").strip()
 if payload and pts is not None:
     print(json.dumps({"ok": True, "payload": payload, "points": pts.tolist(), "method": "detectAndDecode"}))
     sys.exit(0)
 
-payload2, pts2 = q.detectAndDecodeCurved(img)
+out2 = q.detectAndDecodeCurved(img)
+if isinstance(out2, tuple) and len(out2) >= 2:
+    payload2, pts2 = out2[0], out2[1]
+else:
+    payload2, pts2 = "", None
 payload2 = (payload2 or "").strip()
 if payload2 and pts2 is not None:
     print(json.dumps({"ok": True, "payload": payload2, "points": pts2.tolist(), "method": "detectAndDecodeCurved"}))
@@ -1991,7 +2081,7 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
         "clip_analysis": clip_analysis,
         "clip_analysis_roi": clip_analysis_roi,
         "scales": scales_eff,
-        "zbar": {"attempts": 0, "hits": 0},
+        "zbar": {"attempts": 0, "hits": 0, "last_raw": None, "last_choice": None},
         "opencv_subproc": {"attempts": 0, "hits": 0, "last": None},
         "best_preprocess": None,
     }
@@ -2014,16 +2104,15 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
                 best_area = -1.0
                 best_quad = None
                 best_payload = None
-                best_raw_readout = None
+                best_raw = b""
+                best_raw_info = None
                 for r in res:
                     raw_bytes = bytes(getattr(r, "data", b"") or b"")
-                    try:
-                        payload = (raw_bytes.decode("utf-8", errors="ignore") or "").strip()
-                    except Exception:
-                        payload = ""
+                    _log_qr_raw_readout(cam_id, zname, "zbar", raw_bytes)
+                    raw_info = _qr_decode_variants(raw_bytes)
+                    payload = str(raw_info.get("text") or "").strip()
                     if not payload:
                         continue
-                    raw_readout = _log_raw_qr_readout(cam_id, zname, "zbar", raw_bytes=raw_bytes, text=payload)
                     quad = _zbar_poly_to_quad(r.polygon)
                     if quad is None:
                         continue
@@ -2032,18 +2121,29 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
                         best_area = area
                         best_quad = quad
                         best_payload = payload
-                        best_raw_readout = raw_readout
+                        best_raw = raw_bytes
+                        best_raw_info = raw_info
 
                 if best_quad is None or not best_payload:
                     continue
-
-                if best_raw_readout is not None:
-                    dbg["zbar"]["best_raw_readout"] = best_raw_readout
 
                 rh, rw = v.shape[:2]
                 quad = best_quad.astype(np.float32)
                 quad[:, 0] = np.clip(quad[:, 0], 0, rw - 1)
                 quad[:, 1] = np.clip(quad[:, 1], 0, rh - 1)
+
+                opencv_choice = _choose_qr_payload(
+                    best_payload,
+                    _opencv_decode_quad_crop(roi_s, quad),
+                    cam_id,
+                    zname,
+                    "zbar",
+                )
+                final_payload = str(opencv_choice.get("payload") or "").strip()
+                if not final_payload:
+                    continue
+                dbg["zbar"]["last_raw"] = best_raw_info
+                dbg["zbar"]["last_choice"] = opencv_choice
 
                 eff = float(scale_tag.split("x")[0])
                 pts_roi = (quad / eff)
@@ -2063,12 +2163,12 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
                 score = _certainty_score(edge_px, lap, con)
 
                 det = {
-                    "payload": best_payload,
+                    "payload": final_payload,
                     "points": pts_full.tolist(),
                     "centroid": [cx, cy],
                     "zone": zname,
                     "score": score,
-                    "diag": {"edge_px": edge_px, "lap_var": lap, "contrast": con, "src": "zbar", "zone_ov": ov},
+                    "diag": {"edge_px": edge_px, "lap_var": lap, "contrast": con, "src": opencv_choice.get("src") or "zbar", "zone_ov": ov},
                     "decoded": True,
                 }
 
@@ -2118,12 +2218,6 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
                     out = _opencv_decode_subprocess(v)
                     dbg["opencv_subproc"]["last"] = {"scale": scale_tag, "pre": pre_name, "out": out}
                     if out and out.get("ok") and out.get("payload") and out.get("points"):
-                        dbg["opencv_subproc"]["last_raw_readout"] = _log_raw_qr_readout(
-                            cam_id,
-                            zname,
-                            "opencv_subproc",
-                            text=(out.get("payload") or "").strip(),
-                        )
                         pts = np.array(out["points"], dtype=np.float32).reshape(-1, 2)
                         if pts.shape[0] != 4:
                             continue
@@ -2271,19 +2365,27 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
                 rh, rw = v.shape[:2]
                 for r in res:
                     raw_bytes = bytes(getattr(r, "data", b"") or b"")
-                    try:
-                        payload = (raw_bytes.decode("utf-8", errors="ignore") or "").strip()
-                    except Exception:
-                        payload = ""
+                    _log_qr_raw_readout(cam_id, zname, "zbar_multi", raw_bytes)
+                    payload = _qr_text_from_raw_bytes(raw_bytes)
                     if not payload:
                         continue
-                    raw_readout = _log_raw_qr_readout(cam_id, zname, "zbar_multi", raw_bytes=raw_bytes, text=payload)
                     quad = _zbar_poly_to_quad(r.polygon)
                     if quad is None:
                         continue
                     quad = quad.astype(np.float32)
                     quad[:, 0] = np.clip(quad[:, 0], 0, rw - 1)
                     quad[:, 1] = np.clip(quad[:, 1], 0, rh - 1)
+
+                    opencv_choice = _choose_qr_payload(
+                        payload,
+                        _opencv_decode_quad_crop(roi_s, quad),
+                        cam_id,
+                        zname,
+                        "zbar_multi",
+                    )
+                    final_payload = str(opencv_choice.get("payload") or "").strip()
+                    if not final_payload:
+                        continue
 
                     pts_roi = quad / max(1e-6, eff)
                     pts_full = pts_roi + np.array([x1p, y1p], dtype=np.float32)
@@ -2298,7 +2400,7 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
                     edge_px = _edge_px_from_quad(pts_full)
                     score = _certainty_score(edge_px, lap, con)
                     found.append({
-                        "payload": payload,
+                        "payload": final_payload,
                         "points": pts_full.tolist(),
                         "centroid": [cx, cy],
                         "zone": zname,
@@ -2307,11 +2409,11 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
                             "edge_px": edge_px,
                             "lap_var": lap,
                             "contrast": con,
-                            "src": "zbar_multi",
+                            "src": opencv_choice.get("src") or "zbar_multi",
                             "zone_ov": ov,
                             "scale": scale_tag,
                             "pre": pre_name,
-                            "raw_readout": raw_readout,
+                            "opencv": opencv_choice.get("opencv"),
                         },
                         "decoded": True,
                     })
@@ -2877,7 +2979,7 @@ class MQTTManager:
             "name": str(cam_name),
             "manufacturer": "QR Inventory",
             "model": "QR Zone Scanner",
-            "sw_version": "0.6.2.0",
+            "sw_version": APP_VERSION,
         }
 
     def _discovery_payload(self, cam_id: str, cam_name: str, zone_name: str) -> dict:
@@ -2921,7 +3023,7 @@ class MQTTManager:
                 "name": "QR Inventory Summary",
                 "manufacturer": "QR Inventory",
                 "model": "Detected List",
-                "sw_version": "0.6.4.0",
+                "sw_version": APP_VERSION,
             },
         }
 
