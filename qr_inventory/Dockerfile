@@ -27,7 +27,6 @@ RUN set -eux; \
       libxrender \
       libstdc++ \
       zbar \
-      ttf-dejavu \
       ; \
   elif command -v apt-get >/dev/null 2>&1; then \
     apt-get update; \
@@ -45,7 +44,6 @@ RUN set -eux; \
       libxext6 \
       libxrender1 \
       libzbar0 \
-      fonts-dejavu-core \
       ; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \

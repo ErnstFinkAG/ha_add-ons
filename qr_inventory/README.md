@@ -75,20 +75,6 @@ overlay_margin_px: 10
 - `overlay_alignment_direction`: `horizontal`, `vertical` oder `both`
 - Linien und Margin-Box wirken nur auf das Overlay, nicht auf die Erkennung
 
-## Hinweise zu Unicode-QRs und Overlay-Schriften
-
-Seit Version **0.6.7.1** wird für die Payload-Auswahl zuerst ein breiterer OpenCV-Pfad über die gesamte ROI bzw. den ROI-Cutout versucht. ZBar dient weiterhin zur Lokalisierung und als Fallback, aber wenn OpenCV einen gültigen Text liefert, gewinnt der OpenCV-Text. Das verbessert Fälle wie `Büetigen` vs. `B羹etigen` deutlich.
-
-Für Overlay-Texte stehen nun Pixelgrößen zur Verfügung:
-
-```yaml
-overlay_zone_label_font_px: 18
-overlay_zone_status_font_px: 16
-overlay_payload_font_px: 20
-```
-
-Damit Unicode-Zeichen wie `ü` im Overlay korrekt gezeichnet werden, installiert das Add-on zusätzlich eine DejaVu-Schrift im Container.
-
 ## MQTT
 
 Jede definierte Zone wird als Sensor veröffentlicht.
@@ -175,3 +161,11 @@ title: QR Inventory
 entity: sensor.qr_inventory_detected_list
 print_base_url: http://YOUR_ADDON_HOST:8099
 ```
+
+
+## Version 0.6.7.2
+
+- restored the faster dual-decoder flow from the earlier working branch
+- ZBar is used for localization / detection and OpenCV is used to override payload text when it can decode the same crop
+- removed the newer aggressive OpenCV-first confirmation path that slowed scans and left some zones unresolved
+- keeps the Unicode-safe overlay rendering and font support
