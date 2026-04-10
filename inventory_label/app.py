@@ -35,7 +35,6 @@ APP.logger.handlers.clear()
 APP.logger.propagate = True
 
 DEFAULT_PRINTER_DPI = 203
-PRINTER_MAX_WIDTH_MM = 168.0
 INGRESS_ALLOWED_IP = "172.30.32.2"
 LOCAL_ALLOWED_IPS = {"127.0.0.1", "::1", None}
 OPTIONS_PATH = "/data/options.json"
@@ -59,6 +58,7 @@ DEFAULT_LABEL_PROFILES = [
         "name": "Standard",
         "printer_host": "",
         "printer_port": None,
+        "printer_dpi": DEFAULT_PRINTER_DPI,
         "label_width_mm": 170,
         "label_height_mm": 305,
         "qr_size_mm": 170,
@@ -67,7 +67,6 @@ DEFAULT_LABEL_PROFILES = [
         "print_rotation_degrees": 0,
         "qr_quiet_zone_modules": 3,
         "qr_error_correction": "M",
-        "printer_dpi": DEFAULT_PRINTER_DPI,
     }
 ]
 
@@ -241,6 +240,7 @@ UI_STRINGS = {
         "qr_field_empty": "No QR field selected. No QR code will be generated.",
         "copies": "Copies",
         "configured_printer": "Configured printer",
+        "printer_dpi_label": "Printer DPI",
         "not_configured": "Not configured",
         "printer_not_configured": "Printer host and port are not configured for this label profile.",
         "print_label_button": "Print label",
@@ -248,7 +248,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at {dpi} dpi. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
+        "preview_meta": "PNG preview is rendered from the same image that is sent to the printer, exported at the configured printer DPI. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width.",
         "fields_heading": "Configured fields",
         "print_field": "Print",
         "required": "Required",
@@ -261,9 +261,8 @@ UI_STRINGS = {
         "current_qr_payload": "Current QR payload",
         "requested_label": "Requested label",
         "requested_qr": "Requested QR",
-        "effective_print_width": "Effective print width on ZT420/ZT421 @ {dpi} dpi",
+        "effective_print_width": "Configured print width at the selected DPI",
         "print_rotation": "Print rotation",
-        "width_warning": "Requested width exceeds the printer's 168 mm printable width. The add-on clamps the printed width automatically.",
         "sent_labels_message": "Sent {copies} label(s) to {host}:{port}. QR payload: {qr_payload}",
         "print_failed_message": "Print failed: {error}",
         "preview_failed_message": "Preview failed: {error}",
@@ -328,7 +327,6 @@ UI_STRINGS = {
         "legacy_migrated": "Legacy label_profiles_yaml was detected and migrated. Profiles now live in add-on settings, fields live in the web UI store.",
         "language_label": "Language",
         "profile_settings_source": "Profiles are defined in add-on settings",
-        "printer_dpi": "Printer DPI",
     },
     "de": {
         "lang": "de",
@@ -341,6 +339,7 @@ UI_STRINGS = {
         "qr_field_empty": "Kein QR-Feld ausgewählt. Es wird kein QR-Code erzeugt.",
         "copies": "Anzahl",
         "configured_printer": "Konfigurierter Drucker",
+        "printer_dpi_label": "Drucker-DPI",
         "not_configured": "Nicht konfiguriert",
         "printer_not_configured": "Drucker-Host und Port sind für dieses Etikettenprofil nicht konfiguriert.",
         "print_label_button": "Etikett drucken",
@@ -348,7 +347,7 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit {dpi} dpi exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
+        "preview_meta": "Die PNG-Vorschau wird aus demselben Bild gerendert, das an den Drucker gesendet wird, und mit der konfigurierten Drucker-DPI exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an.",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
         "required": "Pflichtfeld",
@@ -361,9 +360,8 @@ UI_STRINGS = {
         "current_qr_payload": "Aktueller QR-Inhalt",
         "requested_label": "Gewünschtes Label",
         "requested_qr": "Gewünschter QR",
-        "effective_print_width": "Effektive Druckbreite auf ZT420/ZT421 @ {dpi} dpi",
+        "effective_print_width": "Konfigurierte Druckbreite mit der gewählten DPI",
         "print_rotation": "Drehung",
-        "width_warning": "Die gewünschte Breite überschreitet die druckbare Breite von 168 mm. Das Add-on begrenzt die Druckbreite automatisch.",
         "sent_labels_message": "{copies} Etikett(en) an {host}:{port} gesendet. QR-Inhalt: {qr_payload}",
         "print_failed_message": "Druck fehlgeschlagen: {error}",
         "preview_failed_message": "Vorschau fehlgeschlagen: {error}",
@@ -428,7 +426,6 @@ UI_STRINGS = {
         "legacy_migrated": "Altes label_profiles_yaml erkannt und migriert. Profile liegen jetzt in den Add-on-Einstellungen, Felder im Web-UI-Speicher.",
         "language_label": "Sprache",
         "profile_settings_source": "Profile werden in den Add-on-Einstellungen definiert",
-        "printer_dpi": "Drucker-DPI",
     },
 }
 
@@ -601,7 +598,7 @@ HTML = """
                 </div>
               </div>
             </div>
-            <div class="preview-meta">{{ preview_meta_text }}</div>
+            <div class="preview-meta">{{ ui.preview_meta }}</div>
             <div class="preview-actions">
               <div class="copies-inline">
                 <label for="copies">{{ ui.copies }}</label>
@@ -664,15 +661,12 @@ HTML = """
             <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview or ui.none }}</code></li>
             <li><strong>{{ ui.requested_label }}:</strong> <code>{{ requested_width_mm }} × {{ requested_height_mm }} mm</code></li>
             <li><strong>{{ ui.requested_qr }}:</strong> <code>{{ requested_qr_mm }} × {{ requested_qr_mm }} mm</code></li>
+            <li><strong>{{ ui.printer_dpi_label }}:</strong> <code>{{ printer_dpi }}</code></li>
             <li><strong>QR:</strong> <code>quiet zone {{ qr_quiet_zone_modules }}, ECC {{ qr_error_correction }}</code></li>
             <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
-            <li><strong>{{ effective_print_width_text }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
-            <li><strong>{{ ui.printer_dpi }}:</strong> <code>{{ printer_dpi }}</code></li>
+            <li><strong>{{ ui.effective_print_width }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
             <li><strong>{{ ui.language_label }}:</strong> <code>{{ ui.lang }}</code></li>
           </ul>
-          {% if width_warning %}
-          <p class="muted">{{ ui.width_warning }}</p>
-          {% endif %}
         </div>
       </form>
     </div>
@@ -1218,6 +1212,16 @@ def normalize_position(value: object, default: str = "body") -> str:
     return pos if pos in FIELD_POSITIONS else default
 
 
+def normalize_printer_dpi(value: object, default: int = DEFAULT_PRINTER_DPI) -> int:
+    return normalize_int(value, default, 100, 600)
+
+
+def dots_per_mm(profile: Dict | None = None, dpi: int | None = None) -> float:
+    resolved_dpi = normalize_printer_dpi(dpi if dpi is not None else (profile or {}).get("printer_dpi"), DEFAULT_PRINTER_DPI)
+    return resolved_dpi / 25.4
+
+
+
 def sanitize_id(value: str, fallback: str) -> str:
     normalized = re.sub(r"[^a-z0-9_-]+", "_", value.strip().lower()).strip("_")
     return normalized or fallback
@@ -1308,7 +1312,7 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "name": name,
         "printer_host": normalize_string(data.get("printer_host"), ""),
         "printer_port": normalize_optional_port(data.get("printer_port")),
-        "printer_dpi": normalize_int(data.get("printer_dpi"), DEFAULT_PRINTER_DPI, 100, 1200),
+        "printer_dpi": normalize_printer_dpi(data.get("printer_dpi"), DEFAULT_PRINTER_DPI),
         "label_width_mm": normalize_float(data.get("label_width_mm"), 170.0, 50.0, 500.0),
         "label_height_mm": normalize_float(data.get("label_height_mm"), 305.0, 50.0, 1000.0),
         "qr_size_mm": normalize_float(data.get("qr_size_mm"), 170.0, 10.0, 300.0),
@@ -1515,13 +1519,13 @@ def build_field_forms(profile: Dict, source: Dict | None = None) -> List[Dict]:
                 selected_values = normalize_multi_value_ids(source.get(value_key, [])) if has_submission else normalize_multi_value_ids(field.get("default_value", []))
             selected_lookup = set(selected_values)
             logo_options = [{**option, "selected": option.get("id") in selected_lookup, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))]
-            forms.append({**field, "supports_logos": True, "value": selected_values, "selected_logo_ids": selected_values, "logo_options": logo_options, "print_enabled": print_enabled, "profile": profile})
+            forms.append({**field, "supports_logos": True, "value": selected_values, "selected_logo_ids": selected_values, "logo_options": logo_options, "print_enabled": print_enabled})
             continue
 
         value = source.get(value_key)
         if value is None:
             value = field["default_value"]
-        forms.append({**field, "supports_logos": False, "value": str(value), "print_enabled": print_enabled, "profile": profile})
+        forms.append({**field, "supports_logos": False, "value": str(value), "print_enabled": print_enabled})
     return forms
 
 
@@ -1754,7 +1758,6 @@ def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
                 "logos": selected_options,
                 "logo_height_mm": field.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
                 "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
-            "profile": field.get("profile"),
             }
             if field.get("position") == "footer":
                 footer_logo_rows.append(block)
@@ -1775,7 +1778,6 @@ def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
             "underline": field["underline"],
             "max_lines": field["max_lines"],
             "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
-            "profile": field.get("profile"),
         }
         if field.get("position") == "footer":
             footer_texts.append(block)
@@ -1784,28 +1786,12 @@ def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     return body, (footer_logo_rows + footer_texts)
 
 
-def printer_dpi(profile: Dict | int | float | None = None) -> int:
-    if isinstance(profile, dict):
-        return normalize_int(profile.get("printer_dpi"), DEFAULT_PRINTER_DPI, 100, 1200)
-    if profile is None:
-        return DEFAULT_PRINTER_DPI
-    return normalize_int(profile, DEFAULT_PRINTER_DPI, 100, 1200)
-
-
-def dots_per_mm(profile: Dict | int | float | None = None) -> float:
-    return printer_dpi(profile) / 25.4
-
-
-def mm_to_dots(mm_value: float, profile: Dict | int | float | None = None) -> int:
+def mm_to_dots(mm_value: float, profile: Dict | None = None) -> int:
     return max(1, int(round(float(mm_value) * dots_per_mm(profile))))
 
 
-def dots_to_mm(dots: int, profile: Dict | int | float | None = None) -> float:
+def dots_to_mm(dots: int, profile: Dict | None = None) -> float:
     return round(dots / dots_per_mm(profile), 1)
-
-
-def printer_max_width_dots(profile: Dict | int | float | None = None) -> int:
-    return mm_to_dots(PRINTER_MAX_WIDTH_MM, profile)
 
 
 def effective_layout(profile: Dict) -> Dict:
@@ -1814,16 +1800,14 @@ def effective_layout(profile: Dict) -> Dict:
     qr_size_dots = mm_to_dots(profile["qr_size_mm"], profile)
     top_margin_dots = mm_to_dots(profile["top_margin_mm"], profile)
     footer_bottom_margin_dots = mm_to_dots(profile.get("footer_bottom_margin_mm", 0.0), profile)
-    max_width_dots = printer_max_width_dots(profile)
-    effective_width_dots = min(requested_width_dots, max_width_dots)
     return {
         "requested_width_dots": requested_width_dots,
         "requested_height_dots": requested_height_dots,
         "qr_size_dots": qr_size_dots,
         "top_margin_dots": top_margin_dots,
         "footer_bottom_margin_dots": footer_bottom_margin_dots,
-        "effective_width_dots": effective_width_dots,
-        "width_warning": requested_width_dots > max_width_dots,
+        "effective_width_dots": requested_width_dots,
+        "width_warning": False,
     }
 
 
@@ -1928,8 +1912,8 @@ def wrap_text_lines(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageF
     return trimmed
 
 
-def fit_block_lines(draw: ImageDraw.ImageDraw, text: str, block: Dict, max_width: int) -> Tuple[ImageFont.ImageFont, List[str], int]:
-    start_size = max(10, mm_to_dots(block["font_size_mm"], block.get("profile")))
+def fit_block_lines(draw: ImageDraw.ImageDraw, text: str, block: Dict, max_width: int, profile: Dict) -> Tuple[ImageFont.ImageFont, List[str], int]:
+    start_size = max(10, mm_to_dots(block["font_size_mm"], profile))
     min_size = max(10, int(start_size * 0.6))
     best_font = load_font(block["font_family"], block["bold"], block["italic"], start_size)
     best_lines = wrap_text_lines(draw, text, best_font, max_width, normalize_int(block.get("max_lines"), 3, 1, 8))
@@ -1982,9 +1966,9 @@ def load_logo_image(storage_name: object) -> Image.Image:
         return img.convert("RGBA").copy()
 
 
-def fit_logo_image(block: Dict, max_width: int) -> Image.Image:
+def fit_logo_image(block: Dict, max_width: int, profile: Dict) -> Image.Image:
     logo = load_logo_image(block.get("storage_name"))
-    target_h = max(1, mm_to_dots(block.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM), block.get("profile")))
+    target_h = max(1, mm_to_dots(block.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM), profile))
     scale = target_h / max(1, logo.height)
     width = max(1, int(round(logo.width * scale)))
     height = max(1, int(round(logo.height * scale)))
@@ -1995,17 +1979,17 @@ def fit_logo_image(block: Dict, max_width: int) -> Image.Image:
     return logo.resize((width, height), Image.Resampling.LANCZOS)
 
 
-def fit_logo_row_images(block: Dict, max_width: int) -> List[Image.Image]:
+def fit_logo_row_images(block: Dict, max_width: int, profile: Dict) -> List[Image.Image]:
     logos = []
     for option in normalize_logo_options(block.get("logos", [])):
         storage_name = option.get("storage_name")
         if not storage_name:
             continue
-        logo_block = {"storage_name": storage_name, "logo_height_mm": block.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM), "profile": block.get("profile")}
-        logos.append(fit_logo_image(logo_block, max_width))
+        logo_block = {"storage_name": storage_name, "logo_height_mm": block.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM)}
+        logos.append(fit_logo_image(logo_block, max_width, profile))
     if not logos:
         return []
-    gap = mm_to_dots(DEFAULT_LOGO_GAP_MM, block.get("profile"))
+    gap = mm_to_dots(DEFAULT_LOGO_GAP_MM, profile)
     total_width = sum(logo.width for logo in logos) + (gap * max(0, len(logos) - 1))
     if total_width <= max_width:
         return logos
@@ -2059,27 +2043,27 @@ def draw_body_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, start_y: int, 
     current_y = start_y
     for block in body_blocks:
         if block.get("type") == "logo_row":
-            logos = fit_logo_row_images(block, box_width)
+            logos = fit_logo_row_images(block, box_width, profile)
             current_y = draw_aligned_logo_row(img, logos, current_y, box_left, box_width, block["alignment"], profile)
         elif block.get("type") == "logo":
-            logo = fit_logo_image(block, box_width)
+            logo = fit_logo_image(block, box_width, profile)
             current_y = draw_aligned_logo(img, logo, current_y, box_left, box_width, block["alignment"])
         else:
-            font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
+            font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width, profile)
             spacing = max(4, resolved // 7)
             current_y = draw_aligned_lines(draw, lines, current_y, box_left, box_width, font, block["alignment"], block["underline"], spacing)
         current_y += mm_to_dots(FIELD_GAP_MM, profile)
     return current_y
 
 
-def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int) -> Tuple[int, object, object, int]:
+def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int, profile: Dict) -> Tuple[int, object, object, int]:
     if block.get("type") == "logo_row":
-        logos = fit_logo_row_images(block, box_width)
+        logos = fit_logo_row_images(block, box_width, profile)
         return (max((logo.height for logo in logos), default=0), logos, None, 0)
     if block.get("type") == "logo":
-        logo = fit_logo_image(block, box_width)
+        logo = fit_logo_image(block, box_width, profile)
         return logo.height, logo, None, 0
-    font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
+    font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width, profile)
     spacing = max(4, resolved // 7)
     line_h = text_line_height(draw, font)
     total = (line_h * len(lines)) + (max(0, len(lines) - 1) * spacing)
@@ -2089,8 +2073,8 @@ def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int) -> Tupl
 def draw_footer_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, bottom_y: int, box_left: int, box_width: int, footer_blocks: List[Dict], profile: Dict) -> int:
     current_bottom = bottom_y
     for block in reversed(footer_blocks):
-        current_bottom -= mm_to_dots(block.get("footer_bottom_margin_mm", 0.0), profile)
-        total_h, payload, lines, spacing = block_height(draw, block, box_width)
+        current_bottom -= max(0, mm_to_dots(float(block.get("footer_bottom_margin_mm", 0.0)), profile))
+        total_h, payload, lines, spacing = block_height(draw, block, box_width, profile)
         top_y = current_bottom - total_h
         if block.get("type") == "logo_row":
             draw_aligned_logo_row(img, payload, top_y, box_left, box_width, block["alignment"], profile)
@@ -2202,20 +2186,116 @@ def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, pr
     return orient_preview_for_display(canvas, rotation_degrees)
 
 
+def render_print_image(qr_value: str, field_forms: List[Dict], profile: Dict) -> Image.Image:
+    return render_label_image(qr_value, field_forms, profile, preview=False).convert("1")
+
+
+def render_preview_image(qr_value: str, field_forms: List[Dict], profile: Dict) -> Image.Image:
+    layout = effective_layout(profile)
+    printable_image = render_print_image(qr_value, field_forms, profile).convert("RGBA")
+    requested_w = layout["requested_width_dots"]
+    requested_h = layout["requested_height_dots"]
+    printable_w = layout["effective_width_dots"]
+    rotation_degrees = profile["print_rotation_degrees"]
+    if requested_w <= printable_w:
+        return orient_preview_for_display(printable_image, rotation_degrees)
+    canvas = Image.new("RGBA", (requested_w, requested_h), color=(255, 255, 255, 255))
+    printable_left = max((requested_w - printable_w) // 2, 0)
+    draw_background_for_preview(canvas, requested_w, requested_h, printable_left, printable_w)
+    canvas.alpha_composite(printable_image, (printable_left, 0))
+    return orient_preview_for_display(canvas, rotation_degrees)
+
+
+def iter_nonempty_row_bands(img: Image.Image, merge_gap_rows: int = 16) -> List[Tuple[int, int]]:
+    pixels = img.load()
+    width, height = img.size
+    bands: List[Tuple[int, int]] = []
+    start = None
+    last_nonempty = None
+    for y in range(height):
+        row_has_black = False
+        for x in range(width):
+            if pixels[x, y] == 0:
+                row_has_black = True
+                break
+        if row_has_black:
+            if start is None:
+                start = y
+            last_nonempty = y
+            continue
+        if start is not None and last_nonempty is not None and y - last_nonempty > merge_gap_rows:
+            bands.append((start, last_nonempty + 1))
+            start = None
+            last_nonempty = None
+    if start is not None and last_nonempty is not None:
+        bands.append((start, last_nonempty + 1))
+    return bands
+
+
+def nonwhite_bbox(img: Image.Image) -> Tuple[int, int, int, int] | None:
+    width, height = img.size
+    pixels = img.load()
+    min_x = width
+    min_y = height
+    max_x = -1
+    max_y = -1
+    for y in range(height):
+        for x in range(width):
+            if pixels[x, y] == 0:
+                if x < min_x:
+                    min_x = x
+                if y < min_y:
+                    min_y = y
+                if x > max_x:
+                    max_x = x
+                if y > max_y:
+                    max_y = y
+    if max_x < min_x or max_y < min_y:
+        return None
+    return (min_x, min_y, max_x + 1, max_y + 1)
+
+
+def zpl_chunks_for_image(label_img: Image.Image, max_chunk_bytes: int = 90000) -> List[Tuple[int, int, Image.Image]]:
+    bw = label_img.convert("1")
+    bands = iter_nonempty_row_bands(bw)
+    chunks: List[Tuple[int, int, Image.Image]] = []
+    width = bw.size[0]
+    for band_top, band_bottom in bands:
+        band_img = bw.crop((0, band_top, width, band_bottom))
+        band_bbox = nonwhite_bbox(band_img)
+        if not band_bbox:
+            continue
+        left, _, right, _ = band_bbox
+        crop_width = max(1, right - left)
+        bytes_per_row = (crop_width + 7) // 8
+        max_rows = max(1, max_chunk_bytes // max(1, bytes_per_row))
+        y = band_top
+        while y < band_bottom:
+            sub_bottom = min(band_bottom, y + max_rows)
+            sub_img = bw.crop((left, y, right, sub_bottom))
+            sub_bbox = nonwhite_bbox(sub_img)
+            if sub_bbox:
+                sub_left, sub_top, sub_right, sub_end = sub_bbox
+                final_left = left + sub_left
+                final_top = y + sub_top
+                final_img = bw.crop((final_left, final_top, left + sub_right, y + sub_end))
+                chunks.append((final_left, final_top, final_img))
+            y = sub_bottom
+    return chunks
+
+
 def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
     layout = effective_layout(profile)
     pw = layout["effective_width_dots"]
     ll = layout["requested_height_dots"]
-    label_img = render_label_image(qr_value, field_forms, profile, preview=False).convert("1")
-    total_bytes, bytes_per_row, graphic_hex = image_to_gfa(label_img)
-    return f"""^XA
-^CI28
-^PW{pw}
-^LL{ll}
-^LH0,0
-^FO0,0^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_hex}^FS
-^PQ{copies},0,1,N
-^XZ"""
+    label_img = render_print_image(qr_value, field_forms, profile)
+    commands = ["^XA", "^CI28", f"^PW{pw}", f"^LL{ll}", "^LH0,0"]
+    for left, top, chunk_img in zpl_chunks_for_image(label_img):
+        total_bytes, bytes_per_row, graphic_hex = image_to_gfa(chunk_img)
+        commands.append(f"^FO{left},{top}^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_hex}^FS")
+    commands.append(f"^PQ{copies},0,1,N")
+    commands.append("^XZ")
+    return "\n".join(commands)
 
 
 def send_to_printer(host: str, port: int, payload: str) -> None:
@@ -2520,6 +2600,7 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         printer_host=profile.get("printer_host", ""),
         printer_port=profile.get("printer_port", ""),
         printer_target=format_printer_target(profile, opts),
+        printer_dpi=profile.get("printer_dpi", DEFAULT_PRINTER_DPI),
         qr_preview=qr_preview,
         requested_width_mm=profile.get("label_width_mm", 0),
         requested_height_mm=profile.get("label_height_mm", 0),
@@ -2530,9 +2611,6 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         effective_width_mm=dots_to_mm(layout["effective_width_dots"], profile),
         effective_width_dots=layout["effective_width_dots"],
         width_warning=layout["width_warning"],
-        printer_dpi=printer_dpi(profile),
-        preview_meta_text=ui_text(opts, "preview_meta", dpi=printer_dpi(profile)),
-        effective_print_width_text=ui_text(opts, "effective_print_width", dpi=printer_dpi(profile)),
         preview_display_width_mm=preview_display_width_mm,
         preview_display_height_mm=preview_display_height_mm,
         ingress_base=ingress_base_path(),
@@ -2582,7 +2660,6 @@ def api_field_forms_from_payload(profile: Dict, payload: Dict) -> List[Dict]:
             current["print_enabled"] = normalize_bool(lookup[field["id"]].get("print"), field["print_by_default"])
         else:
             current["print_enabled"] = field["print_by_default"]
-        current["profile"] = profile
         forms.append(current)
     return forms
 
@@ -2768,10 +2845,10 @@ def preview_png():
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("active_profile_id"), qr_value)
-        img = render_label_image(qr_value, field_forms, opts["active_profile"], preview=True)
+        img = render_preview_image(qr_value, field_forms, opts["active_profile"])
         bio = BytesIO()
-        current_dpi = printer_dpi(opts["active_profile"])
-        img.save(bio, format="PNG", dpi=(current_dpi, current_dpi), optimize=True)
+        dpi = normalize_printer_dpi(opts["active_profile"].get("printer_dpi"), DEFAULT_PRINTER_DPI)
+        img.save(bio, format="PNG", dpi=(dpi, dpi), optimize=True)
         bio.seek(0)
         return send_file(bio, mimetype="image/png", download_name="label-preview.png")
     except Exception as exc:
