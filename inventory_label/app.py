@@ -1159,14 +1159,16 @@ HTML = """
           return;
         }
         if (input.type === "checkbox") {
-          input.addEventListener("change", () => {
+          const handleCheckboxPreview = () => {
             window.setTimeout(() => {
               applyPreviewUpdate();
               const fieldId = input.getAttribute("data-field-id") || "";
               if (fieldId && input.name === `print_${fieldId}`) persistFieldCheckbox(fieldId, "print_by_default", input.checked);
               if (fieldId && input.name === "qr_field_ids") persistFieldCheckbox(fieldId, "always_use_for_qr", input.checked);
             }, 0);
-          });
+          };
+          input.addEventListener("click", handleCheckboxPreview);
+          input.addEventListener("change", handleCheckboxPreview);
         } else {
           input.addEventListener("input", schedulePreviewUpdate);
           input.addEventListener("change", applyPreviewUpdate);
@@ -1813,6 +1815,17 @@ def validate_field_forms(field_forms: List[Dict], language: str) -> List[Dict]:
             value = validate_required_text(value, field["name"], language)
         validated.append({**field, "value": value})
     return validated
+
+
+def prepare_field_forms_for_preview(field_forms: List[Dict]) -> List[Dict]:
+    preview_fields: List[Dict] = []
+    for field in field_forms:
+        if field_supports_logos(field):
+            value = normalize_multi_value_ids(field.get("value", []))
+            preview_fields.append({**field, "value": value, "selected_logo_ids": value})
+            continue
+        preview_fields.append({**field, "value": str(field.get("value") or "").strip()})
+    return preview_fields
 
 
 def current_label_date_str() -> str:
@@ -3110,7 +3123,7 @@ def preview():
     profile = opts.get("active_profile") or {}
     form, field_forms = form_data_from_request(opts)
     try:
-        field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        field_forms = prepare_field_forms_for_preview(field_forms)
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
         zpl = build_zpl(qr_value, field_forms, copies, profile)
@@ -3126,7 +3139,7 @@ def preview_png():
     opts = load_runtime_options()
     form, field_forms = form_data_from_request(opts)
     try:
-        field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        field_forms = prepare_field_forms_for_preview(field_forms)
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("active_profile_id"), qr_value)
         img = render_label_image(qr_value, field_forms, opts["active_profile"], preview=True)

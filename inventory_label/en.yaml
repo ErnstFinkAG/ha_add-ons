@@ -1,0 +1,62 @@
+configuration:
+  ui_language:
+    name: UI language
+    description: Language used in the add-on web UI.
+  label_profiles:
+    name: Label profiles
+    description: Create one entry per label profile. Field definitions are managed in the add-on web UI for each selected label.
+    fields:
+      id:
+        name: Profile ID
+        description: Internal unique ID for the label profile.
+      name:
+        name: Profile name
+        description: Name shown in the add-on UI.
+      printer_host:
+        name: Printer host
+        description: IP address or host name of the network printer.
+      printer_port:
+        name: Printer port
+        description: Raw TCP port of the printer, usually 9100.
+      printer_dpi:
+        name: Printer DPI
+        description: Print resolution in dots per inch for this label profile, for example 203 or 300.
+      print_offset_x_mm:
+        name: Print offset X (mm)
+        description: Horizontal print calibration offset in millimeters. Positive values move the print right.
+      print_offset_y_mm:
+        name: Print offset Y (mm)
+        description: Vertical print calibration offset in millimeters. Positive values move the print down.
+      label_width_mm:
+        name: Label width (mm)
+        description: Physical width of the label.
+      label_height_mm:
+        name: Label height (mm)
+        description: Physical height of the label.
+      qr_size_mm:
+        name: QR size (mm)
+        description: Printed QR size.
+      top_margin_mm:
+        name: Top margin (mm)
+        description: Top offset before placing the QR code.
+      footer_bottom_margin_mm:
+        name: Footer bottom margin (mm)
+        description: Bottom offset for footer text.
+      print_rotation_degrees:
+        name: Print rotation
+        description: Rotation of the rendered label.
+      qr_quiet_zone_modules:
+        name: QR quiet zone
+        description: Quiet zone in QR modules.
+      qr_error_correction:
+        name: QR error correction
+        description: QR error correction level.
+      printable_area_box_enabled:
+        name: Printable area box
+        description: Draw a box inside the label based on the label size and configured box margin.
+      printable_area_box_margin_mm:
+        name: Printable area box margin (mm)
+        description: Margin from each label edge used to calculate the printable area box.
+      text_block_offset_x_mm:
+        name: Text block offset X (mm)
+        description: Horizontal offset of the text and footer block in millimeters. Positive values move the text block right.
