@@ -75,20 +75,6 @@ overlay_margin_px: 10
 - `overlay_alignment_direction`: `horizontal`, `vertical` oder `both`
 - Linien und Margin-Box wirken nur auf das Overlay, nicht auf die Erkennung
 
-## Hinweise zu Unicode-QRs und Overlay-Schriften
-
-Seit Version **0.6.7.7** wird wieder der schnellere Dual-Decoder-Pfad genutzt: ZBar dient primär zur Lokalisierung, OpenCV kann den Payload derselben Erkennung überschreiben. Verdächtige ZBar-Strings werden ohne OpenCV-Bestätigung nicht mehr verworfen, damit die Erkennung nicht in einen langsamen Reject-Loop gerät. Zusätzlich werden gleichartige Payload-Varianten pro Zone kanonisiert, wobei OpenCV-bestätigte bzw. weniger verdächtige Varianten bevorzugt werden.
-
-Für Overlay-Texte stehen nun Pixelgrößen zur Verfügung:
-
-```yaml
-overlay_zone_label_font_px: 18
-overlay_zone_status_font_px: 16
-overlay_payload_font_px: 20
-```
-
-Damit Unicode-Zeichen wie `ü` im Overlay korrekt gezeichnet werden, installiert das Add-on zusätzlich eine DejaVu-Schrift im Container.
-
 ## MQTT
 
 Jede definierte Zone wird als Sensor veröffentlicht.
@@ -176,6 +162,18 @@ entity: sensor.qr_inventory_detected_list
 print_base_url: http://YOUR_ADDON_HOST:8099
 ```
 
+## Version 0.6.8.0
 
-Hinweis zur Fehlersuche:
-Beim Start wird jetzt die tatsächlich laufende Add-on-Version zusammen mit Decoder-Modus und Pillow/Font-Status geloggt. So lässt sich sofort erkennen, ob wirklich das neue Image läuft oder noch ein älterer Build.
+- fresh rebuild from the original base
+- fast dual-decoder flow restored: ZBar for detection, OpenCV can override payload text on the same crop
+- per-zone canonicalization drops duplicate payload variants for the same QR, preferring OpenCV-backed / non-corrupted text
+- Unicode overlay rendering via Pillow with configurable pixel font sizes
+- process-pool recovery for broken worker pools
+
+Overlay font options:
+
+```yaml
+overlay_zone_label_font_px: 18
+overlay_zone_status_font_px: 16
+overlay_payload_font_px: 20
+```

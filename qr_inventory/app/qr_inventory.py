@@ -19,7 +19,7 @@ from urllib.parse import urlparse, unquote, parse_qs, quote
 import cv2
 import numpy as np
 
-# Optional Pillow for Unicode-capable overlay text
+# Optional Pillow for Unicode overlay text
 try:
     from PIL import Image, ImageDraw, ImageFont
     _PIL_OK = True
@@ -55,8 +55,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
-
-APP_VERSION = '0.6.7.7'
+APP_VERSION = '0.6.8.0'
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -985,8 +984,7 @@ def _edge_px_from_det(det):
         return None
 
 def _overlay_has_unicode_text(text: str) -> bool:
-    s = str(text or "")
-    return any(ord(ch) > 127 for ch in s)
+    return any(ord(ch) > 127 for ch in str(text or ""))
 
 
 def _find_overlay_font_path():
@@ -1002,47 +1000,30 @@ def _find_overlay_font_path():
             if os.path.exists(path):
                 return path
         except Exception:
-            continue
+            pass
     return None
 
 
 _OVERLAY_FONT_PATH = _find_overlay_font_path() if _PIL_OK else None
 _OVERLAY_FONT_CACHE = {}
 try:
-    _IS_MAIN_PROCESS = (mp.current_process().name == "MainProcess")
+    _IS_MAIN_PROCESS = (mp.current_process().name == 'MainProcess')
 except Exception:
     _IS_MAIN_PROCESS = True
 if _IS_MAIN_PROCESS:
     if _PIL_OK:
         if _OVERLAY_FONT_PATH:
-            logger.info("Overlay font: using truetype font at %s", _OVERLAY_FONT_PATH)
+            logger.info('Overlay font: using truetype font at %s', _OVERLAY_FONT_PATH)
         else:
-            logger.warning("Overlay font: no truetype font found; Unicode overlay text may render incorrectly until a scalable font is installed.")
+            logger.warning('Overlay font: no truetype font found; Unicode overlay text may render incorrectly.')
     else:
-        logger.warning("Overlay font: Pillow not available; overlay text uses OpenCV renderer only")
-
-
-def _overlay_font_scale_from_px(font_px: int | None, thickness: int = 1, fallback_scale: float = 0.6) -> float:
-    if font_px is None:
-        try:
-            return max(0.3, float(fallback_scale))
-        except Exception:
-            return 0.6
-    try:
-        px = max(10, int(font_px))
-    except Exception:
-        px = 18
-    try:
-        th = max(1, int(thickness))
-    except Exception:
-        th = 1
-    return max(0.3, float(px - (th * 2.0) - 4.0) / 28.0)
+        logger.warning('Overlay font: Pillow not available; overlay text uses OpenCV renderer only')
 
 
 def _get_overlay_font(font_px: int):
     if (not _PIL_OK) or (not _OVERLAY_FONT_PATH):
         return None
-    size = max(10, int(font_px))
+    size = max(10, int(font_px or 18))
     font = _OVERLAY_FONT_CACHE.get(size)
     if font is not None:
         return font
@@ -1054,156 +1035,130 @@ def _get_overlay_font(font_px: int):
     return font
 
 
-def _measure_text_for_overlay(text: str, font_scale: float = 0.6, thickness: int = 1, font_px: int | None = None, font=None):
-    text = str(text or "")
-    if font is None and _PIL_OK and _OVERLAY_FONT_PATH and (font_px is not None):
-        font = _get_overlay_font(font_px)
+def _measure_overlay_text(text: str, font_scale: float = 0.6, thickness: int = 1, font_px: int | None = None):
+    text = str(text or '')
+    font = _get_overlay_font(font_px or int(round(font_scale * 28)) or 18)
     if font is not None:
         try:
-            dummy = Image.new("RGB", (8, 8), (0, 0, 0))
-            draw = ImageDraw.Draw(dummy)
+            img = Image.new('RGB', (4, 4), (0, 0, 0))
+            draw = ImageDraw.Draw(img)
             bbox = draw.textbbox((0, 0), text, font=font)
-            tw = max(1, int(bbox[2] - bbox[0]))
-            th = max(1, int(bbox[3] - bbox[1]))
-            return tw, th, 0
+            return max(1, int(bbox[2] - bbox[0])), max(1, int(bbox[3] - bbox[1])), 0
         except Exception:
             pass
-    fs = _overlay_font_scale_from_px(font_px, thickness, font_scale)
-    (tw, th), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, fs, max(1, int(thickness)))
+    (tw, th), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, float(font_scale), max(1, int(thickness)))
     return int(tw), int(th), int(base)
 
 
-def _ellipsize_overlay_text(text: str, max_width: int, font_scale: float = 0.6, thickness: int = 1, font_px: int | None = None, font=None):
-    s = str(text or "")
-    if max_width is None or max_width <= 0:
-        return s
-    tw, _, _ = _measure_text_for_overlay(s, font_scale, thickness, font_px, font=font)
-    if tw <= max_width:
-        return s
-    ell = "…"
-    lo, hi = 0, len(s)
-    best = ell
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        cand = (s[:mid].rstrip() + ell) if mid < len(s) else s
-        cw, _, _ = _measure_text_for_overlay(cand, font_scale, thickness, font_px, font=font)
-        if cw <= max_width:
-            best = cand
-            lo = mid + 1
-        else:
-            hi = mid - 1
-    return best
+def _draw_overlay_text(img: np.ndarray, text: str, x: int, y: int, color_bgr, font_scale: float = 0.6, thickness: int = 1, font_px: int | None = None):
+    text = str(text or '')
+    if _overlay_has_unicode_text(text):
+        font = _get_overlay_font(font_px or int(round(font_scale * 28)) or 18)
+        if font is not None:
+            try:
+                rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                pil_img = Image.fromarray(rgb)
+                draw = ImageDraw.Draw(pil_img)
+                draw.text((int(x), int(y)), text, font=font, fill=(int(color_bgr[2]), int(color_bgr[1]), int(color_bgr[0])))
+                img[:, :, :] = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+                return
+            except Exception:
+                pass
+    cv2.putText(img, text, (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, float(font_scale), color_bgr, max(1, int(thickness)), cv2.LINE_AA)
 
 
-def _draw_overlay_label(img: np.ndarray, text: str, x: int, y: int, bg_bgr, fg_bgr, font_scale: float = 0.6, thickness: int = 2, padding: int = 3, font_px: int | None = None, max_width: int | None = None):
-    h, w = img.shape[:2]
-    x = max(0, int(x))
-    y = max(0, int(y))
-    thickness = max(1, int(thickness))
-    pad = max(1, int(padding))
-    use_pil = bool(_PIL_OK and _OVERLAY_FONT_PATH)
-    font = _get_overlay_font(font_px or 18) if use_pil else None
-    avail_w = None
-    if max_width is not None:
-        avail_w = max(1, int(max_width) - pad * 2)
-    elif x < w:
-        avail_w = max(1, (w - x) - pad * 2)
-    text = _ellipsize_overlay_text(str(text or ""), avail_w, font_scale=font_scale, thickness=thickness, font_px=font_px, font=font)
+def _safe_decode_qr_bytes(raw_bytes) -> str:
+    try:
+        return (bytes(raw_bytes).decode('utf-8', errors='ignore') or '').strip()
+    except Exception:
+        return ''
 
-    if use_pil and font is not None:
+
+def _debug_log_raw_qr_readout(raw_bytes, cam_id: str, zone_name: str, src: str):
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    try:
+        raw = bytes(raw_bytes or b'')
+    except Exception:
+        raw = b''
+    logger.debug('QR raw readout cam=%s zone=%s src=%s bytes=%s hex=%s utf8_ignore=%r utf8_replace=%r', cam_id, zone_name, src, len(raw), raw.hex(), raw.decode('utf-8', errors='ignore'), raw.decode('utf-8', errors='replace'))
+
+
+def _quad_crop_with_border(gray_img: np.ndarray, quad_pts, border_px: int = 16):
+    try:
+        pts = np.array(quad_pts, dtype=np.float32).reshape(-1, 2)
+        if pts.shape[0] != 4:
+            return None
+        h, w = gray_img.shape[:2]
+        x0 = max(0, int(np.floor(np.min(pts[:, 0]))))
+        y0 = max(0, int(np.floor(np.min(pts[:, 1]))))
+        x1 = min(w, int(np.ceil(np.max(pts[:, 0]))) + 1)
+        y1 = min(h, int(np.ceil(np.max(pts[:, 1]))) + 1)
+        if x1 <= x0 or y1 <= y0:
+            return None
+        crop = gray_img[y0:y1, x0:x1]
+        if crop is None or crop.size == 0:
+            return None
+        b = max(0, int(border_px))
+        if b > 0:
+            crop = cv2.copyMakeBorder(crop, b, b, b, b, cv2.BORDER_CONSTANT, value=255)
+        return crop
+    except Exception:
+        return None
+
+
+def _reconcile_payload_with_opencv(zbar_payload: str, gray_variant: np.ndarray, quad_pts, cam_id: str, zone_name: str, src: str = 'zbar'):
+    payload = str(zbar_payload or '').strip()
+    chosen_src = str(src or 'zbar')
+    if not opencv_subprocess_fallback:
+        return payload, chosen_src
+    attempts = [gray_variant]
+    quad_crop = _quad_crop_with_border(gray_variant, quad_pts, border_px=max(12, int(cutout_border_min_px)))
+    if quad_crop is not None:
+        attempts.append(quad_crop)
+    for img in attempts:
+        out = _opencv_decode_subprocess(img)
+        op_payload = str((out or {}).get('payload') or '').strip()
+        if op_payload:
+            if op_payload != payload:
+                logger.warning('QR decoder mismatch cam=%s zone=%s src=%s zbar=%r opencv=%r choosing=opencv', cam_id, zone_name, src, payload, op_payload)
+            return op_payload, f'{chosen_src}+opencv'
+    return payload, chosen_src
+
+
+def _payload_has_cjk(text: str) -> bool:
+    s = str(text or '')
+    return any('一' <= ch <= '鿿' for ch in s)
+
+
+def _canonicalize_zone_payload_variants(detections):
+    dets = _dedupe_zone_detections(detections)
+    if len(dets) <= 1:
+        return dets
+    groups = {}
+    for det in dets:
+        centroid = det.get('centroid') or [0, 0]
         try:
-            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            pil_img = Image.fromarray(rgb)
-            draw = ImageDraw.Draw(pil_img)
-            bbox = draw.textbbox((0, 0), text, font=font)
-            tw = max(1, int(bbox[2] - bbox[0]))
-            th = max(1, int(bbox[3] - bbox[1]))
-            x1 = max(0, min(w - 1, x))
-            y1 = max(0, min(h - 1, y))
-            x2 = max(x1, min(w - 1, x1 + tw + pad * 2))
-            y2 = max(y1, min(h - 1, y1 + th + pad * 2))
-            draw.rectangle([x1, y1, x2, y2], fill=(int(bg_bgr[2]), int(bg_bgr[1]), int(bg_bgr[0])))
-            draw.text((x1 + pad, y1 + pad - int(bbox[1])), text, font=font, fill=(int(fg_bgr[2]), int(fg_bgr[1]), int(fg_bgr[0])))
-            img[:, :] = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-            return x1, y1, x2, y2
+            cx = int(round(float(centroid[0]) / 12.0))
         except Exception:
-            pass
+            cx = 0
+        try:
+            cy = int(round(float(centroid[1]) / 12.0))
+        except Exception:
+            cy = 0
+        groups.setdefault((cx, cy), []).append(det)
 
-    fs = _overlay_font_scale_from_px(font_px, thickness, font_scale)
-    (tw, th), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, fs, thickness)
-    x1 = max(0, min(w - 1, x))
-    y1 = max(0, min(h - 1, y))
-    x2 = max(x1, min(w - 1, x1 + tw + pad * 2))
-    y2 = max(y1, min(h - 1, y1 + th + base + pad * 2))
-    cv2.rectangle(img, (x1, y1), (x2, y2), bg_bgr, -1)
-    cv2.putText(img, text, (x1 + pad, y1 + th + pad), cv2.FONT_HERSHEY_SIMPLEX, fs, fg_bgr, thickness, cv2.LINE_AA)
-    return x1, y1, x2, y2
+    def _rank(det):
+        payload = str(det.get('payload') or '').strip()
+        src = str((det.get('diag') or {}).get('src') or '')
+        suspicious = _payload_has_cjk(payload)
+        return (1 if 'opencv' in src else 0, 0 if suspicious else 1, len(payload), float(det.get('score') or 0.0))
 
-
-def _safe_decode_qr_bytes(raw) -> str:
-    if raw is None:
-        return ""
-    try:
-        if isinstance(raw, str):
-            return raw.strip()
-        return bytes(raw).decode("utf-8", errors="ignore").strip()
-    except Exception:
-        return ""
-
-
-def _debug_log_raw_qr_readout(raw, cam_id: str, zone_name: str, src: str):
-    if (not logger.isEnabledFor(logging.DEBUG)) or raw is None:
-        return
-    try:
-        raw_bytes = bytes(raw)
-    except Exception:
-        return
-    try:
-        utf8_ignore = raw_bytes.decode("utf-8", errors="ignore")
-    except Exception:
-        utf8_ignore = ""
-    try:
-        utf8_replace = raw_bytes.decode("utf-8", errors="replace")
-    except Exception:
-        utf8_replace = ""
-    logger.debug(
-        "QR raw readout cam=%s zone=%s src=%s bytes=%s hex=%s utf8_ignore=%r utf8_replace=%r",
-        cam_id,
-        zone_name,
-        src,
-        len(raw_bytes),
-        raw_bytes.hex(),
-        utf8_ignore,
-        utf8_replace,
-    )
-
-
-def _contains_cjk(text: str) -> bool:
-    for ch in str(text or ""):
-        cp = ord(ch)
-        if (
-            0x3400 <= cp <= 0x4DBF or
-            0x4E00 <= cp <= 0x9FFF or
-            0xF900 <= cp <= 0xFAFF or
-            0x20000 <= cp <= 0x2A6DF or
-            0x2A700 <= cp <= 0x2B73F or
-            0x2B740 <= cp <= 0x2B81F or
-            0x2B820 <= cp <= 0x2CEAF or
-            0x2CEB0 <= cp <= 0x2EBEF
-        ):
-            return True
-    return False
-
-
-def _payload_looks_suspicious(payload: str) -> bool:
-    text = str(payload or "").strip()
-    if not text:
-        return False
-    if "�" in text or "?" in text:
-        return True
-    if _contains_cjk(text):
-        return True
-    return False
+    out = []
+    for items in groups.values():
+        best = sorted(items, key=_rank, reverse=True)[0]
+        out.append(best)
+    return sorted(out, key=_zone_detection_sort_key)
 
 # ------------------------------------------------------------
 # Stream info
@@ -2004,242 +1959,6 @@ def _opencv_decode_subprocess(gray_img: np.ndarray):
     except Exception:
         return None
 
-
-def _order_quad_points_float(pts):
-    try:
-        arr = np.array(pts, dtype=np.float32).reshape(-1, 2)
-        if arr.shape[0] != 4:
-            return None
-        center = np.mean(arr, axis=0)
-        angles = np.arctan2(arr[:, 1] - center[1], arr[:, 0] - center[0])
-        order = np.argsort(angles)
-        arr = arr[order]
-        start_idx = int(np.argmin(np.sum(arr, axis=1)))
-        arr = np.roll(arr, -start_idx, axis=0)
-        return arr.astype(np.float32)
-    except Exception:
-        return None
-
-
-def _warp_quad_for_opencv(gray_variant: np.ndarray, quad_pts, border_px: int = 20):
-    try:
-        if gray_variant is None or gray_variant.size == 0:
-            return None
-        src = _order_quad_points_float(quad_pts)
-        if src is None:
-            return None
-        side_top = float(np.linalg.norm(src[1] - src[0]))
-        side_right = float(np.linalg.norm(src[2] - src[1]))
-        side_bottom = float(np.linalg.norm(src[2] - src[3]))
-        side_left = float(np.linalg.norm(src[3] - src[0]))
-        side = int(round(max(side_top, side_right, side_bottom, side_left)))
-        side = max(24, min(2048, side))
-        border = max(8, int(border_px))
-        out_size = side + (2 * border)
-        dst = np.array([
-            [border, border],
-            [border + side - 1, border],
-            [border + side - 1, border + side - 1],
-            [border, border + side - 1],
-        ], dtype=np.float32)
-        M = cv2.getPerspectiveTransform(src, dst)
-        warped = cv2.warpPerspective(
-            np.ascontiguousarray(gray_variant),
-            M,
-            (int(out_size), int(out_size)),
-            flags=cv2.INTER_CUBIC,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=255,
-        )
-        return warped
-    except Exception:
-        return None
-
-
-def _crop_quad_for_opencv(gray_variant: np.ndarray, quad_pts, border_frac: float = 0.20, border_min_px: int = 16):
-    try:
-        if gray_variant is None or gray_variant.size == 0:
-            return None
-        pts = np.array(quad_pts, dtype=np.float32).reshape(-1, 2)
-        if pts.shape[0] != 4:
-            return None
-        g = np.ascontiguousarray(gray_variant)
-        h, w = g.shape[:2]
-        minx = max(0, int(np.floor(np.min(pts[:, 0]))))
-        miny = max(0, int(np.floor(np.min(pts[:, 1]))))
-        maxx = min(w - 1, int(np.ceil(np.max(pts[:, 0]))))
-        maxy = min(h - 1, int(np.ceil(np.max(pts[:, 1]))))
-        if maxx <= minx or maxy <= miny:
-            return None
-        crop = g[miny:maxy + 1, minx:maxx + 1].copy()
-        if crop.size == 0:
-            return None
-        pts_local = pts.copy()
-        pts_local[:, 0] -= float(minx)
-        pts_local[:, 1] -= float(miny)
-        mask = np.zeros(crop.shape[:2], dtype=np.uint8)
-        cv2.fillPoly(mask, [pts_local.astype(np.int32)], 255)
-        crop[mask == 0] = 255
-        border = max(int(border_min_px), int(round(min(crop.shape[:2]) * float(border_frac))))
-        crop = cv2.copyMakeBorder(crop, border, border, border, border, cv2.BORDER_CONSTANT, value=255)
-        return crop
-    except Exception:
-        return None
-
-
-def _opencv_confirm_variants(gray_variant: np.ndarray, quad_pts, attempts_max: int = 8, extra_imgs=None):
-    attempts = []
-    seen = set()
-
-    def _maybe_add(tag, img):
-        if img is None or getattr(img, 'size', 0) == 0:
-            return
-        key = (int(img.shape[1]), int(img.shape[0]), str(tag))
-        if key in seen:
-            return
-        seen.add(key)
-        attempts.append((str(tag), np.ascontiguousarray(img)))
-
-    def _add_with_border(tag_prefix, img):
-        if img is None or getattr(img, 'size', 0) == 0:
-            return
-        _maybe_add(tag_prefix, img)
-        try:
-            bh, bw = img.shape[:2]
-            border = max(12, int(round(min(bh, bw) * 0.10)))
-            border = min(border, 160)
-            if border > 0:
-                bordered = cv2.copyMakeBorder(img, border, border, border, border, cv2.BORDER_CONSTANT, value=255)
-                _maybe_add(f'{tag_prefix}_border', bordered)
-        except Exception:
-            pass
-        try:
-            crop = _crop_quad_for_opencv(img, quad_pts)
-            _maybe_add(f'{tag_prefix}_crop', crop)
-        except Exception:
-            pass
-        try:
-            warp = _warp_quad_for_opencv(img, quad_pts)
-            _maybe_add(f'{tag_prefix}_warp', warp)
-        except Exception:
-            pass
-
-    base_imgs = []
-    if gray_variant is not None and getattr(gray_variant, 'size', 0) > 0:
-        base_imgs.append(('full', gray_variant))
-    for idx, img in enumerate(extra_imgs or []):
-        if img is None or getattr(img, 'size', 0) == 0:
-            continue
-        tag = 'aux' if idx == 0 else f'aux{idx + 1}'
-        base_imgs.append((tag, img))
-
-    for tag_prefix, img in base_imgs:
-        _add_with_border(tag_prefix, img)
-
-    for base_tag, base_img in list(attempts):
-        bh, bw = base_img.shape[:2]
-        for scale in (2.0, 3.0):
-            nw = max(1, min(2400, int(round(bw * scale))))
-            nh = max(1, min(2400, int(round(bh * scale))))
-            if nw == bw and nh == bh:
-                continue
-            _maybe_add(f'{base_tag}_{scale:.1f}x', cv2.resize(base_img, (nw, nh), interpolation=cv2.INTER_CUBIC))
-        try:
-            blur = cv2.GaussianBlur(base_img, (0, 0), 1.0)
-            sharp = cv2.addWeighted(base_img, 1.8, blur, -0.8, 0)
-            _maybe_add(f'{base_tag}_sharp', sharp)
-        except Exception:
-            pass
-        try:
-            _, otsu = cv2.threshold(base_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            _maybe_add(f'{base_tag}_otsu', otsu)
-        except Exception:
-            pass
-
-    tried = []
-    last = None
-    for tag, img in attempts[:max(1, int(attempts_max))]:
-        out = _opencv_decode_subprocess(img)
-        payload = str((out or {}).get('payload') or '').strip()
-        last = {
-            'tag': tag,
-            'shape': [int(img.shape[0]), int(img.shape[1])],
-            'ok': bool((out or {}).get('ok')),
-            'payload': payload,
-            'method': (out or {}).get('method'),
-        }
-        tried.append(last)
-        if payload:
-            return {
-                'payload': payload,
-                'out': out,
-                'tag': tag,
-                'shape': [int(img.shape[0]), int(img.shape[1])],
-                'attempts': tried,
-            }
-    return {
-        'payload': '',
-        'out': None,
-        'tag': (last or {}).get('tag'),
-        'shape': (last or {}).get('shape'),
-        'attempts': tried,
-    }
-
-
-def _log_opencv_confirmation(cam_id: str, zone_name: str, src: str, zbar_payload: str, suspect: bool, confirm: dict, decision: str):
-    if not logger.isEnabledFor(logging.DEBUG):
-        return
-    logger.debug(
-        'QR confirm cam=%s zone=%s src=%s suspect=%s zbar=%r opencv_status=%s opencv_payload=%r decision=%s attempt=%s shape=%s',
-        cam_id,
-        zone_name,
-        src,
-        bool(suspect),
-        zbar_payload,
-        'ok' if str(confirm.get('payload') or '').strip() else 'empty',
-        str(confirm.get('payload') or '').strip(),
-        decision,
-        confirm.get('tag'),
-        confirm.get('shape'),
-    )
-
-
-def _reconcile_payload_with_opencv(zbar_payload: str, gray_variant: np.ndarray, quad_pts, cam_id: str, zone_name: str, src: str = 'zbar', extra_imgs=None):
-    final_payload = str(zbar_payload or '').strip()
-    chosen_src = str(src or 'zbar')
-    suspect = _payload_looks_suspicious(final_payload)
-    if not opencv_subprocess_fallback:
-        return {'payload': final_payload, 'src': chosen_src, 'mismatch': False, 'opencv': None, 'decision': 'zbar', 'suspect': suspect}
-
-    confirm = _opencv_confirm_variants(gray_variant, quad_pts, attempts_max=max(6, min(16, int(opencv_fallback_attempts or 8) + 4)), extra_imgs=extra_imgs)
-    opencv_payload = str(confirm.get('payload') or '').strip()
-    mismatch = bool(opencv_payload and final_payload and opencv_payload != final_payload)
-
-    if opencv_payload:
-        if mismatch:
-            logger.warning(
-                'QR decoder mismatch cam=%s zone=%s src=%s zbar=%r opencv=%r choosing=opencv',
-                cam_id,
-                zone_name,
-                src,
-                final_payload,
-                opencv_payload,
-            )
-            decision = 'opencv_mismatch'
-            chosen_src = f'{chosen_src}+opencv'
-        else:
-            decision = 'opencv_agree'
-            chosen_src = f'{chosen_src}+opencv_agree'
-        final_payload = opencv_payload
-        _log_opencv_confirmation(cam_id, zone_name, src, zbar_payload, suspect, confirm, decision)
-        return {'payload': final_payload, 'src': chosen_src, 'mismatch': mismatch, 'opencv': confirm, 'decision': decision, 'suspect': suspect}
-
-    decision = 'zbar_fallback'
-    if suspect:
-        decision = 'zbar_suspect_fallback'
-    _log_opencv_confirmation(cam_id, zone_name, src, zbar_payload, suspect, confirm, decision)
-    return {'payload': final_payload, 'src': chosen_src, 'mismatch': False, 'opencv': confirm, 'decision': decision, 'suspect': suspect}
-
 # ------------------------------------------------------------
 # Scaling helper
 # ------------------------------------------------------------
@@ -2421,7 +2140,7 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
                 best_area = -1.0
                 best_quad = None
                 best_payload = None
-                best_src = "zbar"
+                best_payload_src = "zbar"
                 for r in res:
                     raw_bytes = getattr(r, "data", b"") or b""
                     _debug_log_raw_qr_readout(raw_bytes, str(cam_id), str(zname), "zbar")
@@ -2431,17 +2150,13 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
                     quad = _zbar_poly_to_quad(r.polygon)
                     if quad is None:
                         continue
-                    recon = _reconcile_payload_with_opencv(payload, roi_s, quad, str(cam_id), str(zname), src="zbar", extra_imgs=[v, roi_decode])
-                    payload = str(recon.get("payload") or "").strip()
-                    if not payload:
-                        continue
+                    payload, payload_src = _reconcile_payload_with_opencv(payload, v, quad, str(cam_id), str(zname), src="zbar")
                     area = float(abs(cv2.contourArea(quad.astype(np.float32))))
                     if area > best_area:
                         best_area = area
                         best_quad = quad
                         best_payload = payload
-                        best_src = str(recon.get("src") or "zbar")
-                        dbg["zbar"]["last_reconcile"] = recon
+                        best_payload_src = payload_src
 
                 if best_quad is None or not best_payload:
                     continue
@@ -2474,7 +2189,7 @@ def _scan_zone_single(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_
                     "centroid": [cx, cy],
                     "zone": zname,
                     "score": score,
-                    "diag": {"edge_px": edge_px, "lap_var": lap, "contrast": con, "src": best_src, "zone_ov": ov},
+                    "diag": {"edge_px": edge_px, "lap_var": lap, "contrast": con, "src": best_payload_src, "zone_ov": ov},
                     "decoded": True,
                 }
 
@@ -2607,57 +2322,6 @@ def _zone_detection_sort_key(det: dict):
     return (_natural_sort_key(payload), cy, cx)
 
 
-def _decoded_variant_priority(det: dict):
-    det = det if isinstance(det, dict) else {}
-    payload = str(det.get("payload") or "").strip()
-    diag = det.get("diag") if isinstance(det.get("diag"), dict) else {}
-    src = str(diag.get("src") or det.get("src") or "")
-    suspect = _payload_looks_suspicious(payload)
-    has_opencv = ("opencv" in src)
-    try:
-        score = float(det.get("score") or 0.0)
-    except Exception:
-        score = 0.0
-    ascii_ratio = 0.0
-    if payload:
-        try:
-            ascii_ratio = sum(1 for ch in payload if ord(ch) < 128) / float(len(payload))
-        except Exception:
-            ascii_ratio = 0.0
-    return (
-        1 if has_opencv else 0,
-        0 if suspect else 1,
-        0 if _contains_cjk(payload) else 1,
-        ascii_ratio,
-        score,
-        len(payload),
-    )
-
-
-def _canonicalize_zone_decoded_detections(detections):
-    dets = [d for d in _dedupe_zone_detections(detections or []) if isinstance(d, dict)]
-    if len(dets) <= 1:
-        return dets
-    grouped = {}
-    for det in dets:
-        centroid = det.get("centroid") or [0, 0]
-        try:
-            cx = int(round(float(centroid[0]) / 8.0))
-        except Exception:
-            cx = 0
-        try:
-            cy = int(round(float(centroid[1]) / 8.0))
-        except Exception:
-            cy = 0
-        grouped.setdefault((cx, cy), []).append(det)
-    out = []
-    for key in sorted(grouped.keys()):
-        items = grouped[key]
-        winner = sorted(items, key=lambda d: (_decoded_variant_priority(d), _zone_detection_sort_key(d)), reverse=True)[0]
-        out.append(winner)
-    return sorted(out, key=_zone_detection_sort_key)
-
-
 def _dedupe_zone_detections(detections):
     best = {}
     for det in (detections or []):
@@ -2729,10 +2393,7 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
                     quad = _zbar_poly_to_quad(r.polygon)
                     if quad is None:
                         continue
-                    recon = _reconcile_payload_with_opencv(payload, roi_s, quad, str(cam_id), str(zname), src="zbar_multi", extra_imgs=[v, roi])
-                    payload = str(recon.get("payload") or "").strip()
-                    if not payload:
-                        continue
+                    payload, payload_src = _reconcile_payload_with_opencv(payload, v, quad, str(cam_id), str(zname), src="zbar_multi")
                     quad = quad.astype(np.float32)
                     quad[:, 0] = np.clip(quad[:, 0], 0, rw - 1)
                     quad[:, 1] = np.clip(quad[:, 1], 0, rh - 1)
@@ -2759,7 +2420,7 @@ def _scan_zone_multi_decoded(frame_gray: np.ndarray, cam_id: str, zname: str, bo
                             "edge_px": edge_px,
                             "lap_var": lap,
                             "contrast": con,
-                            "src": str(recon.get("src") or "zbar_multi"),
+                            "src": payload_src,
                             "zone_ov": ov,
                             "scale": scale_tag,
                             "pre": pre_name,
@@ -2867,13 +2528,11 @@ def _scan_zone_worker_task(task: dict):
 
 
 def scan_zone(frame_gray: np.ndarray, cam_id: str, zname: str, box, pad_px: int, scales: list[float]):
-    dec, miss = _scan_zone_single(frame_gray, cam_id, zname, box, pad_px, scales)
-    if dec is not None:
-        return [dec], None
     multi = _scan_zone_multi_decoded(frame_gray, cam_id, zname, box, pad_px, scales)
     if multi:
         return multi, None
-    return [], miss
+    dec, miss = _scan_zone_single(frame_gray, cam_id, zname, box, pad_px, scales)
+    return ([dec] if dec is not None else []), miss
 
 # ------------------------------------------------------------
 # Detection entrypoint
@@ -2925,7 +2584,7 @@ def compute_zone_status(zones_dict: dict, detections: list):
                 candidate_by_zone[z] = d
 
     for zname in zones_dict.keys():
-        dets = _canonicalize_zone_decoded_detections(decoded_by_zone.get(zname) or [])
+        dets = _canonicalize_zone_payload_variants(decoded_by_zone.get(zname) or [])
         if dets:
             best = sorted(dets, key=lambda d: (float(d.get("score") or 0.0), _zone_detection_sort_key(d)), reverse=True)[0]
             status[zname] = {"kind": "decoded", "det": best, "dets": dets}
@@ -3133,10 +2792,11 @@ def draw_overlay(frame, detections, zones_dict):
 
             x1, y1, x2, y2 = zone_bbox
             zl = _safe_label(str(zname), 32)
-            _, _, zbx2, zby2 = _draw_overlay_label(
-                out, zl, x1, y1, ORANGE, (255, 255, 255),
-                font_scale=0.55, thickness=2, padding=pad, font_px=overlay_zone_label_font_px
-            )
+            tw, th, base = _measure_overlay_text(zl, font_scale=0.55, thickness=2, font_px=overlay_zone_label_font_px)
+            zbx2 = min(w - 1, x1 + tw + pad * 2)
+            zby2 = min(h - 1, y1 + th + base + pad * 2)
+            cv2.rectangle(out, (x1, y1), (zbx2, zby2), ORANGE, -1)
+            _draw_overlay_text(out, zl, x1 + pad, y1 + th + pad, (255, 255, 255), font_scale=0.55, thickness=2, font_px=overlay_zone_label_font_px)
 
             st = zone_status.get(zname, {"kind": "none", "det": None, "dets": []})
             det = st.get("det")
@@ -3175,16 +2835,26 @@ def draw_overlay(frame, detections, zones_dict):
                 bg, fg = MISSBG, (255, 255, 255)
 
             text = _safe_label(text, 64)
+            stw, sth, sbase = _measure_overlay_text(text, font_scale=0.5, thickness=1, font_px=overlay_zone_status_font_px)
             sy1 = min(h - 1, zby2 + 2)
-            _draw_overlay_label(
-                out, text, x1, sy1, bg, fg,
-                font_scale=0.5, thickness=1, padding=pad, font_px=overlay_zone_status_font_px
-            )
+            sy2 = min(h - 1, sy1 + sth + sbase + pad * 2)
+            sx2 = min(w - 1, x1 + stw + pad * 2)
+            cv2.rectangle(out, (x1, sy1), (sx2, sy2), bg, -1)
+            _draw_overlay_text(out, text, x1 + pad, sy1 + sth + pad, fg, font_scale=0.5, thickness=1, font_px=overlay_zone_status_font_px)
 
-    decoded_overlay = _dedupe_zone_detections([d for d in (detections or []) if isinstance(d, dict) and bool(d.get("decoded", False))])
-    unresolved_overlay = [d for d in (detections or []) if isinstance(d, dict) and (not bool(d.get("decoded", False)))]
+    overlay_detections = []
+    if isinstance(zone_status, dict) and zone_status:
+        for _zname, _st in zone_status.items():
+            if not isinstance(_st, dict):
+                continue
+            if _st.get("kind") == "decoded":
+                overlay_detections.extend(_st.get("dets") or ([_st.get("det")] if _st.get("det") else []))
+            elif _st.get("kind") == "candidate" and _st.get("det") is not None:
+                overlay_detections.append(_st.get("det"))
+    else:
+        overlay_detections = list(detections or [])
 
-    for d in decoded_overlay + unresolved_overlay:
+    for d in overlay_detections:
         pts_list = d.get("points")
         if not pts_list or d.get("no_quad"):
             continue
@@ -3214,13 +2884,13 @@ def draw_overlay(frame, detections, zones_dict):
         label = _safe_label(label, 96)
 
         x, y = int(pts[0, 0, 0]), int(pts[0, 0, 1])
-        label_w, label_h, base = _measure_text_for_overlay(label, font_scale=0.6, thickness=2, font_px=overlay_payload_font_px)
+        tw, th, base = _measure_overlay_text(label, font_scale=0.6, thickness=2, font_px=overlay_payload_font_px)
         x1 = max(0, x)
-        y1 = max(0, y - label_h - base - pad * 2)
-        _draw_overlay_label(
-            out, label, x1, y1, color, (255, 255, 255),
-            font_scale=0.6, thickness=2, padding=pad, font_px=overlay_payload_font_px, max_width=max(1, w - x1)
-        )
+        y1 = max(0, y - th - base - pad * 2)
+        x2 = min(w - 1, x + tw + pad * 2)
+        y2 = min(h - 1, y)
+        cv2.rectangle(out, (x1, y1), (x2, y2), color, -1)
+        _draw_overlay_text(out, label, x + pad, y - pad, (255, 255, 255), font_scale=0.6, thickness=2, font_px=overlay_payload_font_px)
 
     _draw_margin_helper_box(out)
     _draw_alignment_helper_lines(out)
@@ -3853,26 +3523,8 @@ class CameraWorker(threading.Thread):
             return max(1, min(zone_count, max(1, _CPU_COUNT - 1), 4))
         return max(1, min(zone_count, requested))
 
-    def _reset_zone_pool(self, reason: str | None = None):
-        pool = self.zone_pool
-        self.zone_pool = None
-        if pool is not None:
-            try:
-                pool.shutdown(wait=False, cancel_futures=True)
-            except TypeError:
-                try:
-                    pool.shutdown(wait=False)
-                except Exception:
-                    pass
-            except Exception:
-                pass
-        if reason:
-            logger.error("Camera %s: zone worker pool reset after failure: %s", self.cam_id, reason)
-
     def _ensure_zone_pool(self):
-        if self.zone_worker_processes <= 1:
-            return
-        if self.zone_pool is not None:
+        if self.zone_pool is not None or self.zone_worker_processes <= 1:
             return
         if _ZONE_MP_CTX is None:
             logger.warning("Camera %s: multiprocessing context unavailable; falling back to serial zone scans", self.cam_id)
@@ -3885,6 +3537,15 @@ class CameraWorker(threading.Thread):
             logger.warning("Camera %s: failed to start zone worker pool (%s); falling back to serial scans", self.cam_id, e)
             self.zone_pool = None
             self.zone_worker_processes = 1
+
+    def _reset_zone_pool(self):
+        pool = self.zone_pool
+        self.zone_pool = None
+        if pool is not None:
+            try:
+                pool.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
 
     def _scan_zones(self, frame_gray: np.ndarray):
         zones_ok = isinstance(self.zones, dict) and bool(self.zones)
@@ -3936,53 +3597,38 @@ class CameraWorker(threading.Thread):
         if parallel_tasks and self.zone_pool is not None:
             future_to_zone = {}
             try:
-                future_to_zone = {self.zone_pool.submit(_scan_zone_worker_task, task): task["zone_name"] for task in parallel_tasks}
-            except BrokenProcessPool as e:
-                self._reset_zone_pool(f"submit:{e}")
                 for task in parallel_tasks:
-                    zname = task.get("zone_name")
-                    if zname not in serial_reasons:
+                    future_to_zone[self.zone_pool.submit(_scan_zone_worker_task, task)] = task["zone_name"]
+            except BrokenProcessPool as e:
+                logger.warning("Camera %s zone worker pool broke during submit (%s); falling back to serial for this cycle", self.cam_id, e)
+                self._reset_zone_pool()
+                for task in parallel_tasks:
+                    zname = task.get("zone_name") or 'zone'
+                    if zname not in serial_zone_names:
                         serial_zone_names.append(zname)
-                        serial_reasons[zname] = "pool_broken_submit"
-            if future_to_zone:
+                    serial_reasons[zname] = "broken_pool_submit"
+                future_to_zone = {}
+
+            for fut in as_completed(future_to_zone):
+                zname = future_to_zone[fut]
                 try:
-                    for fut in as_completed(future_to_zone):
-                        zname = future_to_zone[fut]
-                        try:
-                            res = fut.result()
-                            results_by_zone[zname] = {
-                                "decs": list(res.get("decs") or []),
-                                "miss": res.get("miss"),
-                            }
-                            zone_timings.append({"zone": zname, "elapsed_ms": float(res.get("elapsed_ms") or 0.0), "mode": "proc"})
-                        except BrokenProcessPool as e:
-                            self._reset_zone_pool(f"result:{e}")
-                            for pending_future, pending_zone in future_to_zone.items():
-                                try:
-                                    pending_future.cancel()
-                                except Exception:
-                                    pass
-                                if pending_zone in results_by_zone or pending_zone in serial_reasons:
-                                    continue
-                                serial_zone_names.append(pending_zone)
-                                serial_reasons[pending_zone] = "pool_broken_result"
-                            break
-                        except Exception:
-                            logger.exception("Camera %s zone worker failed for %s; falling back to serial scan", self.cam_id, zname)
-                            if zname not in serial_reasons:
-                                serial_zone_names.append(zname)
-                                serial_reasons[zname] = "worker_exception"
+                    res = fut.result()
+                    results_by_zone[zname] = {
+                        "decs": list(res.get("decs") or []),
+                        "miss": res.get("miss"),
+                    }
+                    zone_timings.append({"zone": zname, "elapsed_ms": float(res.get("elapsed_ms") or 0.0), "mode": "proc"})
                 except BrokenProcessPool as e:
-                    self._reset_zone_pool(f"iterate:{e}")
-                    for pending_future, pending_zone in future_to_zone.items():
-                        try:
-                            pending_future.cancel()
-                        except Exception:
-                            pass
-                        if pending_zone in results_by_zone or pending_zone in serial_reasons:
-                            continue
-                        serial_zone_names.append(pending_zone)
-                        serial_reasons[pending_zone] = "pool_broken_iterate"
+                    logger.warning("Camera %s zone worker pool broke while collecting results (%s); falling back to serial for remaining zones", self.cam_id, e)
+                    self._reset_zone_pool()
+                    if zname not in serial_zone_names:
+                        serial_zone_names.append(zname)
+                    serial_reasons[zname] = "broken_pool_result"
+                except Exception:
+                    logger.exception("Camera %s zone worker failed for %s; falling back to serial scan", self.cam_id, zname)
+                    if zname not in serial_zone_names:
+                        serial_zone_names.append(zname)
+                    serial_reasons[zname] = "worker_exception"
 
         if logger.isEnabledFor(logging.DEBUG) and serial_reasons:
             serial_summary = ", ".join(f"{z}={serial_reasons.get(z, 'serial')}" for z in ordered_zone_names if z in serial_reasons)
@@ -4209,7 +3855,7 @@ class CameraWorker(threading.Thread):
             time.sleep(self.interval_s)
 
 def main():
-    logger.info('QR Inventory %s starting (decoder_mode=dual_fast, suspect_reject=disabled, pillow=%s, overlay_font=%s)', APP_VERSION, 'yes' if _PIL_OK else 'no', _OVERLAY_FONT_PATH or 'opencv_only')
+    logger.info('QR Inventory %s starting (decoder_mode=dual_fast, pillow=%s, overlay_font=%s)', APP_VERSION, 'yes' if _PIL_OK else 'no', _OVERLAY_FONT_PATH or 'opencv_only')
     MQTT_MANAGER.start()
 
     threading.Thread(target=start_http_server, daemon=True).start()

@@ -20,6 +20,8 @@ RUN set -eux; \
       py3-opencv \
       py3-numpy \
       ffmpeg \
+      ttf-dejavu \
+      fontconfig \
       mesa-gl \
       glib \
       libsm \
@@ -27,7 +29,6 @@ RUN set -eux; \
       libxrender \
       libstdc++ \
       zbar \
-      ttf-dejavu \
       ; \
   elif command -v apt-get >/dev/null 2>&1; then \
     apt-get update; \
@@ -39,13 +40,14 @@ RUN set -eux; \
       python3-opencv \
       python3-numpy \
       ffmpeg \
+      fonts-dejavu-core \
+      fontconfig \
       libgl1 \
       libglib2.0-0 \
       libsm6 \
       libxext6 \
       libxrender1 \
       libzbar0 \
-      fonts-dejavu-core \
       ; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
