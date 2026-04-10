@@ -456,7 +456,7 @@ UI_STRINGS = {
         "language_label": "Sprache",
         "profile_settings_source": "Profile werden in den Add-on-Einstellungen definiert",
         "text_block_offset_x_label": "Textblock-Offset X",
-        "profile_edit_scope_help": "Das unten ausgewählte Etikettenprofil wird nur zum Bearbeiten dieses Profils verwendet. Gedruckt wird über einen Klick auf die Vorschau oben.",
+        "profile_edit_scope_help": "Das im eingeklappten Kopf ausgewählte Etikettenprofil wird nur zum Bearbeiten dieses Profils verwendet. Gedruckt wird über einen Klick auf die Vorschau oben.",
         "move_up_button": "Nach oben",
         "move_down_button": "Nach unten",
         "field_moved_message": "Feld '{field}' im Profil '{profile}' nach {direction} verschoben.",
@@ -721,15 +721,9 @@ HTML = """
               </div>
             </div>
 
+            <input form="label-form" id="profile_id" name="profile_id" type="hidden" value="{{ active_profile_id }}">
+
             <div class="row-compact">
-              <div>
-                <label for="profile_id">{{ ui.profile_select }}</label>
-                <select form="label-form" id="profile_id" name="profile_id">
-                  {% for profile in label_profiles %}
-                    <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
               <div>
                 <label>{{ ui.configured_printer }}</label>
                 <input value="{{ printer_target }}" disabled>
