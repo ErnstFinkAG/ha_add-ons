@@ -2,7 +2,7 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.2.16
+## What changed in v0.2.17
 
 This version moves QR selection into the configured fields list so the separate Inventory Label control section is no longer needed.
 

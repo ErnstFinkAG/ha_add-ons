@@ -1136,11 +1136,13 @@ HTML = """
           return;
         }
         if (input.type === "checkbox") {
-          input.addEventListener("click", () => {
-            applyPreviewUpdate();
-            const fieldId = input.getAttribute("data-field-id") || "";
-            if (fieldId && input.name === `print_${fieldId}`) persistFieldCheckbox(fieldId, "print_by_default", input.checked);
-            if (fieldId && input.name === "qr_field_ids") persistFieldCheckbox(fieldId, "always_use_for_qr", input.checked);
+          input.addEventListener("change", () => {
+            window.setTimeout(() => {
+              applyPreviewUpdate();
+              const fieldId = input.getAttribute("data-field-id") || "";
+              if (fieldId && input.name === `print_${fieldId}`) persistFieldCheckbox(fieldId, "print_by_default", input.checked);
+              if (fieldId && input.name === "qr_field_ids") persistFieldCheckbox(fieldId, "always_use_for_qr", input.checked);
+            }, 0);
           });
         } else {
           input.addEventListener("input", schedulePreviewUpdate);
