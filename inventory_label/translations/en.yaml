@@ -53,7 +53,7 @@ configuration:
         description: QR error correction level.
       printable_area_box_enabled:
         name: Printable area box
-        description: Print a rectangle inside the label edges and show it in red in the PNG preview.
+        description: Draw a box inside the label based on the label size and configured box margin.
       printable_area_box_margin_mm:
         name: Printable area box margin (mm)
-        description: Margin from the label edges used for the printable area box and QR placement.
+        description: Margin from each label edge used to calculate the printable area box.

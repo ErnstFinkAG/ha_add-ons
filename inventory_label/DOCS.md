@@ -2,14 +2,15 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.2.00
+## What changed in v0.2.01
 
-This version keeps preview content and the red printable-area preview box fixed, while actual printing still applies the configured print offsets.
+This version fixes printable-area-box rendering and placement.
 
-- added `printable_area_box_margin_mm` per label profile
-- the red printable-area preview box and the printed box now use the configured margin
-- QR placement is now constrained to the printable area box instead of touching the label edge
-- the profile summary shows the current printable-area box margin
+- the printable area box is now calculated automatically from the full label size and `printable_area_box_margin_mm`
+- a 305 mm label with 5 mm margin now yields a 295 mm box height
+- preview ignores `print_offset_x_mm` and `print_offset_y_mm`
+- actual print still applies X/Y print offsets
+- QR and footer placement can use the printable-area box when it is enabled
 
 ## Profile and field management
 
@@ -37,6 +38,10 @@ label_profiles:
   - id: standard
     name: Standard
     printer_host: ""
+    printer_port: 9100
+    printer_dpi: 203
+    print_offset_x_mm: 0
+    print_offset_y_mm: 0
     label_width_mm: 170
     label_height_mm: 305
     qr_size_mm: 170
@@ -45,12 +50,16 @@ label_profiles:
     print_rotation_degrees: 0
     qr_quiet_zone_modules: 3
     qr_error_correction: M
-    printable_area_box_enabled: false
-    printable_area_box_margin_mm: 5.0
+    printable_area_box_enabled: true
+    printable_area_box_margin_mm: 5
 
   - id: rotated
     name: Rotated
     printer_host: ""
+    printer_port: 9100
+    printer_dpi: 203
+    print_offset_x_mm: 0
+    print_offset_y_mm: 0
     label_width_mm: 170
     label_height_mm: 305
     qr_size_mm: 160
@@ -59,8 +68,8 @@ label_profiles:
     print_rotation_degrees: 90
     qr_quiet_zone_modules: 4
     qr_error_correction: M
-    printable_area_box_enabled: false
-    printable_area_box_margin_mm: 5.0
+    printable_area_box_enabled: true
+    printable_area_box_margin_mm: 5
 ```
 
 ## Field management in the web UI
@@ -101,7 +110,7 @@ Field settings supported in the UI:
 
 ## Web UI
 
-Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If enabled in the label profile, the add-on can also print a 5 mm inset printable-area box and show the same box in red in the PNG preview. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, field inputs can offer suggested values while still accepting free text, and fields can be marked as footer text so their values stay anchored at the bottom of the label. Footer fields can also have their own additional bottom margin in mm. Fields can now also be configured as logo fields with uploaded PNG choices that are shown as selectable checkboxes in the label form. Multiple logos can be selected and rendered on one label. In the field editor, each uploaded logo can also be marked as selected by default so it appears in preview immediately.
+Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, field inputs can offer suggested values while still accepting free text, and fields can be marked as footer text so their values stay anchored at the bottom of the label. Footer fields can also have their own additional bottom margin in mm. Fields can now also be configured as logo fields with uploaded PNG choices that are shown as selectable checkboxes in the label form. Multiple logos can be selected and rendered on one label. In the field editor, each uploaded logo can also be marked as selected by default so it appears in preview immediately.
 
 In the add-on web UI you can:
 

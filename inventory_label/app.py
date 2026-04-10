@@ -58,7 +58,7 @@ DEFAULT_LABEL_PROFILES = [
         "id": "standard",
         "name": "Standard",
         "printer_host": "",
-        "printer_port": 9100,
+        "printer_port": None,
         "printer_dpi": DEFAULT_PRINTER_DPI,
         "print_offset_x_mm": 0.0,
         "print_offset_y_mm": 0.0,
@@ -253,7 +253,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at the configured printer DPI. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone. If enabled in the profile, a second red rectangle marks the printable area with a 5 mm margin to the label edges.",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at the configured printer DPI. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
         "fields_heading": "Configured fields",
         "print_field": "Print",
         "required": "Required",
@@ -332,8 +332,6 @@ UI_STRINGS = {
         "profile_not_found": "Label profile not found.",
         "legacy_migrated": "Legacy label_profiles_yaml was detected and migrated. Profiles now live in add-on settings, fields live in the web UI store.",
         "language_label": "Language",
-        "printable_area_box_label": "Printable area box",
-        "printable_area_box_margin_label": "Printable area box margin",
         "profile_settings_source": "Profiles are defined in add-on settings",
     },
     "de": {
@@ -355,7 +353,7 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit der konfigurierten Drucker-DPI exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone. Falls im Profil aktiviert, markiert ein zweiter roter Rahmen zusätzlich den Druckbereich mit 5 mm Abstand zu den Labelkanten.",
+        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit der konfigurierten Drucker-DPI exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
         "required": "Pflichtfeld",
@@ -434,8 +432,6 @@ UI_STRINGS = {
         "profile_not_found": "Etikettenprofil nicht gefunden.",
         "legacy_migrated": "Altes label_profiles_yaml erkannt und migriert. Profile liegen jetzt in den Add-on-Einstellungen, Felder im Web-UI-Speicher.",
         "language_label": "Sprache",
-        "printable_area_box_label": "Druckbereich-Rahmen",
-        "printable_area_box_margin_label": "Druckbereich-Rahmen Abstand",
         "profile_settings_source": "Profile werden in den Add-on-Einstellungen definiert",
     },
 }
@@ -677,8 +673,6 @@ HTML = """
             <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
             <li><strong>{{ ui.effective_print_width }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
             <li><strong>{{ ui.language_label }}:</strong> <code>{{ ui.lang }}</code></li>
-            <li><strong>{{ ui.printable_area_box_label }}:</strong> <code>{{ "on" if profile.get("printable_area_box_enabled") else "off" }}</code></li>
-            <li><strong>{{ ui.printable_area_box_margin_label }}:</strong> <code>{{ profile.get("printable_area_box_margin_mm", 5.0) }} mm</code></li>
           </ul>
           {% if width_warning %}
           <p class="muted">{{ ui.width_warning }}</p>
@@ -2143,24 +2137,43 @@ def printable_area_box_margin_mm(profile: Dict | None = None) -> float:
     return normalize_float((profile or {}).get("printable_area_box_margin_mm"), DEFAULT_PRINTABLE_AREA_BOX_MARGIN_MM, 0.0, 100.0)
 
 
-def get_printable_area_rect(width: int, height: int, profile: Dict | None = None, apply_offsets: bool = False) -> Tuple[int, int, int, int]:
+def oriented_label_size_mm(profile: Dict | None = None, rotation_degrees: int = 0) -> Tuple[float, float]:
+    width_mm = normalize_float((profile or {}).get("label_width_mm"), 170.0, 1.0, 5000.0)
+    height_mm = normalize_float((profile or {}).get("label_height_mm"), 305.0, 1.0, 5000.0)
+    if rotation_degrees in (90, 270):
+        return height_mm, width_mm
+    return width_mm, height_mm
+
+
+def get_printable_area_rect(
+    width: int,
+    height: int,
+    profile: Dict | None = None,
+    apply_offsets: bool = False,
+    rotation_degrees: int = 0,
+) -> Tuple[int, int, int, int]:
     width = max(1, int(width))
     height = max(1, int(height))
     if not normalize_bool((profile or {}).get("printable_area_box_enabled"), False):
         return 0, 0, width - 1, height - 1
 
-    inset_dots = max(0, mm_to_dot_offset(printable_area_box_margin_mm(profile), profile))
-    max_horizontal_inset = max(0, (width - 1) // 2)
-    max_vertical_inset = max(0, (height - 1) // 2)
-    inset_x = min(inset_dots, max_horizontal_inset)
-    inset_y = min(inset_dots, max_vertical_inset)
+    oriented_width_mm, oriented_height_mm = oriented_label_size_mm(profile, rotation_degrees)
+    margin_mm = printable_area_box_margin_mm(profile)
+    box_width_mm = max(0.0, oriented_width_mm - (2.0 * margin_mm))
+    box_height_mm = max(0.0, oriented_height_mm - (2.0 * margin_mm))
 
-    # Anchor the printable-area box directly to the physical label edges so the
-    # visible box size is exactly: label_size - (2 * configured_margin).
-    left = inset_x
-    top = inset_y
-    right = max(left, width - inset_x - 1)
-    bottom = max(top, height - inset_y - 1)
+    scale_x = width / max(oriented_width_mm, 0.001)
+    scale_y = height / max(oriented_height_mm, 0.001)
+
+    left = int(round(margin_mm * scale_x))
+    top = int(round(margin_mm * scale_y))
+    right = int(round((margin_mm + box_width_mm) * scale_x)) - 1
+    bottom = int(round((margin_mm + box_height_mm) * scale_y)) - 1
+
+    left = max(0, min(width - 1, left))
+    top = max(0, min(height - 1, top))
+    right = max(left, min(width - 1, right))
+    bottom = max(top, min(height - 1, bottom))
 
     if apply_offsets:
         offset_x = mm_to_dot_offset((profile or {}).get("print_offset_x_mm", 0.0), profile)
@@ -2177,10 +2190,22 @@ def get_printable_area_rect(width: int, height: int, profile: Dict | None = None
     return left, top, right, bottom
 
 
-def draw_printable_area_box(img: Image.Image, profile: Dict, preview: bool, apply_offsets: bool = False) -> None:
+def draw_printable_area_box(
+    img: Image.Image,
+    profile: Dict,
+    preview: bool,
+    apply_offsets: bool = False,
+    rotation_degrees: int = 0,
+) -> None:
     if not normalize_bool((profile or {}).get("printable_area_box_enabled"), False):
         return
-    left, top, right, bottom = get_printable_area_rect(img.width, img.height, profile, apply_offsets=apply_offsets)
+    left, top, right, bottom = get_printable_area_rect(
+        img.width,
+        img.height,
+        profile,
+        apply_offsets=apply_offsets,
+        rotation_degrees=rotation_degrees,
+    )
     if right <= left or bottom <= top:
         return
     draw = ImageDraw.Draw(img)
@@ -2194,9 +2219,8 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
     img = Image.new("RGBA", (printable_w, canvas_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(img)
     has_qr = bool(normalize_qr_value(qr_value))
-    area_left, area_top, area_right, area_bottom = get_printable_area_rect(printable_w, canvas_h, profile)
+    area_left, area_top, area_right, area_bottom = get_printable_area_rect(printable_w, canvas_h, profile, rotation_degrees=0)
     area_width = max(1, area_right - area_left + 1)
-    area_height = max(1, area_bottom - area_top + 1)
     inner_margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
     text_left = min(area_right, area_left + inner_margin_x)
     text_right = max(text_left, area_right - inner_margin_x)
@@ -2232,7 +2256,7 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
     landscape = Image.new("RGBA", (logical_w, logical_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(landscape)
     has_qr = bool(normalize_qr_value(qr_value))
-    area_left, area_top, area_right, area_bottom = get_printable_area_rect(logical_w, logical_h, profile)
+    area_left, area_top, area_right, area_bottom = get_printable_area_rect(logical_w, logical_h, profile, rotation_degrees=90)
     area_width = max(1, area_right - area_left + 1)
     area_height = max(1, area_bottom - area_top + 1)
     left_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
@@ -2281,19 +2305,19 @@ def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, pr
     printable_image = render_portrait_content(printable_w, requested_h, qr_value, body_blocks, footer_blocks, profile, preview) if rotation_degrees == 0 else render_rotated_content(printable_w, requested_h, qr_value, body_blocks, footer_blocks, profile, preview, rotation_degrees)
     if not preview:
         printable_image = apply_profile_print_offsets(printable_image, profile)
-        draw_printable_area_box(printable_image, profile, preview=False, apply_offsets=True)
+        draw_printable_area_box(printable_image, profile, preview=False, apply_offsets=True, rotation_degrees=0)
         return printable_image
     if requested_w <= printable_w:
-        draw_printable_area_box(printable_image, profile, preview=True, apply_offsets=False)
-        return orient_preview_for_display(printable_image, rotation_degrees)
+        preview_image = orient_preview_for_display(printable_image, rotation_degrees)
+        draw_printable_area_box(preview_image, profile, preview=True, apply_offsets=False, rotation_degrees=rotation_degrees)
+        return preview_image
     canvas = Image.new("RGBA", (requested_w, requested_h), color=(255, 255, 255, 255))
     printable_left = max((requested_w - printable_w) // 2, 0)
     draw_background_for_preview(canvas, requested_w, requested_h, printable_left, printable_w)
     canvas.alpha_composite(printable_image, (printable_left, 0))
-    preview_box = Image.new("RGBA", (printable_w, requested_h), color=(0, 0, 0, 0))
-    draw_printable_area_box(preview_box, profile, preview=True, apply_offsets=False)
-    canvas.alpha_composite(preview_box, (printable_left, 0))
-    return orient_preview_for_display(canvas, rotation_degrees)
+    preview_image = orient_preview_for_display(canvas, rotation_degrees)
+    draw_printable_area_box(preview_image, profile, preview=True, apply_offsets=False, rotation_degrees=rotation_degrees)
+    return preview_image
 
 
 def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
@@ -2623,7 +2647,6 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         print_rotation_degrees=profile.get("print_rotation_degrees", 0),
         effective_width_mm=dots_to_mm(layout["effective_width_dots"], profile),
         printer_dpi=profile.get("printer_dpi", DEFAULT_PRINTER_DPI),
-        profile=profile,
         effective_width_dots=layout["effective_width_dots"],
         width_warning=layout["width_warning"],
         preview_display_width_mm=preview_display_width_mm,
