@@ -1006,13 +1006,18 @@ def _find_overlay_font_path():
 
 _OVERLAY_FONT_PATH = _find_overlay_font_path() if _PIL_OK else None
 _OVERLAY_FONT_CACHE = {}
-if _PIL_OK:
-    if _OVERLAY_FONT_PATH:
-        logger.info("Overlay font: using truetype font at %s", _OVERLAY_FONT_PATH)
+try:
+    _IS_MAIN_PROCESS = (mp.current_process().name == "MainProcess")
+except Exception:
+    _IS_MAIN_PROCESS = True
+if _IS_MAIN_PROCESS:
+    if _PIL_OK:
+        if _OVERLAY_FONT_PATH:
+            logger.info("Overlay font: using truetype font at %s", _OVERLAY_FONT_PATH)
+        else:
+            logger.warning("Overlay font: no truetype font found; Unicode overlay text may render incorrectly until a scalable font is installed.")
     else:
-        logger.warning("Overlay font: no truetype font found; Unicode overlay text may render incorrectly until a scalable font is installed.")
-else:
-    logger.warning("Overlay font: Pillow not available; overlay text uses OpenCV renderer only")
+        logger.warning("Overlay font: Pillow not available; overlay text uses OpenCV renderer only")
 
 
 def _overlay_font_scale_from_px(font_px: int | None, thickness: int = 1, fallback_scale: float = 0.6) -> float:
@@ -2227,19 +2232,9 @@ def _reconcile_payload_with_opencv(zbar_payload: str, gray_variant: np.ndarray, 
         _log_opencv_confirmation(cam_id, zone_name, src, zbar_payload, suspect, confirm, decision)
         return {'payload': final_payload, 'src': chosen_src, 'mismatch': mismatch, 'opencv': confirm, 'decision': decision, 'suspect': suspect}
 
-    if suspect:
-        logger.warning(
-            'QR suspect payload rejected cam=%s zone=%s src=%s zbar=%r reason=no_opencv_confirmation',
-            cam_id,
-            zone_name,
-            src,
-            final_payload,
-        )
-        decision = 'reject_suspect'
-        _log_opencv_confirmation(cam_id, zone_name, src, zbar_payload, suspect, confirm, decision)
-        return {'payload': '', 'src': f'{chosen_src}+rejected', 'mismatch': False, 'opencv': confirm, 'decision': decision, 'suspect': suspect}
-
     decision = 'zbar_fallback'
+    if suspect:
+        decision = 'zbar_suspect_fallback'
     _log_opencv_confirmation(cam_id, zone_name, src, zbar_payload, suspect, confirm, decision)
     return {'payload': final_payload, 'src': chosen_src, 'mismatch': False, 'opencv': confirm, 'decision': decision, 'suspect': suspect}
 
@@ -2610,6 +2605,57 @@ def _zone_detection_sort_key(det: dict):
     return (_natural_sort_key(payload), cy, cx)
 
 
+def _decoded_variant_priority(det: dict):
+    det = det if isinstance(det, dict) else {}
+    payload = str(det.get("payload") or "").strip()
+    diag = det.get("diag") if isinstance(det.get("diag"), dict) else {}
+    src = str(diag.get("src") or det.get("src") or "")
+    suspect = _payload_looks_suspicious(payload)
+    has_opencv = ("opencv" in src)
+    try:
+        score = float(det.get("score") or 0.0)
+    except Exception:
+        score = 0.0
+    ascii_ratio = 0.0
+    if payload:
+        try:
+            ascii_ratio = sum(1 for ch in payload if ord(ch) < 128) / float(len(payload))
+        except Exception:
+            ascii_ratio = 0.0
+    return (
+        1 if has_opencv else 0,
+        0 if suspect else 1,
+        0 if _contains_cjk(payload) else 1,
+        ascii_ratio,
+        score,
+        len(payload),
+    )
+
+
+def _canonicalize_zone_decoded_detections(detections):
+    dets = [d for d in _dedupe_zone_detections(detections or []) if isinstance(d, dict)]
+    if len(dets) <= 1:
+        return dets
+    grouped = {}
+    for det in dets:
+        centroid = det.get("centroid") or [0, 0]
+        try:
+            cx = int(round(float(centroid[0]) / 8.0))
+        except Exception:
+            cx = 0
+        try:
+            cy = int(round(float(centroid[1]) / 8.0))
+        except Exception:
+            cy = 0
+        grouped.setdefault((cx, cy), []).append(det)
+    out = []
+    for key in sorted(grouped.keys()):
+        items = grouped[key]
+        winner = sorted(items, key=lambda d: (_decoded_variant_priority(d), _zone_detection_sort_key(d)), reverse=True)[0]
+        out.append(winner)
+    return sorted(out, key=_zone_detection_sort_key)
+
+
 def _dedupe_zone_detections(detections):
     best = {}
     for det in (detections or []):
@@ -2877,7 +2923,7 @@ def compute_zone_status(zones_dict: dict, detections: list):
                 candidate_by_zone[z] = d
 
     for zname in zones_dict.keys():
-        dets = _dedupe_zone_detections(decoded_by_zone.get(zname) or [])
+        dets = _canonicalize_zone_decoded_detections(decoded_by_zone.get(zname) or [])
         if dets:
             best = sorted(dets, key=lambda d: (float(d.get("score") or 0.0), _zone_detection_sort_key(d)), reverse=True)[0]
             status[zname] = {"kind": "decoded", "det": best, "dets": dets}
@@ -3283,7 +3329,7 @@ class MQTTManager:
             "name": str(cam_name),
             "manufacturer": "QR Inventory",
             "model": "QR Zone Scanner",
-            "sw_version": "0.6.7.1",
+            "sw_version": "0.6.7.6",
         }
 
     def _discovery_payload(self, cam_id: str, cam_name: str, zone_name: str) -> dict:
@@ -3327,7 +3373,7 @@ class MQTTManager:
                 "name": "QR Inventory Summary",
                 "manufacturer": "QR Inventory",
                 "model": "Detected List",
-                "sw_version": "0.6.7.1",
+                "sw_version": "0.6.7.6",
             },
         }
 

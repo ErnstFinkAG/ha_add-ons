@@ -77,7 +77,7 @@ overlay_margin_px: 10
 
 ## Hinweise zu Unicode-QRs und Overlay-Schriften
 
-Seit Version **0.6.7.1** wird für die Payload-Auswahl zuerst ein breiterer OpenCV-Pfad über die gesamte ROI bzw. den ROI-Cutout versucht. ZBar dient weiterhin zur Lokalisierung und als Fallback, aber wenn OpenCV einen gültigen Text liefert, gewinnt der OpenCV-Text. Das verbessert Fälle wie `Büetigen` vs. `B羹etigen` deutlich.
+Seit Version **0.6.7.6** wird wieder der schnellere Dual-Decoder-Pfad genutzt: ZBar dient primär zur Lokalisierung, OpenCV kann den Payload derselben Erkennung überschreiben. Verdächtige ZBar-Strings werden ohne OpenCV-Bestätigung nicht mehr verworfen, damit die Erkennung nicht in einen langsamen Reject-Loop gerät. Zusätzlich werden gleichartige Payload-Varianten pro Zone kanonisiert, wobei OpenCV-bestätigte bzw. weniger verdächtige Varianten bevorzugt werden.
 
 Für Overlay-Texte stehen nun Pixelgrößen zur Verfügung:
 
