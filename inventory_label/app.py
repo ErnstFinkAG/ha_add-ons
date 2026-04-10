@@ -2143,7 +2143,7 @@ def printable_area_box_margin_mm(profile: Dict | None = None) -> float:
     return normalize_float((profile or {}).get("printable_area_box_margin_mm"), DEFAULT_PRINTABLE_AREA_BOX_MARGIN_MM, 0.0, 100.0)
 
 
-def get_printable_area_rect(width: int, height: int, profile: Dict | None = None) -> Tuple[int, int, int, int]:
+def get_printable_area_rect(width: int, height: int, profile: Dict | None = None, apply_offsets: bool = False) -> Tuple[int, int, int, int]:
     width = max(1, int(width))
     height = max(1, int(height))
     if not normalize_bool((profile or {}).get("printable_area_box_enabled"), False):
@@ -2157,13 +2157,26 @@ def get_printable_area_rect(width: int, height: int, profile: Dict | None = None
     top = inset_y
     right = max(left, width - inset_x - 1)
     bottom = max(top, height - inset_y - 1)
+
+    if apply_offsets:
+        offset_x = mm_to_dot_offset((profile or {}).get("print_offset_x_mm", 0.0), profile)
+        offset_y = mm_to_dot_offset((profile or {}).get("print_offset_y_mm", 0.0), profile)
+        left = max(0, min(width - 1, left + offset_x))
+        top = max(0, min(height - 1, top + offset_y))
+        right = max(0, min(width - 1, right + offset_x))
+        bottom = max(0, min(height - 1, bottom + offset_y))
+        if right < left:
+            left, right = right, left
+        if bottom < top:
+            top, bottom = bottom, top
+
     return left, top, right, bottom
 
 
-def draw_printable_area_box(img: Image.Image, profile: Dict, preview: bool) -> None:
+def draw_printable_area_box(img: Image.Image, profile: Dict, preview: bool, apply_offsets: bool = False) -> None:
     if not normalize_bool((profile or {}).get("printable_area_box_enabled"), False):
         return
-    left, top, right, bottom = get_printable_area_rect(img.width, img.height, profile)
+    left, top, right, bottom = get_printable_area_rect(img.width, img.height, profile, apply_offsets=apply_offsets)
     if right <= left or bottom <= top:
         return
     draw = ImageDraw.Draw(img)
@@ -2262,18 +2275,18 @@ def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, pr
     rotation_degrees = profile["print_rotation_degrees"]
     body_blocks, footer_blocks = fields_to_blocks(field_forms)
     printable_image = render_portrait_content(printable_w, requested_h, qr_value, body_blocks, footer_blocks, profile, preview) if rotation_degrees == 0 else render_rotated_content(printable_w, requested_h, qr_value, body_blocks, footer_blocks, profile, preview, rotation_degrees)
-    printable_image = apply_profile_print_offsets(printable_image, profile)
     if not preview:
-        draw_printable_area_box(printable_image, profile, preview=False)
+        printable_image = apply_profile_print_offsets(printable_image, profile)
+        draw_printable_area_box(printable_image, profile, preview=False, apply_offsets=True)
         return printable_image
     if requested_w <= printable_w:
-        draw_printable_area_box(printable_image, profile, preview=True)
+        draw_printable_area_box(printable_image, profile, preview=True, apply_offsets=True)
         return orient_preview_for_display(printable_image, rotation_degrees)
     canvas = Image.new("RGBA", (requested_w, requested_h), color=(255, 255, 255, 255))
     printable_left = max((requested_w - printable_w) // 2, 0)
     draw_background_for_preview(canvas, requested_w, requested_h, printable_left, printable_w)
     canvas.alpha_composite(printable_image, (printable_left, 0))
-    draw_printable_area_box(canvas, profile, preview=True)
+    draw_printable_area_box(canvas, profile, preview=True, apply_offsets=True)
     return orient_preview_for_display(canvas, rotation_degrees)
 
 

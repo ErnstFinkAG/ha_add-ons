@@ -2,7 +2,7 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.96
+## What changed in v0.1.97
 
 This version lets the printable area box use a configurable margin in mm and moves QR placement inside that printable area.
 
