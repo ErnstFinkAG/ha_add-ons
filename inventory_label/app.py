@@ -343,6 +343,13 @@ UI_STRINGS = {
         "language_label": "Language",
         "profile_settings_source": "Profiles are defined in add-on settings",
         "text_block_offset_x_label": "Text block offset X",
+        "move_up_button": "Move up",
+        "move_down_button": "Move down",
+        "field_moved_message": "Field '{field}' moved {direction} in profile '{profile}'.",
+        "field_move_failed": "Field move failed: {error}",
+        "field_move_unchanged": "Field '{field}' is already at the {direction}.",
+        "direction_up": "top",
+        "direction_down": "down",
     },
     "de": {
         "lang": "de",
@@ -448,6 +455,13 @@ UI_STRINGS = {
         "language_label": "Sprache",
         "profile_settings_source": "Profile werden in den Add-on-Einstellungen definiert",
         "text_block_offset_x_label": "Textblock-Offset X",
+        "move_up_button": "Nach oben",
+        "move_down_button": "Nach unten",
+        "field_moved_message": "Feld '{field}' im Profil '{profile}' nach {direction} verschoben.",
+        "field_move_failed": "Feld verschieben fehlgeschlagen: {error}",
+        "field_move_unchanged": "Feld '{field}' ist bereits ganz {direction}.",
+        "direction_up": "oben",
+        "direction_down": "unten",
     },
 }
 
@@ -540,6 +554,12 @@ HTML = """
     .tag-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .tag { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; background: #0f172a; border: 1px solid var(--border); color: var(--muted); font-size: 0.9rem; }
     .field-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .details-card { padding: 0; overflow: hidden; }
+    .details-summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; list-style: none; cursor: pointer; padding: 18px 20px; }
+    .details-summary::-webkit-details-marker { display: none; }
+    .details-summary strong { font-size: 1.2rem; }
+    .details-body { padding: 0 20px 20px; }
+    .move-button { min-width: 48px; padding: 12px 14px; }
     .small { font-size: 0.92rem; }
     .headline-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
     .selector-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px; }
@@ -726,16 +746,17 @@ HTML = """
       </form>
     </div>
 
-    <div class="card">
-      <div class="headline-row">
-        <div>
-          <h2>{{ ui.field_manager_heading }}</h2>
-          <p class="muted">{{ ui.field_manager_intro }}</p>
-        </div>
+    <details class="card details-card">
+      <summary class="details-summary">
+        <span>
+          <strong>{{ ui.field_manager_heading }}</strong><br>
+          <span class="muted small">{{ ui.field_manager_intro }}</span>
+        </span>
         <span class="tag">{{ ui.profile_active }}: {{ active_profile_name or ui.profile_none }}</span>
-      </div>
+      </summary>
 
-      <div class="field-grid">
+      <div class="details-body">
+        <div class="field-grid">
         {% for field in active_profile_fields %}
         <div class="field-card">
           <div class="headline-row">
@@ -769,6 +790,18 @@ HTML = """
           {% endif %}
           <div class="field-actions">
             <button type="button" class="secondary edit-field-button" data-field-id="{{ field.id }}">{{ ui.edit_field_button }}</button>
+            <form method="post" action="{{ ingress_base }}/fields/move" style="margin:0;">
+              <input type="hidden" name="profile_id" value="{{ active_profile_id }}">
+              <input type="hidden" name="field_id" value="{{ field.id }}">
+              <input type="hidden" name="direction" value="up">
+              <button type="submit" class="secondary move-button" title="{{ ui.move_up_button }}">↑</button>
+            </form>
+            <form method="post" action="{{ ingress_base }}/fields/move" style="margin:0;">
+              <input type="hidden" name="profile_id" value="{{ active_profile_id }}">
+              <input type="hidden" name="field_id" value="{{ field.id }}">
+              <input type="hidden" name="direction" value="down">
+              <button type="submit" class="secondary move-button" title="{{ ui.move_down_button }}">↓</button>
+            </form>
             <form method="post" action="{{ ingress_base }}/fields/delete" style="margin:0;">
               <input type="hidden" name="profile_id" value="{{ active_profile_id }}">
               <input type="hidden" name="field_id" value="{{ field.id }}">
@@ -781,8 +814,8 @@ HTML = """
         {% endfor %}
       </div>
 
-      <div class="editor" style="margin-top: 18px;">
-        <form id="field-editor-form" method="post" action="{{ ingress_base }}/fields/save" enctype="multipart/form-data">
+        <div class="editor" style="margin-top: 18px;">
+          <form id="field-editor-form" method="post" action="{{ ingress_base }}/fields/save" enctype="multipart/form-data">
           <input type="hidden" name="profile_id" value="{{ active_profile_id }}">
           <input type="hidden" id="original_field_id" name="original_field_id" value="{{ editor_form.original_field_id }}">
 
@@ -912,9 +945,10 @@ HTML = """
           <div class="btns">
             <button type="submit">{{ ui.save_field_button }}</button>
           </div>
-        </form>
+          </form>
+        </div>
       </div>
-    </div>
+    </details>
   </div>
 
   <script>
@@ -2735,6 +2769,30 @@ def delete_profile_field(profile_id: str, field_id: str, profile_name: str) -> b
     return changed
 
 
+def move_profile_field(profile_id: str, field_id: str, direction: str, profile_name: str) -> bool:
+    opts, _, _ = load_options()
+    profiles = parse_label_profiles(opts.get("label_profiles"))
+    field_store = load_field_store(profiles)
+    fields = list(field_store.get(profile_id, []))
+    current_index = next((idx for idx, field in enumerate(fields) if field.get("id") == field_id), None)
+    if current_index is None:
+        raise ValueError(f"Unknown field: {field_id}")
+    if direction == "up":
+        target_index = max(0, current_index - 1)
+    elif direction == "down":
+        target_index = min(len(fields) - 1, current_index + 1)
+    else:
+        raise ValueError(f"Unsupported move direction: {direction}")
+    if target_index == current_index:
+        return False
+    field = fields.pop(current_index)
+    fields.insert(target_index, field)
+    field_store[profile_id] = fields
+    save_field_store(field_store)
+    LOGGER.info("Moved field %s %s in profile %s (%s)", field_id, direction, profile_id, profile_name)
+    return True
+
+
 ALLOWED_QUICK_FIELD_SETTINGS = {"print_by_default", "always_use_for_qr"}
 
 
@@ -2985,6 +3043,31 @@ def delete_field():
     except Exception as exc:
         LOGGER.exception("Field delete failed")
         result = {"success": False, "message": ui_text(opts, "field_delete_failed", error=exc)}
+    return render_page(form, opts, field_forms, field_result=result)
+
+
+@APP.route("/fields/move", methods=["POST"])
+def move_field():
+    opts = load_runtime_options(request.form.get("profile_id") or None)
+    profile = opts.get("active_profile") or {}
+    form, field_forms = form_data_from_request(opts)
+    result = None
+    try:
+        if not profile:
+            raise ValueError(ui_text(opts, "profile_not_found"))
+        field_id = sanitize_id(str(request.form.get("field_id") or ""), "")
+        direction = normalize_string(request.form.get("direction"), "")
+        moved = move_profile_field(profile["id"], field_id, direction, profile.get("name", ""))
+        opts = load_runtime_options(profile["id"])
+        form, field_forms = form_data_from_request(opts)
+        direction_label = ui_text(opts, "direction_up") if direction == "up" else ui_text(opts, "direction_down")
+        result = {
+            "success": True,
+            "message": ui_text(opts, "field_moved_message", field=field_id, profile=opts.get("active_profile_name", ""), direction=direction_label) if moved else ui_text(opts, "field_move_unchanged", field=field_id, direction=direction_label),
+        }
+    except Exception as exc:
+        LOGGER.exception("Field move failed")
+        result = {"success": False, "message": ui_text(opts, "field_move_failed", error=exc)}
     return render_page(form, opts, field_forms, field_result=result)
 
 
