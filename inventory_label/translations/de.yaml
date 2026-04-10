@@ -57,3 +57,9 @@ configuration:
       printable_area_box_margin_mm:
         name: Druckbereich-Rahmen Abstand (mm)
         description: Abstand zu jeder Labelkante zur Berechnung des Druckbereich-Rahmens.
+      text_block_offset_x_mm:
+        name: Textblock-Offset X (mm)
+        description: Horizontaler Offset des Text- und Footer-Blocks in Millimetern. Positive Werte verschieben den Textblock nach rechts.
+      show_in_multi_preview:
+        name: In Mehrfachvorschau anzeigen
+        description: Steuert, ob dieses Etikettenprofil in der gestapelten Mehrfachvorschau und im Klick-zum-Drucken-Bereich erscheint.

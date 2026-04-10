@@ -16,6 +16,7 @@ import qrcode
 import yaml
 from flask import Flask, Response, jsonify, render_template_string, request, send_file
 from PIL import Image, ImageDraw, ImageFont
+from werkzeug.datastructures import MultiDict
 
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 root_logger = logging.getLogger()
@@ -47,6 +48,8 @@ DEFAULT_LOGO_GAP_MM = 4.0
 FIELD_GAP_MM = 4.0
 FOOTER_GAP_MM = 3.0
 DEFAULT_PRINTABLE_AREA_BOX_MARGIN_MM = 5.0
+DEFAULT_TEXT_BLOCK_OFFSET_X_MM = 0.0
+DEFAULT_SHOW_IN_MULTI_PREVIEW = True
 SUPPORTED_UI_LANGUAGES = {"en", "de"}
 SUPPORTED_ROTATIONS = {0, 90, 270}
 ALIGNMENTS = {"left", "center", "right"}
@@ -72,6 +75,8 @@ DEFAULT_LABEL_PROFILES = [
         "qr_error_correction": "M",
         "printable_area_box_enabled": False,
         "printable_area_box_margin_mm": DEFAULT_PRINTABLE_AREA_BOX_MARGIN_MM,
+        "text_block_offset_x_mm": DEFAULT_TEXT_BLOCK_OFFSET_X_MM,
+        "show_in_multi_preview": DEFAULT_SHOW_IN_MULTI_PREVIEW,
     }
 ]
 
@@ -252,8 +257,12 @@ UI_STRINGS = {
         "preview_zpl": "Preview ZPL",
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
+        "preview_stack_heading": "All label previews",
+        "preview_stack_intro": "Each preview uses that profile's own size, rotation, and printer. Matching field IDs reuse the values above. Click a label preview to print that label on its configured printer.",
+        "click_preview_to_print": "Click preview to print",
+        "preview_print_unavailable": "Printer not configured",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at the configured printer DPI. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at the configured printer DPI. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone. The red box shows the printable area, and the green box shows the text and footer block area.",
         "fields_heading": "Configured fields",
         "print_field": "Print",
         "required": "Required",
@@ -333,6 +342,15 @@ UI_STRINGS = {
         "legacy_migrated": "Legacy label_profiles_yaml was detected and migrated. Profiles now live in add-on settings, fields live in the web UI store.",
         "language_label": "Language",
         "profile_settings_source": "Profiles are defined in add-on settings",
+        "text_block_offset_x_label": "Text block offset X",
+        "profile_edit_scope_help": "The selected label profile below is only used to edit that profile. Printing is done by clicking a preview above.",
+        "move_up_button": "Move up",
+        "move_down_button": "Move down",
+        "field_moved_message": "Field '{field}' moved {direction} in profile '{profile}'.",
+        "field_move_failed": "Field move failed: {error}",
+        "field_move_unchanged": "Field '{field}' is already at the {direction}.",
+        "direction_up": "top",
+        "direction_down": "down",
     },
     "de": {
         "lang": "de",
@@ -352,8 +370,12 @@ UI_STRINGS = {
         "preview_zpl": "ZPL-Vorschau",
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
+        "preview_stack_heading": "Alle Label-Vorschauen",
+        "preview_stack_intro": "Jede Vorschau verwendet die eigene Größe, Drehung und den eigenen Drucker des jeweiligen Profils. Passende Feld-IDs übernehmen die Werte von oben. Ein Klick auf eine Label-Vorschau druckt dieses Label auf dem konfigurierten Drucker.",
+        "click_preview_to_print": "Zum Drucken auf Vorschau klicken",
+        "preview_print_unavailable": "Drucker nicht konfiguriert",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit der konfigurierten Drucker-DPI exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
+        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit der konfigurierten Drucker-DPI exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone. Der rote Rahmen zeigt den Druckbereich, der grüne Rahmen den Text- und Footer-Bereich.",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
         "required": "Pflichtfeld",
@@ -433,6 +455,15 @@ UI_STRINGS = {
         "legacy_migrated": "Altes label_profiles_yaml erkannt und migriert. Profile liegen jetzt in den Add-on-Einstellungen, Felder im Web-UI-Speicher.",
         "language_label": "Sprache",
         "profile_settings_source": "Profile werden in den Add-on-Einstellungen definiert",
+        "text_block_offset_x_label": "Textblock-Offset X",
+        "profile_edit_scope_help": "Das unten ausgewählte Etikettenprofil wird nur zum Bearbeiten dieses Profils verwendet. Gedruckt wird über einen Klick auf die Vorschau oben.",
+        "move_up_button": "Nach oben",
+        "move_down_button": "Nach unten",
+        "field_moved_message": "Feld '{field}' im Profil '{profile}' nach {direction} verschoben.",
+        "field_move_failed": "Feld verschieben fehlgeschlagen: {error}",
+        "field_move_unchanged": "Feld '{field}' ist bereits ganz {direction}.",
+        "direction_up": "oben",
+        "direction_down": "unten",
     },
 }
 
@@ -477,9 +508,16 @@ HTML = """
     .flash.error { background: rgba(239,68,68,0.14); border: 1px solid var(--danger); }
     .muted { color: var(--muted); }
     .preview-wrap { overflow: auto; background: #0b1220; border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
-    .preview-stage { display: flex; justify-content: center; align-items: flex-start; min-width: 0; width: 100%; }
-    .preview-frame { width: {{ preview_display_width_mm }}mm; height: {{ preview_display_height_mm }}mm; flex: 0 0 auto; max-width: none; background: var(--label-bg); border: 1px solid var(--label-edge); box-shadow: 0 10px 30px rgba(0,0,0,0.28); }
-    .preview-frame img { display: block; width: 100%; height: 100%; object-fit: contain; background: white; }
+    .preview-stack { display: grid; gap: 16px; }
+    .preview-tile { background: #0f172a; border: 1px solid var(--border); border-radius: 14px; padding: 12px; }
+    .preview-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+    .preview-tile-title { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .preview-tile-title strong, .preview-tile-title span { word-break: break-word; }
+    .preview-tile-links { display: flex; gap: 8px; flex-wrap: wrap; }
+    .preview-tile-links .button-link { padding: 8px 12px; }
+    .preview-tile-button { width: 100%; padding: 0; overflow: hidden; background: transparent; border: 1px solid var(--label-edge); border-radius: 12px; }
+    .preview-tile-button[disabled] { cursor: not-allowed; opacity: 0.65; }
+    .preview-tile-button img { display: block; width: 100%; height: auto; object-fit: contain; background: white; }
     .preview-meta { margin-top: 12px; font-size: 0.95rem; color: var(--muted); }
     .preview-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-top: 14px; }
     .preview-actions .btns { margin: 0; }
@@ -518,6 +556,17 @@ HTML = """
     .tag-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     .tag { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; background: #0f172a; border: 1px solid var(--border); color: var(--muted); font-size: 0.9rem; }
     .field-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .details-card { padding: 0; overflow: hidden; }
+    .details-summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; list-style: none; cursor: pointer; padding: 18px 20px; }
+    .details-summary::-webkit-details-marker { display: none; }
+    .details-summary strong { font-size: 1.2rem; }
+    .details-summary-main { min-width: 0; }
+    .details-summary-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .summary-profile-switch { display: flex; flex-direction: column; gap: 4px; min-width: 220px; }
+    .summary-profile-switch label { margin: 0; font-size: 0.86rem; color: var(--muted); font-weight: 600; }
+    .summary-profile-switch select { margin: 0; padding: 8px 12px; }
+    .details-body { padding: 0 20px 20px; }
+    .move-button { min-width: 48px; padding: 12px 14px; }
     .small { font-size: 0.92rem; }
     .headline-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
     .selector-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px; }
@@ -541,6 +590,73 @@ HTML = """
         <div class="flash {{ 'ok' if field_result.success else 'error' }}">{{ field_result.message }}</div>
       {% endif %}
       <form id="label-form" method="post" action="{{ ingress_base }}/print">
+        <div class="headline-row">
+          <div>
+            <h2>{{ ui.preview_stack_heading }}</h2>
+            <p class="muted small">{{ ui.preview_stack_intro }}</p>
+          </div>
+          <div class="copies-inline">
+            <label for="copies">{{ ui.copies }}</label>
+            <input id="copies" name="copies" type="number" min="1" max="50" value="{{ form.copies }}" required>
+          </div>
+        </div>
+        <div class="preview-wrap">
+          <div class="preview-stack">
+            {% for preview_item in preview_profiles %}
+            <div class="preview-tile">
+              <div class="preview-tile-head">
+                <div class="preview-tile-title">
+                  <strong>{{ preview_item.name }}</strong>
+                  <span class="muted small">{{ preview_item.printer_target }}</span>
+                </div>
+                <div class="preview-tile-links">
+                  <a class="button-link secondary" data-preview-zpl-link data-profile-id="{{ preview_item.id }}" data-use-live-qr="{{ '1' if preview_item.use_live_qr else '0' }}" href="{{ ingress_base }}/preview?{{ preview_item.preview_query }}">{{ ui.preview_zpl }}</a>
+                  <a class="button-link secondary" data-preview-png-link data-profile-id="{{ preview_item.id }}" data-use-live-qr="{{ '1' if preview_item.use_live_qr else '0' }}" href="{{ ingress_base }}/preview.png?{{ preview_item.preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
+                </div>
+              </div>
+              <button
+                type="submit"
+                class="preview-tile-button"
+                name="target_profile_id"
+                value="{{ preview_item.id }}"
+                title="{{ ui.click_preview_to_print }}"
+                {% if not preview_item.can_print %}disabled{% endif %}
+              >
+                <img data-preview-image data-profile-id="{{ preview_item.id }}" data-use-live-qr="{{ '1' if preview_item.use_live_qr else '0' }}" src="{{ ingress_base }}/preview.png?{{ preview_item.preview_query }}" alt="{{ preview_item.name }}">
+              </button>
+              {% if not preview_item.can_print %}
+              <div class="muted small" style="margin-top:8px;">{{ ui.preview_print_unavailable }}</div>
+              {% endif %}
+            </div>
+            {% else %}
+            <div class="field-card muted">{{ ui.profile_none }}</div>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="preview-meta">{{ ui.preview_meta }}</div>
+      </form>
+    </div>
+
+    <details class="card details-card">
+      <summary class="details-summary">
+        <span class="details-summary-main">
+          <strong>{{ ui.page_title }} / {{ ui.field_manager_heading }}</strong><br>
+          <span class="muted small">{{ ui.field_manager_intro }}</span>
+        </span>
+        <span class="details-summary-right">
+          <span class="summary-profile-switch">
+            <label for="profile_id_summary">{{ ui.profile_select }}</label>
+            <select id="profile_id_summary" name="profile_id_summary" data-stop-details-toggle="1">
+              {% for profile in label_profiles %}
+                <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
+              {% endfor %}
+            </select>
+          </span>
+          <span class="tag">{{ ui.profile_active }}: {{ active_profile_name or ui.profile_none }}</span>
+        </span>
+      </summary>
+
+      <div class="details-body">
         <div class="top-layout">
           <div class="top-panel">
             <div class="fields-section top-fields">
@@ -556,15 +672,15 @@ HTML = """
                     {% if field.supports_logos %}<span>{{ ui.logo_field_label }}</span>{% endif %}
                   </div>
                   <div class="checkline">
-                    <input id="print_{{ field.id }}" name="print_{{ field.id }}" type="checkbox" value="1" data-field-id="{{ field.id }}" {% if field.print_enabled %}checked{% endif %}>
+                    <input form="label-form" id="print_{{ field.id }}" name="print_{{ field.id }}" type="checkbox" value="1" data-field-id="{{ field.id }}" {% if field.print_enabled %}checked{% endif %}>
                     <label for="print_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.print_field }}</label>
                   </div>
                   {% if field.supports_logos %}
-                  <input type="hidden" name="field_{{ field.id }}__present" value="1">
+                  <input form="label-form" type="hidden" name="field_{{ field.id }}__present" value="1">
                   <div class="logo-option-grid">
                     {% for option in field.logo_options %}
                     <label class="logo-option-card">
-                      <input type="checkbox" name="field_{{ field.id }}" value="{{ option.id }}" {% if option.selected %}checked{% endif %}>
+                      <input form="label-form" type="checkbox" name="field_{{ field.id }}" value="{{ option.id }}" {% if option.selected %}checked{% endif %}>
                       <img src="{{ option.asset_url }}" alt="{{ option.name }}">
                     </label>
                     {% else %}
@@ -573,6 +689,7 @@ HTML = """
                   </div>
                   {% else %}
                   <input
+                    form="label-form"
                     id="field_{{ field.id }}"
                     name="field_{{ field.id }}"
                     type="text"
@@ -596,101 +713,69 @@ HTML = """
             </div>
           </div>
 
-          <div class="top-panel">
-            <h2>{{ ui.preview_heading }}</h2>
-            <div class="preview-wrap">
-              <div class="preview-stage">
-                <div class="preview-frame">
-                  <img id="preview-image" src="{{ ingress_base }}/preview.png?{{ preview_query }}" alt="{{ ui.preview_alt }}">
+          <div class="top-panel controls-panel">
+            <div class="headline-row">
+              <div>
+                <h1>{{ ui.page_title }}</h1>
+                <p class="muted">{{ ui.intro_text }}</p>
+              </div>
+            </div>
+
+            <div class="row-compact">
+              <div>
+                <label for="profile_id">{{ ui.profile_select }}</label>
+                <select form="label-form" id="profile_id" name="profile_id">
+                  {% for profile in label_profiles %}
+                    <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div>
+                <label>{{ ui.configured_printer }}</label>
+                <input value="{{ printer_target }}" disabled>
+              </div>
+            </div>
+            <p class="muted small">{{ ui.profile_edit_scope_help }}</p>
+
+            <label>{{ ui.qr_value_label }}</label>
+            <div class="selector-grid">
+              {% for field in qr_field_options %}
+              <label class="selector-option" for="qr_field_{{ field.id }}">
+                <input form="label-form" id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" data-field-id="{{ field.id }}" {% if field.selected %}checked{% endif %}>
+                <div class="selector-text">
+                  <strong>{{ field.name }}</strong>
+                  <span class="muted small">{{ field.value or ui.none }}</span>
                 </div>
-              </div>
+              </label>
+              {% else %}
+              <div class="field-card muted">{{ ui.no_fields_configured }}</div>
+              {% endfor %}
             </div>
-            <div class="preview-meta">{{ ui.preview_meta }}</div>
-            <div class="preview-actions">
-              <div class="copies-inline">
-                <label for="copies">{{ ui.copies }}</label>
-                <input id="copies" name="copies" type="number" min="1" max="50" value="{{ form.copies }}" required>
-              </div>
-              <div class="btns">
-                <button type="submit">{{ ui.print_label_button }}</button>
-                <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?{{ preview_query }}">{{ ui.preview_zpl }}</a>
-                <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?{{ preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
-              </div>
-            </div>
+            <p class="muted small">{{ ui.qr_field_help }}</p>
+            {% if not qr_selected_ids %}
+            <p class="muted small">{{ ui.qr_field_empty }}</p>
+            {% endif %}
+
+            <h2 class="compact-section-title">{{ ui.configured_label_mapping }}</h2>
+            <ul class="config-list">
+              <li><strong>{{ ui.profile_active }}:</strong> <code>{{ active_profile_name or ui.profile_none }}</code></li>
+              <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview or ui.none }}</code></li>
+              <li><strong>{{ ui.requested_label }}:</strong> <code>{{ requested_width_mm }} × {{ requested_height_mm }} mm</code></li>
+              <li><strong>{{ ui.requested_qr }}:</strong> <code>{{ requested_qr_mm }} × {{ requested_qr_mm }} mm</code></li>
+              <li><strong>{{ ui.printer_dpi_label }}:</strong> <code>{{ printer_dpi }}</code></li>
+              <li><strong>QR:</strong> <code>quiet zone {{ qr_quiet_zone_modules }}, ECC {{ qr_error_correction }}</code></li>
+              <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
+              <li><strong>{{ ui.effective_print_width }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
+              <li><strong>{{ ui.language_label }}:</strong> <code>{{ ui.lang }}</code></li>
+              <li><strong>{{ ui.text_block_offset_x_label }}:</strong> <code>{{ text_block_offset_x_mm }} mm</code></li>
+            </ul>
+            {% if width_warning %}
+            <p class="muted">{{ ui.width_warning }}</p>
+            {% endif %}
           </div>
         </div>
 
-        <div class="top-panel controls-panel">
-          <div class="headline-row">
-            <div>
-              <h1>{{ ui.page_title }}</h1>
-              <p class="muted">{{ ui.intro_text }}</p>
-            </div>
-          </div>
-
-          <div class="row-compact">
-            <div>
-              <label for="profile_id">{{ ui.profile_select }}</label>
-              <select id="profile_id" name="profile_id">
-                {% for profile in label_profiles %}
-                  <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div>
-              <label>{{ ui.configured_printer }}</label>
-              <input value="{{ printer_target }}" disabled>
-            </div>
-          </div>
-
-          <label>{{ ui.qr_value_label }}</label>
-          <div class="selector-grid">
-            {% for field in qr_field_options %}
-            <label class="selector-option" for="qr_field_{{ field.id }}">
-              <input id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" data-field-id="{{ field.id }}" {% if field.selected %}checked{% endif %}>
-              <div class="selector-text">
-                <strong>{{ field.name }}</strong>
-                <span class="muted small">{{ field.value or ui.none }}</span>
-              </div>
-            </label>
-            {% else %}
-            <div class="field-card muted">{{ ui.no_fields_configured }}</div>
-            {% endfor %}
-          </div>
-          <p class="muted small">{{ ui.qr_field_help }}</p>
-          {% if not qr_selected_ids %}
-          <p class="muted small">{{ ui.qr_field_empty }}</p>
-          {% endif %}
-
-          <h2 class="compact-section-title">{{ ui.configured_label_mapping }}</h2>
-          <ul class="config-list">
-            <li><strong>{{ ui.profile_active }}:</strong> <code>{{ active_profile_name or ui.profile_none }}</code></li>
-            <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview or ui.none }}</code></li>
-            <li><strong>{{ ui.requested_label }}:</strong> <code>{{ requested_width_mm }} × {{ requested_height_mm }} mm</code></li>
-            <li><strong>{{ ui.requested_qr }}:</strong> <code>{{ requested_qr_mm }} × {{ requested_qr_mm }} mm</code></li>
-            <li><strong>{{ ui.printer_dpi_label }}:</strong> <code>{{ printer_dpi }}</code></li>
-            <li><strong>QR:</strong> <code>quiet zone {{ qr_quiet_zone_modules }}, ECC {{ qr_error_correction }}</code></li>
-            <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
-            <li><strong>{{ ui.effective_print_width }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
-            <li><strong>{{ ui.language_label }}:</strong> <code>{{ ui.lang }}</code></li>
-          </ul>
-          {% if width_warning %}
-          <p class="muted">{{ ui.width_warning }}</p>
-          {% endif %}
-        </div>
-      </form>
-    </div>
-
-    <div class="card">
-      <div class="headline-row">
-        <div>
-          <h2>{{ ui.field_manager_heading }}</h2>
-          <p class="muted">{{ ui.field_manager_intro }}</p>
-        </div>
-        <span class="tag">{{ ui.profile_active }}: {{ active_profile_name or ui.profile_none }}</span>
-      </div>
-
-      <div class="field-grid">
+        <div class="field-grid">
         {% for field in active_profile_fields %}
         <div class="field-card">
           <div class="headline-row">
@@ -724,6 +809,18 @@ HTML = """
           {% endif %}
           <div class="field-actions">
             <button type="button" class="secondary edit-field-button" data-field-id="{{ field.id }}">{{ ui.edit_field_button }}</button>
+            <form method="post" action="{{ ingress_base }}/fields/move" style="margin:0;">
+              <input type="hidden" name="profile_id" value="{{ active_profile_id }}">
+              <input type="hidden" name="field_id" value="{{ field.id }}">
+              <input type="hidden" name="direction" value="up">
+              <button type="submit" class="secondary move-button" title="{{ ui.move_up_button }}">↑</button>
+            </form>
+            <form method="post" action="{{ ingress_base }}/fields/move" style="margin:0;">
+              <input type="hidden" name="profile_id" value="{{ active_profile_id }}">
+              <input type="hidden" name="field_id" value="{{ field.id }}">
+              <input type="hidden" name="direction" value="down">
+              <button type="submit" class="secondary move-button" title="{{ ui.move_down_button }}">↓</button>
+            </form>
             <form method="post" action="{{ ingress_base }}/fields/delete" style="margin:0;">
               <input type="hidden" name="profile_id" value="{{ active_profile_id }}">
               <input type="hidden" name="field_id" value="{{ field.id }}">
@@ -736,8 +833,8 @@ HTML = """
         {% endfor %}
       </div>
 
-      <div class="editor" style="margin-top: 18px;">
-        <form id="field-editor-form" method="post" action="{{ ingress_base }}/fields/save" enctype="multipart/form-data">
+        <div class="editor" style="margin-top: 18px;">
+          <form id="field-editor-form" method="post" action="{{ ingress_base }}/fields/save" enctype="multipart/form-data">
           <input type="hidden" name="profile_id" value="{{ active_profile_id }}">
           <input type="hidden" id="original_field_id" name="original_field_id" value="{{ editor_form.original_field_id }}">
 
@@ -867,31 +964,28 @@ HTML = """
           <div class="btns">
             <button type="submit">{{ ui.save_field_button }}</button>
           </div>
-        </form>
+          </form>
+        </div>
       </div>
-    </div>
+    </details>
   </div>
 
   <script>
     (function () {
       const form = document.getElementById("label-form");
       const profileSelect = document.getElementById("profile_id");
-      const previewImage = document.getElementById("preview-image");
-      const previewFrame = document.querySelector(".preview-frame");
-      const previewWrap = document.querySelector(".preview-wrap");
-      const previewStage = document.querySelector(".preview-stage");
-      const previewPngLink = document.getElementById("preview-png-link");
-      const previewZplLink = document.getElementById("preview-zpl-link");
+      const summaryProfileSelect = document.getElementById("profile_id_summary");
+      const previewImages = Array.from(document.querySelectorAll("[data-preview-image]"));
+      const previewPngLinks = Array.from(document.querySelectorAll("[data-preview-png-link]"));
+      const previewZplLinks = Array.from(document.querySelectorAll("[data-preview-zpl-link]"));
       const newFieldButton = document.getElementById("new-field-button");
       const fieldEditorForm = document.getElementById("field-editor-form");
       const fieldData = {{ field_editor_json|tojson }};
-      if (!form || !previewImage || !previewFrame || !previewWrap || !previewStage || !previewPngLink || !previewZplLink) return;
+      if (!form) return;
 
       let refreshTimer = null;
       let previewNonce = Date.now();
       const ingressBase = {{ ingress_base|tojson }};
-      const portraitWidthMm = {{ preview_display_width_mm|tojson }};
-      const portraitHeightMm = {{ preview_display_height_mm|tojson }};
       const noLogosUploadedText = {{ ui.no_logos_uploaded|tojson }};
       const defaultLogoLabelText = {{ ui.default_logo_label|tojson }};
       const logoOrderLabelText = {{ ui.logo_order_label|tojson }};
@@ -921,35 +1015,33 @@ HTML = """
         return params;
       }
 
-      function syncPreviewFrameToImage() {
-        const naturalWidth = previewImage.naturalWidth || 0;
-        const naturalHeight = previewImage.naturalHeight || 0;
-        if (!naturalWidth || !naturalHeight) return;
-        const wrapStyles = window.getComputedStyle(previewWrap);
-        const horizontalPadding = (parseFloat(wrapStyles.paddingLeft || "0") || 0) + (parseFloat(wrapStyles.paddingRight || "0") || 0);
-        const availableWidth = Math.max(160, Math.floor(previewWrap.clientWidth - horizontalPadding - 2));
-        if (naturalWidth >= naturalHeight) {
-          const scaledHeight = Math.max(1, Math.round((availableWidth * naturalHeight) / naturalWidth));
-          previewWrap.style.overflowX = "hidden";
-          previewStage.style.width = "100%";
-          previewFrame.style.width = `${availableWidth}px`;
-          previewFrame.style.height = `${scaledHeight}px`;
-        } else {
-          previewWrap.style.overflowX = "auto";
-          previewStage.style.width = "100%";
-          previewFrame.style.width = `${portraitWidthMm}mm`;
-          previewFrame.style.height = `${portraitHeightMm}mm`;
+      function applyProfileSpecificParams(params, element) {
+        const profileId = element.getAttribute("data-profile-id") || "";
+        const useLiveQr = element.getAttribute("data-use-live-qr") === "1";
+        if (!useLiveQr) {
+          params.delete("qr_field_ids");
+          params.delete("qr_fields");
         }
+        if (profileId) params.set("profile_id", profileId);
+        return params;
       }
 
       function applyPreviewUpdate() {
         const params = buildQuery();
         previewNonce += 1;
-        const pngParams = new URLSearchParams(params);
-        pngParams.set("_", String(previewNonce));
-        previewImage.src = `${ingressBase}/preview.png?${pngParams.toString()}`;
-        previewPngLink.href = `${ingressBase}/preview.png?${params.toString()}`;
-        previewZplLink.href = `${ingressBase}/preview?${params.toString()}`;
+        previewImages.forEach((img) => {
+          const pngParams = applyProfileSpecificParams(new URLSearchParams(params), img);
+          pngParams.set("_", String(previewNonce));
+          img.src = `${ingressBase}/preview.png?${pngParams.toString()}`;
+        });
+        previewPngLinks.forEach((link) => {
+          const pngParams = applyProfileSpecificParams(new URLSearchParams(params), link);
+          link.href = `${ingressBase}/preview.png?${pngParams.toString()}`;
+        });
+        previewZplLinks.forEach((link) => {
+          const zplParams = applyProfileSpecificParams(new URLSearchParams(params), link);
+          link.href = `${ingressBase}/preview?${zplParams.toString()}`;
+        });
       }
 
       function schedulePreviewUpdate() {
@@ -1071,15 +1163,31 @@ HTML = """
         renderExistingLogos(data.logo_options || []);
       }
 
-      if (profileSelect) {
-        profileSelect.addEventListener("change", () => {
-          const url = new URL(`${ingressBase}/`, window.location.origin);
-          if (profileSelect.value) url.searchParams.set("profile_id", profileSelect.value);
-          window.location.href = url.toString();
-        });
+      function navigateToProfile(profileId) {
+        const url = new URL(`${ingressBase}/`, window.location.origin);
+        if (profileId) url.searchParams.set("profile_id", profileId);
+        window.location.href = url.toString();
       }
 
-      form.querySelectorAll("input, select").forEach((input) => {
+      [profileSelect, summaryProfileSelect].forEach((select) => {
+        if (!select) return;
+        select.addEventListener("change", () => {
+          const nextValue = select.value || "";
+          if (profileSelect && profileSelect !== select) profileSelect.value = nextValue;
+          if (summaryProfileSelect && summaryProfileSelect !== select) summaryProfileSelect.value = nextValue;
+          navigateToProfile(nextValue);
+        });
+      });
+
+      document.querySelectorAll("[data-stop-details-toggle='1']").forEach((element) => {
+        ["click", "mousedown", "pointerdown", "touchstart"].forEach((eventName) => {
+          element.addEventListener(eventName, (event) => {
+            event.stopPropagation();
+          });
+        });
+      });
+
+      document.querySelectorAll("#label-form input, #label-form select, #label-form textarea, [form=\"label-form\"]").forEach((input) => {
         if (input.dataset && input.dataset.numberOnly === "1") {
           input.addEventListener("input", () => { sanitizeNumericInput(input); schedulePreviewUpdate(); });
           input.addEventListener("change", () => { sanitizeNumericInput(input); applyPreviewUpdate(); });
@@ -1125,8 +1233,6 @@ HTML = """
         });
       }
 
-      previewImage.addEventListener("load", syncPreviewFrameToImage);
-      window.addEventListener("resize", syncPreviewFrameToImage);
       applyPreviewUpdate();
     })();
   </script>
@@ -1330,6 +1436,8 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "qr_error_correction": str(data.get("qr_error_correction") or "M").strip().upper() if str(data.get("qr_error_correction") or "M").strip().upper() in QR_ERROR_CORRECTION_MAP else "M",
         "printable_area_box_enabled": normalize_bool(data.get("printable_area_box_enabled"), False),
         "printable_area_box_margin_mm": normalize_float(data.get("printable_area_box_margin_mm"), DEFAULT_PRINTABLE_AREA_BOX_MARGIN_MM, 0.0, 100.0),
+        "text_block_offset_x_mm": normalize_float(data.get("text_block_offset_x_mm"), DEFAULT_TEXT_BLOCK_OFFSET_X_MM, -100.0, 100.0),
+        "show_in_multi_preview": normalize_bool(data.get("show_in_multi_preview"), DEFAULT_SHOW_IN_MULTI_PREVIEW),
     }
 
 
@@ -1550,21 +1658,26 @@ def default_form_from_profile(profile: Dict | None) -> Dict[str, object]:
     return form
 
 
-def form_data_from_request(opts: Dict) -> Tuple[Dict[str, object], List[Dict]]:
+def form_data_from_source(opts: Dict, source: object) -> Tuple[Dict[str, object], List[Dict]]:
     profile = opts.get("active_profile") or {}
     defaults = default_form_from_profile(profile)
-    selected_qr_fields = selected_qr_field_ids_from_source(profile, request.values)
+    selected_qr_fields = selected_qr_field_ids_from_source(profile, source)
+    getter = getattr(source, "get", None)
     form: Dict[str, object] = {
-        "profile_id": request.values.get("profile_id", defaults.get("profile_id", "")),
+        "profile_id": getter("profile_id", defaults.get("profile_id", "")) if getter else defaults.get("profile_id", ""),
         "qr_field_ids": selected_qr_fields,
-        "copies": request.values.get("copies", defaults.get("copies", "1")),
+        "copies": getter("copies", defaults.get("copies", "1")) if getter else defaults.get("copies", "1"),
     }
-    field_forms = build_field_forms(profile, request.values)
+    field_forms = build_field_forms(profile, source)
     for field in field_forms:
         form[field_value_name(field["id"])] = field["value"]
         if field["print_enabled"]:
             form[field_print_name(field["id"])] = "1"
     return form, field_forms
+
+
+def form_data_from_request(opts: Dict) -> Tuple[Dict[str, object], List[Dict]]:
+    return form_data_from_source(opts, request.values)
 
 
 def validate_required_text(value: object, label: str, language: str) -> str:
@@ -2137,6 +2250,48 @@ def printable_area_box_margin_mm(profile: Dict | None = None) -> float:
     return normalize_float((profile or {}).get("printable_area_box_margin_mm"), DEFAULT_PRINTABLE_AREA_BOX_MARGIN_MM, 0.0, 100.0)
 
 
+def text_block_offset_x_mm(profile: Dict | None = None) -> float:
+    return normalize_float((profile or {}).get("text_block_offset_x_mm"), DEFAULT_TEXT_BLOCK_OFFSET_X_MM, -100.0, 100.0)
+
+
+def shift_horizontal_bounds(left: int, right: int, min_left: int, max_right: int, offset_dots: int) -> Tuple[int, int]:
+    left = int(left)
+    right = int(right)
+    min_left = int(min_left)
+    max_right = int(max_right)
+    if right < left:
+        left, right = right, left
+    width = max(0, right - left)
+    available_width = max(0, max_right - min_left)
+    width = min(width, available_width)
+    new_left = left + int(offset_dots)
+    max_left = max(min_left, max_right - width)
+    new_left = max(min_left, min(max_left, new_left))
+    new_right = min(max_right, new_left + width)
+    return new_left, new_right
+
+
+def body_preview_bottom_y(body_end_y: int, profile: Dict) -> int:
+    return max(0, int(body_end_y) - mm_to_dots(FIELD_GAP_MM, profile) - 1)
+
+
+def footer_preview_top_y(current_bottom_after_draw: int, profile: Dict) -> int:
+    return max(0, int(current_bottom_after_draw) + mm_to_dots(FOOTER_GAP_MM, profile))
+
+
+def draw_text_block_preview_box(img: Image.Image, left: int, top: int, right: int, bottom: int, profile: Dict) -> None:
+    left = max(0, min(img.width - 1, int(left)))
+    top = max(0, min(img.height - 1, int(top)))
+    right = max(left, min(img.width - 1, int(right)))
+    bottom = max(top, min(img.height - 1, int(bottom)))
+    if right <= left or bottom <= top:
+        return
+    draw = ImageDraw.Draw(img)
+    outline = (22, 163, 74)
+    line_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
+    draw.rectangle((left, top, right, bottom), outline=outline, width=line_width)
+
+
 def oriented_label_size_mm(profile: Dict | None = None, rotation_degrees: int = 0) -> Tuple[float, float]:
     width_mm = normalize_float((profile or {}).get("label_width_mm"), 170.0, 1.0, 5000.0)
     height_mm = normalize_float((profile or {}).get("label_height_mm"), 305.0, 1.0, 5000.0)
@@ -2222,9 +2377,8 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
     area_left, area_top, area_right, area_bottom = get_printable_area_rect(printable_w, canvas_h, profile, rotation_degrees=0)
     area_width = max(1, area_right - area_left + 1)
     inner_margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    text_left = min(area_right, area_left + inner_margin_x)
-    text_right = max(text_left, area_right - inner_margin_x)
-    text_width = max(1, text_right - text_left + 1)
+    base_text_left = min(area_right, area_left + inner_margin_x)
+    base_text_right = max(base_text_left, area_right - inner_margin_x)
     current_y = max(layout["top_margin_dots"], area_top)
     if has_qr:
         qr_size = min(layout["qr_size_dots"], area_width, max(1, area_bottom - current_y + 1))
@@ -2235,17 +2389,40 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
         if preview:
             preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
             draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
-        text_left = max(area_left + inner_margin_x, qr_left)
-        text_right = min(area_right - inner_margin_x, qr_left + qr_size - 1)
-        if text_right < text_left:
-            text_left = area_left + inner_margin_x
-            text_right = max(text_left, area_right - inner_margin_x)
-        text_width = max(1, text_right - text_left + 1)
+        base_text_left = max(area_left + inner_margin_x, qr_left)
+        base_text_right = min(area_right - inner_margin_x, qr_left + qr_size - 1)
+        if base_text_right < base_text_left:
+            base_text_left = area_left + inner_margin_x
+            base_text_right = max(base_text_left, area_right - inner_margin_x)
         current_y = qr_top + qr_size + mm_to_dots(8, profile)
-    draw_body_blocks(img, draw, current_y, text_left, text_width, body_blocks, profile)
+
+    text_left, text_right = shift_horizontal_bounds(
+        base_text_left,
+        base_text_right,
+        area_left + inner_margin_x,
+        max(area_left + inner_margin_x, area_right - inner_margin_x),
+        mm_to_dot_offset(text_block_offset_x_mm(profile), profile),
+    )
+    text_width = max(1, text_right - text_left + 1)
+    text_block_top = current_y
+    body_end_y = current_y
+    if body_blocks:
+        body_end_y = draw_body_blocks(img, draw, current_y, text_left, text_width, body_blocks, profile)
+    footer_top_y = None
+    footer_bottom_y = None
     if footer_blocks:
         footer_bottom = (area_bottom + 1) - layout["footer_bottom_margin_dots"]
-        draw_footer_blocks(img, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
+        footer_current_bottom = draw_footer_blocks(img, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
+        footer_top_y = footer_preview_top_y(footer_current_bottom, profile)
+        footer_bottom_y = footer_bottom - 1
+
+    if preview and (body_blocks or footer_blocks):
+        block_top = text_block_top
+        block_bottom = body_preview_bottom_y(body_end_y, profile) if body_blocks else text_block_top
+        if footer_top_y is not None and footer_bottom_y is not None:
+            block_top = min(block_top, footer_top_y) if body_blocks else footer_top_y
+            block_bottom = max(block_bottom, footer_bottom_y)
+        draw_text_block_preview_box(img, text_left, block_top, text_right, block_bottom, profile)
     return img
 
 
@@ -2261,9 +2438,8 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
     area_height = max(1, area_bottom - area_top + 1)
     left_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
     right_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    text_left = min(area_right, area_left + left_margin)
-    text_right = max(text_left, area_right - right_margin)
-    text_width = max(1, text_right - text_left + 1)
+    base_text_left = min(area_right, area_left + left_margin)
+    base_text_right = max(base_text_left, area_right - right_margin)
     text_top = max(layout["top_margin_dots"], area_top)
     if has_qr:
         qr_size = min(layout["qr_size_dots"], area_height, area_width)
@@ -2275,13 +2451,37 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
             preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
             draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
         inter_block_gap = mm_to_dots(8, profile)
-        text_left = min(area_right + 1, qr_left + qr_size + inter_block_gap)
-        text_width = max(1, (area_right + 1) - text_left - right_margin)
+        base_text_left = min(area_right + 1, qr_left + qr_size + inter_block_gap)
+        base_text_right = max(base_text_left, area_right - right_margin)
         text_top = area_top + mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
+
+    text_left, text_right = shift_horizontal_bounds(
+        base_text_left,
+        base_text_right,
+        min(area_right, area_left + left_margin),
+        max(min(area_right, area_left + left_margin), area_right - right_margin),
+        mm_to_dot_offset(text_block_offset_x_mm(profile), profile),
+    )
+    text_width = max(1, text_right - text_left + 1)
+    text_block_top = text_top
+    body_end_y = text_top
+    if body_blocks:
+        body_end_y = draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
+    footer_top_y = None
+    footer_bottom_y = None
     if footer_blocks:
         footer_bottom = (area_bottom + 1) - layout["footer_bottom_margin_dots"]
-        draw_footer_blocks(landscape, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
+        footer_current_bottom = draw_footer_blocks(landscape, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
+        footer_top_y = footer_preview_top_y(footer_current_bottom, profile)
+        footer_bottom_y = footer_bottom - 1
+
+    if preview and (body_blocks or footer_blocks):
+        block_top = text_block_top
+        block_bottom = body_preview_bottom_y(body_end_y, profile) if body_blocks else text_block_top
+        if footer_top_y is not None and footer_bottom_y is not None:
+            block_top = min(block_top, footer_top_y) if body_blocks else footer_top_y
+            block_bottom = max(block_bottom, footer_bottom_y)
+        draw_text_block_preview_box(landscape, text_left, block_top, text_right, block_bottom, profile)
     if rotation_degrees == 90:
         return landscape.transpose(Image.Transpose.ROTATE_270)
     return landscape.transpose(Image.Transpose.ROTATE_90)
@@ -2362,6 +2562,29 @@ def preview_query_from_form(form: Dict[str, object], field_forms: List[Dict]) ->
         if field.get("print_enabled"):
             params.append((field_print_name(field["id"]), "1"))
     return urlencode(params, doseq=True)
+
+
+def preview_profiles_from_form(form: Dict[str, object], label_profiles: List[Dict], language_or_options: object) -> List[Dict]:
+    previews: List[Dict] = []
+    active_profile_id = normalize_string(form.get("profile_id"), "")
+    for profile in label_profiles:
+        if not normalize_bool(profile.get("show_in_multi_preview"), DEFAULT_SHOW_IN_MULTI_PREVIEW):
+            continue
+        preview_form = dict(form)
+        preview_form["profile_id"] = profile.get("id", "")
+        use_live_qr = profile.get("id", "") == active_profile_id
+        if not use_live_qr:
+            preview_form["qr_field_ids"] = []
+        preview_field_forms = build_field_forms(profile, preview_form)
+        previews.append({
+            "id": profile.get("id", ""),
+            "name": profile.get("name", ""),
+            "preview_query": preview_query_from_form(preview_form, preview_field_forms),
+            "printer_target": format_printer_target(profile, language_or_options),
+            "can_print": bool(normalize_string(profile.get("printer_host"), "") and normalize_optional_port(profile.get("printer_port"))),
+            "use_live_qr": use_live_qr,
+        })
+    return previews
 
 
 def blank_editor_form() -> Dict:
@@ -2582,6 +2805,30 @@ def delete_profile_field(profile_id: str, field_id: str, profile_name: str) -> b
     return changed
 
 
+def move_profile_field(profile_id: str, field_id: str, direction: str, profile_name: str) -> bool:
+    opts, _, _ = load_options()
+    profiles = parse_label_profiles(opts.get("label_profiles"))
+    field_store = load_field_store(profiles)
+    fields = list(field_store.get(profile_id, []))
+    current_index = next((idx for idx, field in enumerate(fields) if field.get("id") == field_id), None)
+    if current_index is None:
+        raise ValueError(f"Unknown field: {field_id}")
+    if direction == "up":
+        target_index = max(0, current_index - 1)
+    elif direction == "down":
+        target_index = min(len(fields) - 1, current_index + 1)
+    else:
+        raise ValueError(f"Unsupported move direction: {direction}")
+    if target_index == current_index:
+        return False
+    field = fields.pop(current_index)
+    fields.insert(target_index, field)
+    field_store[profile_id] = fields
+    save_field_store(field_store)
+    LOGGER.info("Moved field %s %s in profile %s (%s)", field_id, direction, profile_id, profile_name)
+    return True
+
+
 ALLOWED_QUICK_FIELD_SETTINGS = {"print_by_default", "always_use_for_qr"}
 
 
@@ -2608,10 +2855,6 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
     profile = opts.get("active_profile") or {}
     layout = effective_layout(profile)
     ui = get_ui_strings(opts.get("ui_language"))
-    preview_display_width_mm = profile.get("label_width_mm", 170.0)
-    preview_display_height_mm = profile.get("label_height_mm", 305.0)
-    if profile.get("print_rotation_degrees") in (90, 270):
-        preview_display_width_mm, preview_display_height_mm = preview_display_height_mm, preview_display_width_mm
     qr_selected_ids = normalize_qr_field_ids(form.get("qr_field_ids", []))
     qr_preview = qr_payload_from_field_forms(field_forms, qr_selected_ids) or ui["none"]
     qr_field_options = [
@@ -2624,6 +2867,8 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         for field in field_forms if not field_supports_logos(field)
     ]
     editor_form = editor_form or blank_editor_form()
+    label_profiles = opts.get("label_profiles", [])
+    preview_profiles = preview_profiles_from_form(form, label_profiles, opts)
     return render_template_string(
         HTML,
         ui=ui,
@@ -2632,7 +2877,8 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         form=form,
         field_forms=field_forms,
         active_profile_fields=[{**field, "supports_logos": field_supports_logos(field), "logo_options": [{**option, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))]} for field in profile.get("fields", [])],
-        label_profiles=opts.get("label_profiles", []),
+        label_profiles=label_profiles,
+        preview_profiles=preview_profiles,
         active_profile_id=opts.get("active_profile_id", ""),
         active_profile_name=opts.get("active_profile_name", ""),
         printer_host=profile.get("printer_host", ""),
@@ -2647,14 +2893,12 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         print_rotation_degrees=profile.get("print_rotation_degrees", 0),
         effective_width_mm=dots_to_mm(layout["effective_width_dots"], profile),
         printer_dpi=profile.get("printer_dpi", DEFAULT_PRINTER_DPI),
+        text_block_offset_x_mm=profile.get("text_block_offset_x_mm", DEFAULT_TEXT_BLOCK_OFFSET_X_MM),
         effective_width_dots=layout["effective_width_dots"],
         width_warning=layout["width_warning"],
-        preview_display_width_mm=preview_display_width_mm,
-        preview_display_height_mm=preview_display_height_mm,
         ingress_base=ingress_base_path(),
-        preview_query=preview_query_from_form(form, field_forms),
         editor_form=editor_form,
-            field_editor_json=field_store_map_for_profile(profile),
+        field_editor_json=field_store_map_for_profile(profile),
         qr_field_options=qr_field_options,
         qr_selected_ids=qr_selected_ids,
         alignments=sorted(ALIGNMENTS),
@@ -2726,23 +2970,31 @@ def index():
 
 @APP.route("/print", methods=["POST"])
 def print_label():
-    opts = load_runtime_options()
-    profile = opts.get("active_profile") or {}
-    form, field_forms = form_data_from_request(opts)
-    result = {"success": False, "message": ui_text(opts, "unknown_error")}
+    target_profile_id = request.form.get("target_profile_id") or request.form.get("profile_id") or None
+    page_profile_id = request.form.get("profile_id") or target_profile_id
+    print_opts = load_runtime_options(target_profile_id)
+    profile = print_opts.get("active_profile") or {}
+    print_source = MultiDict(request.form)
+    if target_profile_id and page_profile_id and target_profile_id != page_profile_id:
+        print_source.setlist("qr_field_ids", [])
+        print_source.setlist("qr_fields", [])
+    form, field_forms = form_data_from_source(print_opts, print_source)
+    result = {"success": False, "message": ui_text(print_opts, "unknown_error")}
     try:
-        field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        field_forms = validate_field_forms(field_forms, print_opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
         zpl = build_zpl(qr_value, field_forms, copies, profile)
-        host, port = resolve_printer_target(profile, opts)
+        host, port = resolve_printer_target(profile, print_opts)
         LOGGER.info("Print request received: profile=%s copies=%s qr_payload=%r", profile.get("id"), copies, qr_value)
         send_to_printer(host, port, zpl)
-        result = {"success": True, "message": ui_text(opts, "sent_labels_message", copies=copies, host=host, port=port, qr_payload=qr_value or ui_text(opts, "none"))}
+        result = {"success": True, "message": ui_text(print_opts, "sent_labels_message", copies=copies, host=host, port=port, qr_payload=qr_value or ui_text(print_opts, "none"))}
     except Exception as exc:
         LOGGER.exception("Print failed")
-        result = {"success": False, "message": ui_text(opts, "print_failed_message", error=exc)}
-    return render_page(form, opts, field_forms, result=result)
+        result = {"success": False, "message": ui_text(print_opts, "print_failed_message", error=exc)}
+    page_opts = load_runtime_options(page_profile_id)
+    page_form, page_field_forms = form_data_from_request(page_opts)
+    return render_page(page_form, page_opts, page_field_forms, result=result)
 
 
 @APP.route("/fields/save", methods=["POST"])
@@ -2827,6 +3079,31 @@ def delete_field():
     except Exception as exc:
         LOGGER.exception("Field delete failed")
         result = {"success": False, "message": ui_text(opts, "field_delete_failed", error=exc)}
+    return render_page(form, opts, field_forms, field_result=result)
+
+
+@APP.route("/fields/move", methods=["POST"])
+def move_field():
+    opts = load_runtime_options(request.form.get("profile_id") or None)
+    profile = opts.get("active_profile") or {}
+    form, field_forms = form_data_from_request(opts)
+    result = None
+    try:
+        if not profile:
+            raise ValueError(ui_text(opts, "profile_not_found"))
+        field_id = sanitize_id(str(request.form.get("field_id") or ""), "")
+        direction = normalize_string(request.form.get("direction"), "")
+        moved = move_profile_field(profile["id"], field_id, direction, profile.get("name", ""))
+        opts = load_runtime_options(profile["id"])
+        form, field_forms = form_data_from_request(opts)
+        direction_label = ui_text(opts, "direction_up") if direction == "up" else ui_text(opts, "direction_down")
+        result = {
+            "success": True,
+            "message": ui_text(opts, "field_moved_message", field=field_id, profile=opts.get("active_profile_name", ""), direction=direction_label) if moved else ui_text(opts, "field_move_unchanged", field=field_id, direction=direction_label),
+        }
+    except Exception as exc:
+        LOGGER.exception("Field move failed")
+        result = {"success": False, "message": ui_text(opts, "field_move_failed", error=exc)}
     return render_page(form, opts, field_forms, field_result=result)
 
 
