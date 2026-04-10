@@ -2,7 +2,13 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.91
+## What changed in v0.1.92
+
+This version restores the missing print calibration settings in the Home Assistant add-on config and applies them to both preview and print.
+
+- restored `print_offset_x_mm` and `print_offset_y_mm` in add-on config and schema
+- applied the same profile print offset to preview and print output
+- removed stale `ignore_printer_width_limit` translation entries
 
 This version fixes the preview crash caused by a missing print-offset conversion helper and restores the print offset fields in the Home Assistant config UI translations.
 

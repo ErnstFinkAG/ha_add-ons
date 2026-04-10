@@ -59,6 +59,8 @@ DEFAULT_LABEL_PROFILES = [
         "printer_host": "",
         "printer_port": None,
         "printer_dpi": DEFAULT_PRINTER_DPI,
+        "print_offset_x_mm": 0.0,
+        "print_offset_y_mm": 0.0,
         "label_width_mm": 170,
         "label_height_mm": 305,
         "qr_size_mm": 170,
@@ -1313,6 +1315,8 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "printer_host": normalize_string(data.get("printer_host"), ""),
         "printer_port": normalize_optional_port(data.get("printer_port")),
         "printer_dpi": normalize_printer_dpi(data.get("printer_dpi"), DEFAULT_PRINTER_DPI),
+        "print_offset_x_mm": normalize_float(data.get("print_offset_x_mm"), 0.0, -50.0, 50.0),
+        "print_offset_y_mm": normalize_float(data.get("print_offset_y_mm"), 0.0, -50.0, 50.0),
         "label_width_mm": normalize_float(data.get("label_width_mm"), 170.0, 50.0, 500.0),
         "label_height_mm": normalize_float(data.get("label_height_mm"), 305.0, 50.0, 1000.0),
         "qr_size_mm": normalize_float(data.get("qr_size_mm"), 170.0, 10.0, 300.0),
@@ -1798,6 +1802,17 @@ def dots_to_mm(dots: int, profile: Dict | None = None) -> float:
     return round(dots / dots_per_mm(profile), 1)
 
 
+def apply_profile_print_offset(img: Image.Image, profile: Dict) -> Image.Image:
+    offset_x = mm_to_dot_offset(float(profile.get("print_offset_x_mm", 0.0)), profile)
+    offset_y = mm_to_dot_offset(float(profile.get("print_offset_y_mm", 0.0)), profile)
+    if offset_x == 0 and offset_y == 0:
+        return img
+    canvas = Image.new("RGBA", img.size, color=(255, 255, 255, 255))
+    source = img.convert("RGBA")
+    canvas.alpha_composite(source, (offset_x, offset_y))
+    return canvas
+
+
 def effective_layout(profile: Dict) -> Dict:
     requested_width_dots = mm_to_dots(profile["label_width_mm"], profile)
     requested_height_dots = mm_to_dots(profile["label_height_mm"], profile)
@@ -2191,7 +2206,8 @@ def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, pr
 
 
 def render_print_image(qr_value: str, field_forms: List[Dict], profile: Dict) -> Image.Image:
-    return render_label_image(qr_value, field_forms, profile, preview=False).convert("1")
+    rendered = render_label_image(qr_value, field_forms, profile, preview=False).convert("RGBA")
+    return prepare_graphic_image(apply_profile_print_offset(rendered, profile))
 
 
 def render_preview_image(qr_value: str, field_forms: List[Dict], profile: Dict) -> Image.Image:

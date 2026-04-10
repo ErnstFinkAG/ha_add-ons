@@ -27,9 +27,7 @@ configuration:
       print_offset_y_mm:
         name: Print offset Y (mm)
         description: Vertical print calibration in mm. Positive values move the printed content downward.
-      ignore_printer_width_limit:
-        name: Ignore printer width limit
-        description: Allow the full configured label width even when it exceeds the normal 168 mm printable width.
+
       label_width_mm:
         name: Label width (mm)
         description: Physical width of the label.

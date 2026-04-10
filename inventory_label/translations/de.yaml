@@ -27,9 +27,7 @@ configuration:
       print_offset_y_mm:
         name: Druckversatz Y (mm)
         description: Vertikale Druckkalibrierung in mm. Positive Werte verschieben den gedruckten Inhalt nach unten.
-      ignore_printer_width_limit:
-        name: Druckbreitenlimit ignorieren
-        description: Verwendet die volle konfigurierte Labelbreite, auch wenn sie die normale druckbare Breite von 168 mm überschreitet.
+
       label_width_mm:
         name: Labelbreite (mm)
         description: Physische Breite des Labels.
