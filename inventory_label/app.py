@@ -154,7 +154,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at {dpi} dpi. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at {dpi} dpi. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. Red outlines show the QR footprint and the text box.",
         "fields_heading": "Configured fields",
         "print_field": "Print",
         "required": "Required",
@@ -185,6 +185,8 @@ UI_STRINGS = {
         "new_field_button": "New field",
         "delete_field_button": "Delete",
         "edit_field_button": "Edit",
+        "move_up_button": "Up",
+        "move_down_button": "Down",
         "no_fields_configured": "No fields configured for this label yet.",
         "field_saved_message": "Field '{field}' saved.",
         "field_deleted_message": "Field '{field}' deleted.",
@@ -260,7 +262,7 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit {dpi} dpi exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
+        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit {dpi} dpi exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Rote Rahmen zeigen die QR-Fläche und den Textblock.",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
         "required": "Pflichtfeld",
@@ -291,6 +293,8 @@ UI_STRINGS = {
         "new_field_button": "Neues Feld",
         "delete_field_button": "Löschen",
         "edit_field_button": "Bearbeiten",
+        "move_up_button": "Hoch",
+        "move_down_button": "Runter",
         "no_fields_configured": "Für dieses Label sind noch keine Felder konfiguriert.",
         "field_saved_message": "Feld '{field}' gespeichert.",
         "field_deleted_message": "Feld '{field}' gelöscht.",
@@ -604,7 +608,6 @@ HTML = """
           </div>
           <div class="tag-list">
             <span class="tag">{{ ui.position }}: {{ ui.position_footer if field.position == 'footer' else ui.position_body }}</span>
-            <span class="tag">{{ ui.field_order_label }}: {{ field.sort_order }}</span>
             <span class="tag">{{ ui.field_summary_default }}: {{ field.default_value or ui.none }}</span>
             <span class="tag">{{ ui.field_summary_style }}: {{ field.font_family }} / {{ field.font_size_mm }} mm / {{ field.alignment }}</span>
             <span class="tag">{{ ui.field_summary_behavior }}: {% if field.print_by_default %}{{ ui.print_field }}{% else %}{{ ui.none }}{% endif %}</span>
@@ -629,6 +632,16 @@ HTML = """
           </div>
           {% endif %}
           <div class="field-actions">
+            <form method="post" action="{{ ingress_base }}/fields/move" style="margin:0;">
+              <input type="hidden" name="field_id" value="{{ field.id }}">
+              <input type="hidden" name="direction" value="up">
+              <button type="submit" class="secondary" {% if not field.can_move_up %}disabled{% endif %}>{{ ui.move_up_button }}</button>
+            </form>
+            <form method="post" action="{{ ingress_base }}/fields/move" style="margin:0;">
+              <input type="hidden" name="field_id" value="{{ field.id }}">
+              <input type="hidden" name="direction" value="down">
+              <button type="submit" class="secondary" {% if not field.can_move_down %}disabled{% endif %}>{{ ui.move_down_button }}</button>
+            </form>
             <button type="button" class="secondary edit-field-button" data-field-id="{{ field.id }}">{{ ui.edit_field_button }}</button>
             <form method="post" action="{{ ingress_base }}/fields/delete" style="margin:0;">
               <input type="hidden" name="field_id" value="{{ field.id }}">
@@ -746,11 +759,7 @@ HTML = """
                 {% endfor %}
               </select>
             </div>
-            <div>
-              <label for="editor_sort_order">{{ ui.field_order_label }}</label>
-              <input id="editor_sort_order" name="sort_order" type="number" min="1" max="9999" step="1" value="{{ editor_form.sort_order }}">
-              <p class="muted small">{{ ui.field_order_help }}</p>
-            </div>
+            <input id="editor_sort_order" name="sort_order" type="hidden" value="{{ editor_form.sort_order }}">
             <div>
               <label for="editor_max_lines">{{ ui.max_lines_label }}</label>
               <input id="editor_max_lines" name="max_lines" type="number" min="1" max="8" step="1" value="{{ editor_form.max_lines }}">
@@ -2059,6 +2068,21 @@ def draw_background_for_preview(img: Image.Image, requested_w: int, requested_h:
     draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=(205, 205, 205), width=2)
 
 
+def draw_preview_outline(draw: ImageDraw.ImageDraw, left: int, top: int, width: int, bottom: int, profile: Dict) -> None:
+    if width <= 0 or bottom <= top:
+        return
+    border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
+    draw.rectangle((left, top, left + width - 1, bottom - 1), outline=(220, 38, 38), width=border_width)
+
+
+def text_box_bottom_for_preview(text_top: int, body_bottom: int, footer_bottom: int | None, canvas_h: int, profile: Dict) -> int:
+    gap = mm_to_dots(FIELD_GAP_MM, profile)
+    if footer_bottom is not None:
+        return max(text_top + 1, footer_bottom)
+    content_bottom = body_bottom - gap if body_bottom > text_top else body_bottom
+    return max(text_top + 1, min(canvas_h, content_bottom))
+
+
 def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body_blocks: List[Dict], footer_blocks: List[Dict], profile: Dict, preview: bool) -> Image.Image:
     layout = effective_layout(profile)
     img = Image.new("RGBA", (printable_w, canvas_h), color=(255, 255, 255, 255))
@@ -2074,15 +2098,18 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
         qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
         img.paste(qr_img, (qr_left, qr_top))
         if preview:
-            preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
-            draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
+            draw_preview_outline(draw, qr_left, qr_top, qr_size, qr_top + qr_size, profile)
         margin_x = max((printable_w - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
         text_width = max(1, printable_w - (margin_x * 2))
         current_y = qr_top + qr_size + mm_to_dots(8, profile)
-    draw_body_blocks(img, draw, current_y, margin_x, text_width, body_blocks, profile)
+    text_top = current_y
+    body_bottom = draw_body_blocks(img, draw, current_y, margin_x, text_width, body_blocks, profile)
+    footer_bottom = None
     if footer_blocks:
         footer_bottom = canvas_h - layout["footer_bottom_margin_dots"]
         draw_footer_blocks(img, draw, footer_bottom, margin_x, text_width, footer_blocks, profile)
+    if preview and (body_blocks or footer_blocks):
+        draw_preview_outline(draw, margin_x, text_top, text_width, text_box_bottom_for_preview(text_top, body_bottom, footer_bottom, canvas_h, profile), profile)
     return img
 
 
@@ -2105,16 +2132,18 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
         qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
         landscape.paste(qr_img, (qr_left, qr_top))
         if preview:
-            preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
-            draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
+            draw_preview_outline(draw, qr_left, qr_top, qr_size, qr_top + qr_size, profile)
         inter_block_gap = mm_to_dots(8, profile)
         text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
         text_width = max(1, logical_w - text_left - right_margin)
         text_top = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
+    body_bottom = draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
+    footer_bottom = None
     if footer_blocks:
         footer_bottom = logical_h - layout["footer_bottom_margin_dots"]
         draw_footer_blocks(landscape, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
+    if preview and (body_blocks or footer_blocks):
+        draw_preview_outline(draw, text_left, text_top, text_width, text_box_bottom_for_preview(text_top, body_bottom, footer_bottom, logical_h, profile), profile)
     if rotation_degrees == 90:
         return landscape.transpose(Image.Transpose.ROTATE_270)
     return landscape.transpose(Image.Transpose.ROTATE_90)
@@ -2409,6 +2438,42 @@ def delete_global_field(field_id: str) -> bool:
     return changed
 
 
+def move_global_field(field_id: str, direction: str) -> Dict | None:
+    opts, _, _ = load_options()
+    profiles = parse_label_profiles(opts.get("label_profiles"))
+    fields = list(load_field_store(profiles))
+    ordered = sort_fields_by_order(fields)
+    selected = next((field for field in ordered if field.get("id") == field_id), None)
+    if selected is None:
+        return None
+    position = normalize_position(selected.get("position"), "body")
+    group = [field for field in ordered if normalize_position(field.get("position"), "body") == position]
+    ids = [field.get("id") for field in group]
+    try:
+        current_index = ids.index(field_id)
+    except ValueError:
+        return None
+    if direction == "up":
+        target_index = current_index - 1
+    elif direction == "down":
+        target_index = current_index + 1
+    else:
+        raise ValueError(f"Unsupported move direction: {direction}")
+    if target_index < 0 or target_index >= len(group):
+        return selected
+    group[current_index], group[target_index] = group[target_index], group[current_index]
+    new_sort_orders = {field.get("id"): idx for idx, field in enumerate(group, start=1)}
+    rewritten = []
+    for index, field in enumerate(ordered, start=1):
+        updated = dict(field)
+        if normalize_position(updated.get("position"), "body") == position:
+            updated["sort_order"] = new_sort_orders.get(updated.get("id"), field_sort_order_key(updated, index))
+        rewritten.append(updated)
+    save_field_store(rewritten)
+    LOGGER.info("Moved global field %s %s", field_id, direction)
+    return next((field for field in rewritten if field.get("id") == field_id), selected)
+
+
 def update_global_field_setting(field_id: str, setting: str, value: bool) -> Dict:
     if setting not in ALLOWED_QUICK_FIELD_SETTINGS:
         raise ValueError(f"Unsupported field setting: {setting}")
@@ -2449,13 +2514,23 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
             "preview_query": preview_query_from_form(form, field_forms, profile.get("id")),
         })
     preview_profile_names_text = ", ".join(profile.get("name", "") for profile in preview_profiles) or ui["none"]
+    ordered_configured_fields = sort_fields_by_order(opts.get("fields", []))
+    move_flags: Dict[str, Dict[str, bool]] = {}
+    for position in ("body", "footer"):
+        group = [field for field in ordered_configured_fields if normalize_position(field.get("position"), "body") == position]
+        for index, field in enumerate(group):
+            move_flags[field.get("id", "")] = {
+                "can_move_up": index > 0,
+                "can_move_down": index < (len(group) - 1),
+            }
     configured_fields = [
         {
             **field,
             "supports_logos": field_supports_logos(field),
             "logo_options": [{**option, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))],
+            **move_flags.get(field.get("id", ""), {"can_move_up": False, "can_move_down": False}),
         }
-        for field in opts.get("fields", [])
+        for field in ordered_configured_fields
     ]
     return render_template_string(
         HTML,
@@ -2631,6 +2706,26 @@ def save_field():
         editor_form["original_field_id"] = request.form.get("original_field_id", "")
         result = {"success": False, "message": ui_text(opts, "field_save_failed", error=exc)}
     return render_page(form, opts, field_forms, field_result=result, editor_form=editor_form)
+
+
+@APP.route("/fields/move", methods=["POST"])
+def move_field():
+    opts = load_runtime_options()
+    form, field_forms = form_data_from_request(opts)
+    if not opts.get("label_profiles"):
+        result = {"success": False, "message": ui_text(opts, "no_profiles_configured")}
+        return render_page(form, opts, field_forms, field_result=result)
+    try:
+        field_id = sanitize_id(str(request.form.get("field_id") or ""), "")
+        direction = normalize_string(request.form.get("direction"), "")
+        moved = move_global_field(field_id, direction)
+        opts = load_runtime_options()
+        form, field_forms = form_data_from_request(opts)
+        result = {"success": moved is not None, "message": ui_text(opts, "field_saved_message", field=(moved or {}).get("name", field_id)) if moved else ui_text(opts, "field_save_failed", error=field_id or ui_text(opts, "unknown_error"))}
+    except Exception as exc:
+        LOGGER.exception("Field move failed")
+        result = {"success": False, "message": ui_text(opts, "field_save_failed", error=exc)}
+    return render_page(form, opts, field_forms, field_result=result)
 
 
 @APP.route("/fields/delete", methods=["POST"])

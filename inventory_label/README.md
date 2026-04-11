@@ -2,7 +2,14 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.60
+## What changed in v0.1.61
+
+This version replaces numeric field ordering with up/down field buttons and adds a red preview outline for the text box.
+
+- fields are reordered with up/down buttons in the field list
+- the numeric field order input was removed from the editor
+- preview now shows a red border around the text box area
+
 
 This version fixes the web UI crash introduced with field ordering.
 
