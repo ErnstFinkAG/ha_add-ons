@@ -2,7 +2,9 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.58
+This version adds per-field text block ordering so fields can switch render positions within the body or footer.
+
+## What changed in v0.1.59
 
 Footer fields can now render selected logos and text together, with the text placed below the logos. Mixed footer logo/text fields keep separate default text and default selected logos.
 
@@ -95,6 +97,7 @@ Field settings supported in the UI:
 - footer fields may combine logo selection and text in the same field
 - `logo_height_mm`
 - `max_lines`
+- `sort_order`: render order inside the body or footer text block
 
 ## Web UI
 

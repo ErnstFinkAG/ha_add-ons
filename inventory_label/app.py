@@ -162,6 +162,8 @@ UI_STRINGS = {
         "position": "Position",
         "position_body": "Body",
         "position_footer": "Footer",
+        "field_order_label": "Text block order",
+        "field_order_help": "Lower numbers are rendered first inside the body or footer text block.",
         "configured_label_mapping": "Current label setup",
                 "current_qr_payload": "Current QR payload",
         "requested_label": "Requested label",
@@ -266,6 +268,8 @@ UI_STRINGS = {
         "position": "Position",
         "position_body": "Inhalt",
         "position_footer": "Footer",
+        "field_order_label": "Reihenfolge im Textblock",
+        "field_order_help": "Kleinere Zahlen werden innerhalb des Inhalts- oder Footer-Textblocks zuerst gerendert.",
         "configured_label_mapping": "Aktuelle Etikettenkonfiguration",
                 "current_qr_payload": "Aktueller QR-Inhalt",
         "requested_label": "Gewünschtes Label",
@@ -600,6 +604,7 @@ HTML = """
           </div>
           <div class="tag-list">
             <span class="tag">{{ ui.position }}: {{ ui.position_footer if field.position == 'footer' else ui.position_body }}</span>
+            <span class="tag">{{ ui.field_order_label }}: {{ field.sort_order }}</span>
             <span class="tag">{{ ui.field_summary_default }}: {{ field.default_value or ui.none }}</span>
             <span class="tag">{{ ui.field_summary_style }}: {{ field.font_family }} / {{ field.font_size_mm }} mm / {{ field.alignment }}</span>
             <span class="tag">{{ ui.field_summary_behavior }}: {% if field.print_by_default %}{{ ui.print_field }}{% else %}{{ ui.none }}{% endif %}</span>
@@ -742,6 +747,11 @@ HTML = """
               </select>
             </div>
             <div>
+              <label for="editor_sort_order">{{ ui.field_order_label }}</label>
+              <input id="editor_sort_order" name="sort_order" type="number" min="1" max="9999" step="1" value="{{ editor_form.sort_order }}">
+              <p class="muted small">{{ ui.field_order_help }}</p>
+            </div>
+            <div>
               <label for="editor_max_lines">{{ ui.max_lines_label }}</label>
               <input id="editor_max_lines" name="max_lines" type="number" min="1" max="8" step="1" value="{{ editor_form.max_lines }}">
             </div>
@@ -784,6 +794,7 @@ HTML = """
       const ingressBase = {{ ingress_base|tojson }};
       const noLogosUploadedText = {{ ui.no_logos_uploaded|tojson }};
       const defaultLogoLabelText = {{ ui.default_logo_label|tojson }};
+      const initialNextFieldSortOrder = {{ next_field_sort_order|tojson }};
       const logoOrderLabelText = {{ ui.logo_order_label|tojson }};
       const removeLogoLabelText = {{ ui.remove_logo_label|tojson }};
       if (!form) return;
@@ -888,6 +899,15 @@ HTML = """
         `).join("");
       }
 
+      function nextFieldSortOrder() {
+        const values = Object.values(fieldData || {}).map((item) => {
+          const parsed = parseInt(item && item.sort_order != null ? item.sort_order : "", 10);
+          return Number.isNaN(parsed) ? 0 : parsed;
+        });
+        const currentMax = values.length ? Math.max(...values) : 0;
+        return Math.max(initialNextFieldSortOrder || 1, currentMax + 1);
+      }
+
       function resetFieldEditor() {
         if (!fieldEditorForm) return;
         setValue("original_field_id", "");
@@ -899,6 +919,7 @@ HTML = """
         setValue("editor_font_family", "sans");
         setValue("editor_font_size_mm", "7.0");
         setValue("editor_position", "body");
+        setValue("editor_sort_order", String(nextFieldSortOrder()));
         setValue("editor_max_lines", "3");
         setValue("editor_footer_bottom_margin_mm", "0.0");
         setValue("editor_value_options_text", "");
@@ -930,6 +951,7 @@ HTML = """
         setValue("editor_font_family", data.font_family || "sans");
         setValue("editor_font_size_mm", data.font_size_mm || "7.0");
         setValue("editor_position", data.position || "body");
+        setValue("editor_sort_order", data.sort_order || nextFieldSortOrder());
         setValue("editor_max_lines", data.max_lines || "3");
         setValue("editor_footer_bottom_margin_mm", data.footer_bottom_margin_mm ?? "0.0");
         setValue("editor_value_options_text", data.value_options_text || "");
@@ -1095,6 +1117,18 @@ def sanitize_id(value: str, fallback: str) -> str:
     return normalized or fallback
 
 
+def field_sort_order_key(field: object, default: int = 9999) -> int:
+    if isinstance(field, dict):
+        return normalize_int(field.get("sort_order"), default, 1, 9999)
+    return default
+
+
+def sort_fields_by_order(fields: List[Dict]) -> List[Dict]:
+    enumerated = list(enumerate(fields))
+    enumerated.sort(key=lambda item: (field_sort_order_key(item[1], item[0] + 1), item[0], str(item[1].get("name") or "").lower(), str(item[1].get("id") or "")))
+    return [dict(item[1]) for item in enumerated]
+
+
 def ensure_asset_directories() -> None:
     os.makedirs(LOGO_ASSET_PATH, exist_ok=True)
 
@@ -1165,6 +1199,7 @@ def normalize_profile_field(raw: object, idx: int) -> Dict:
         "number_only": normalize_bool(data.get("number_only"), False),
         "suffix": str(data.get("suffix") or "").strip(),
         "position": position,
+        "sort_order": normalize_int(data.get("sort_order", data.get("field_order", idx)), idx, 1, 9999),
         "footer_text": footer_text,
         "footer_bottom_margin_mm": normalize_float(data.get("footer_bottom_margin_mm"), 0.0, 0.0, 100.0),
         "append_current_date": normalize_bool(data.get("append_current_date"), False),
@@ -1298,7 +1333,7 @@ def merge_field_lists(*field_lists: object) -> List[Dict]:
                 continue
             seen.add(field_id)
             merged.append(field)
-    return merged
+    return sort_fields_by_order(merged)
 
 
 def load_field_store(profiles: List[Dict], legacy_seed: Dict[str, List[Dict]] | None = None) -> List[Dict]:
@@ -1323,7 +1358,8 @@ def load_field_store(profiles: List[Dict], legacy_seed: Dict[str, List[Dict]] | 
 
 
 def save_field_store(store: List[Dict]) -> None:
-    serializable = [normalize_profile_field(field, idx) for idx, field in enumerate(store, start=1)]
+    ordered = sort_fields_by_order([normalize_profile_field(field, idx) for idx, field in enumerate(store, start=1)])
+    serializable = [normalize_profile_field(field, idx) for idx, field in enumerate(ordered, start=1)]
     with open(FIELD_STORE_PATH, "w", encoding="utf-8") as handle:
         json.dump(serializable, handle, ensure_ascii=False, indent=2)
 
@@ -1384,7 +1420,7 @@ def field_supports_text(field: Dict) -> bool:
 def build_field_forms(fields: List[Dict], source: Dict | None = None) -> List[Dict]:
     source = source or {}
     forms: List[Dict] = []
-    for field in fields:
+    for field in sort_fields_by_order(fields):
         value_key = field_value_name(field["id"])
         logo_value_key = field_logo_value_name(field["id"])
         logo_present_key = field_logo_present_name(field["id"])
@@ -2173,6 +2209,7 @@ def blank_editor_form() -> Dict:
         "number_only": False,
         "suffix": "",
         "position": "body",
+        "sort_order": 1,
         "footer_text": False,
         "footer_bottom_margin_mm": 0.0,
         "append_current_date": False,
@@ -2208,6 +2245,7 @@ def editor_form_from_field(field: Dict | None) -> Dict:
         "number_only": field.get("number_only", False),
         "suffix": field.get("suffix", ""),
         "position": field.get("position", "body"),
+        "sort_order": normalize_int(field.get("sort_order"), 1, 1, 9999),
         "footer_text": normalize_bool(field.get("footer_text"), field.get("position") == "footer"),
         "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
         "append_current_date": field.get("append_current_date", False),
@@ -2250,6 +2288,7 @@ def validate_and_normalize_editor_payload(source: Dict, language: str) -> Tuple[
             "number_only": source.get("number_only"),
             "suffix": source.get("suffix", ""),
             "position": source.get("position", "body"),
+            "sort_order": source.get("sort_order", 1),
             "footer_text": source.get("footer_text"),
             "footer_bottom_margin_mm": source.get("footer_bottom_margin_mm", 0.0),
             "append_current_date": source.get("append_current_date"),
@@ -2400,7 +2439,8 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         }
         for field in field_forms if field_supports_text(field)
     ]
-    editor_form = editor_form or blank_editor_form()
+    next_field_sort_order = max((field_sort_order_key(field, idx + 1) for idx, field in enumerate(opts.get("fields", []))), default=0) + 1
+    editor_form = editor_form or {**blank_editor_form(), "sort_order": next_field_sort_order}
     preview_profiles = []
     for profile in opts.get("preview_profiles", []):
         preview_profiles.append({
@@ -2576,6 +2616,7 @@ def save_field():
             "number_only": normalize_bool(request.form.get("number_only"), False),
             "suffix": request.form.get("suffix", ""),
             "position": request.form.get("position", "body"),
+            "sort_order": request.form.get("sort_order", 1),
             "footer_text": normalize_bool(request.form.get("footer_text"), False),
             "footer_bottom_margin_mm": request.form.get("footer_bottom_margin_mm", 0.0),
             "append_current_date": normalize_bool(request.form.get("append_current_date"), False),
