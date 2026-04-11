@@ -4,7 +4,7 @@ configuration:
     description: Sprache der Add-on-Weboberfläche.
   label_profiles:
     name: Etikettenprofile
-    description: Erstelle pro Label ein eigenes Profil. Felddefinitionen werden im Add-on-Web-UI pro ausgewähltem Label verwaltet.
+    description: Erstelle pro Etikettenprofil einen Eintrag. Die globalen Felddefinitionen werden einmalig in der Add-on-Weboberfläche verwaltet und gelten für alle Profile.
     fields:
       id:
         name: Profil-ID
@@ -18,6 +18,9 @@ configuration:
       printer_port:
         name: Drucker-Port
         description: Raw-TCP-Port des Druckers, normalerweise 9100.
+      printer_dpi:
+        name: Drucker-DPI
+        description: Druckerauflösung für Rendering und Vorschau-Export.
       label_width_mm:
         name: Labelbreite (mm)
         description: Physische Breite des Labels.
@@ -42,3 +45,6 @@ configuration:
       qr_error_correction:
         name: QR-Fehlerkorrektur
         description: Fehlerkorrekturstufe des QR-Codes.
+      show_in_preview:
+        name: In Vorschau zeigen
+        description: Aktiviert dieses Profil im Mehrfach-Vorschaubereich der Weboberfläche.

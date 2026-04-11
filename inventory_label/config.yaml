@@ -1,10 +1,10 @@
 name: "Inventory Label"
-version: "0.1.54"
+version: "0.1.55"
 slug: "inventory_label"
 description: >-
   Print large QR-code labels to a networked Zebra ZT420/ZT421 with live PNG preview,
-  English/German UI, label profiles configured in the add-on settings, and per-label
-  field management in the web UI.
+  English/German UI, label profiles configured in the add-on settings, global field
+  management in the web UI, and multi-profile preview cards.
 url: "https://github.com/ErnstFinkAG/ha_add-ons/tree/main/inventory_label"
 startup: services
 boot: auto
@@ -33,6 +33,7 @@ options:
       print_rotation_degrees: 0
       qr_quiet_zone_modules: 3
       qr_error_correction: "M"
+      show_in_preview: true
 schema:
   ui_language: "list(de|en)"
   label_profiles:
@@ -49,3 +50,4 @@ schema:
       print_rotation_degrees: "list(0|90|270)"
       qr_quiet_zone_modules: int
       qr_error_correction: "list(L|M|Q|H)"
+      show_in_preview: bool?
