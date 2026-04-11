@@ -63,6 +63,8 @@ DEFAULT_LABEL_PROFILES = [
         "label_height_mm": 305,
         "qr_size_mm": 170,
         "top_margin_mm": 0,
+        "left_margin_mm": 0,
+        "text_block_margin_left_mm": 0,
         "footer_bottom_margin_mm": 0,
         "print_rotation_degrees": 0,
         "qr_quiet_zone_modules": 3,
@@ -248,7 +250,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at {dpi} dpi. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at {dpi} dpi. Profile margin settings are ignored in preview and only affect print output. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
         "fields_heading": "Configured fields",
         "print_field": "Print",
         "required": "Required",
@@ -349,7 +351,7 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit {dpi} dpi exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
+        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit {dpi} dpi exportiert. Profil-Margins werden in der Vorschau ignoriert und wirken nur auf den Druck. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
         "required": "Pflichtfeld",
@@ -1260,6 +1262,8 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "label_height_mm": normalize_float(data.get("label_height_mm"), 305.0, 50.0, 1000.0),
         "qr_size_mm": normalize_float(data.get("qr_size_mm"), 170.0, 10.0, 300.0),
         "top_margin_mm": normalize_float(data.get("top_margin_mm"), 0.0, 0.0, 100.0),
+        "left_margin_mm": normalize_float(data.get("left_margin_mm"), 0.0, 0.0, 100.0),
+        "text_block_margin_left_mm": normalize_float(data.get("text_block_margin_left_mm"), 0.0, 0.0, 100.0),
         "footer_bottom_margin_mm": normalize_float(data.get("footer_bottom_margin_mm"), 0.0, 0.0, 50.0),
         "print_rotation_degrees": normalize_rotation_degrees(data.get("print_rotation_degrees"), 0),
         "qr_default_value": "" if data.get("qr_default_value") is None else str(data.get("qr_default_value")),
@@ -1757,6 +1761,10 @@ def mm_to_dots(mm_value: float, profile: Dict | int | float | None = None) -> in
     return max(1, int(round(float(mm_value) * dots_per_mm(profile))))
 
 
+def mm_to_dots_nonnegative(mm_value: float, profile: Dict | int | float | None = None) -> int:
+    return max(0, int(round(float(mm_value) * dots_per_mm(profile))))
+
+
 def dots_to_mm(dots: int, profile: Dict | int | float | None = None) -> float:
     return round(dots / dots_per_mm(profile), 1)
 
@@ -1765,12 +1773,14 @@ def printer_max_width_dots(profile: Dict | int | float | None = None) -> int:
     return mm_to_dots(PRINTER_MAX_WIDTH_MM, profile)
 
 
-def effective_layout(profile: Dict) -> Dict:
+def effective_layout(profile: Dict, preview: bool = False) -> Dict:
     requested_width_dots = mm_to_dots(profile["label_width_mm"], profile)
     requested_height_dots = mm_to_dots(profile["label_height_mm"], profile)
     qr_size_dots = mm_to_dots(profile["qr_size_mm"], profile)
-    top_margin_dots = mm_to_dots(profile["top_margin_mm"], profile)
-    footer_bottom_margin_dots = mm_to_dots(profile.get("footer_bottom_margin_mm", 0.0), profile)
+    top_margin_dots = mm_to_dots_nonnegative(0.0 if preview else profile.get("top_margin_mm", 0.0), profile)
+    left_margin_dots = mm_to_dots_nonnegative(0.0 if preview else profile.get("left_margin_mm", 0.0), profile)
+    text_block_margin_left_dots = mm_to_dots_nonnegative(0.0 if preview else profile.get("text_block_margin_left_mm", 0.0), profile)
+    footer_bottom_margin_dots = mm_to_dots_nonnegative(0.0 if preview else profile.get("footer_bottom_margin_mm", 0.0), profile)
     max_width_dots = printer_max_width_dots(profile)
     effective_width_dots = min(requested_width_dots, max_width_dots)
     return {
@@ -1778,6 +1788,8 @@ def effective_layout(profile: Dict) -> Dict:
         "requested_height_dots": requested_height_dots,
         "qr_size_dots": qr_size_dots,
         "top_margin_dots": top_margin_dots,
+        "left_margin_dots": left_margin_dots,
+        "text_block_margin_left_dots": text_block_margin_left_dots,
         "footer_bottom_margin_dots": footer_bottom_margin_dots,
         "effective_width_dots": effective_width_dots,
         "width_warning": requested_width_dots > max_width_dots,
@@ -2046,7 +2058,7 @@ def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int) -> Tupl
 def draw_footer_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, bottom_y: int, box_left: int, box_width: int, footer_blocks: List[Dict], profile: Dict) -> int:
     current_bottom = bottom_y
     for block in reversed(footer_blocks):
-        current_bottom -= mm_to_dots(block.get("footer_bottom_margin_mm", 0.0), profile)
+        current_bottom -= mm_to_dots_nonnegative(block.get("footer_bottom_margin_mm", 0.0), profile)
         total_h, payload, lines, spacing = block_height(draw, block, box_width)
         top_y = current_bottom - total_h
         if block.get("type") == "logo_row":
@@ -2072,57 +2084,66 @@ def draw_background_for_preview(img: Image.Image, requested_w: int, requested_h:
 
 
 def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body_blocks: List[Dict], footer_blocks: List[Dict], profile: Dict, preview: bool) -> Image.Image:
-    layout = effective_layout(profile)
+    layout = effective_layout(profile, preview=preview)
     img = Image.new("RGBA", (printable_w, canvas_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(img)
     has_qr = bool(normalize_qr_value(qr_value))
-    margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    text_width = max(1, printable_w - (margin_x * 2))
+    left_margin = layout["left_margin_dots"]
+    default_text_margin = mm_to_dots_nonnegative(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    text_shift = layout["text_block_margin_left_dots"]
+    text_left = min(max(0, left_margin + default_text_margin + text_shift), max(0, printable_w - 1))
+    text_right = max(text_left + 1, printable_w - default_text_margin)
+    text_width = max(1, text_right - text_left)
     current_y = layout["top_margin_dots"]
     if has_qr:
-        qr_size = min(layout["qr_size_dots"], printable_w)
-        qr_left = max((printable_w - qr_size) // 2, 0)
+        qr_size = min(layout["qr_size_dots"], max(1, printable_w - left_margin))
+        qr_left_base = max((printable_w - qr_size) // 2, 0)
+        qr_left = min(max(qr_left_base + left_margin, left_margin), max(0, printable_w - qr_size))
         qr_top = layout["top_margin_dots"]
         qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
         img.paste(qr_img, (qr_left, qr_top))
         if preview:
             preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
             draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
-        margin_x = max((printable_w - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
-        text_width = max(1, printable_w - (margin_x * 2))
-        current_y = qr_top + qr_size + mm_to_dots(8, profile)
-    draw_body_blocks(img, draw, current_y, margin_x, text_width, body_blocks, profile)
+        text_left = min(max(qr_left, left_margin + default_text_margin) + text_shift, max(0, printable_w - 1))
+        text_right = min(max(text_left + 1, qr_left + qr_size), max(text_left + 1, printable_w - default_text_margin))
+        text_width = max(1, text_right - text_left)
+        current_y = qr_top + qr_size + mm_to_dots_nonnegative(8, profile)
+    draw_body_blocks(img, draw, current_y, text_left, text_width, body_blocks, profile)
     if footer_blocks:
         footer_bottom = canvas_h - layout["footer_bottom_margin_dots"]
-        draw_footer_blocks(img, draw, footer_bottom, margin_x, text_width, footer_blocks, profile)
+        draw_footer_blocks(img, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
     return img
 
 
 def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_blocks: List[Dict], footer_blocks: List[Dict], profile: Dict, preview: bool, rotation_degrees: int) -> Image.Image:
-    layout = effective_layout(profile)
+    layout = effective_layout(profile, preview=preview)
     logical_w = canvas_h
     logical_h = printable_w
     landscape = Image.new("RGBA", (logical_w, logical_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(landscape)
     has_qr = bool(normalize_qr_value(qr_value))
-    left_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    right_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    text_left = left_margin
+    left_margin = layout["left_margin_dots"]
+    top_margin = layout["top_margin_dots"]
+    default_text_margin = mm_to_dots_nonnegative(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    text_shift = layout["text_block_margin_left_dots"]
+    right_margin = default_text_margin
+    text_left = min(max(0, left_margin + default_text_margin + text_shift), max(0, logical_w - 1))
     text_width = max(1, logical_w - text_left - right_margin)
-    text_top = layout["top_margin_dots"]
+    text_top = min(max(0, top_margin + default_text_margin), max(0, logical_h - 1))
     if has_qr:
-        qr_size = min(layout["qr_size_dots"], logical_h)
-        qr_left = min(max(layout["top_margin_dots"], 0), max(0, logical_w - qr_size))
-        qr_top = max((logical_h - qr_size) // 2, 0)
+        qr_size = min(layout["qr_size_dots"], max(1, logical_h - top_margin))
+        qr_left = min(max(0, left_margin), max(0, logical_w - qr_size))
+        qr_top_base = max((logical_h - qr_size) // 2, 0)
+        qr_top = min(max(qr_top_base + top_margin, top_margin), max(0, logical_h - qr_size))
         qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
         landscape.paste(qr_img, (qr_left, qr_top))
         if preview:
             preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
             draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
-        inter_block_gap = mm_to_dots(8, profile)
-        text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
+        inter_block_gap = mm_to_dots_nonnegative(8, profile)
+        text_left = min(max(0, qr_left + qr_size + inter_block_gap + text_shift), max(0, logical_w - 1))
         text_width = max(1, logical_w - text_left - right_margin)
-        text_top = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
     draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
     if footer_blocks:
         footer_bottom = logical_h - layout["footer_bottom_margin_dots"]
@@ -2141,7 +2162,7 @@ def orient_preview_for_display(img: Image.Image, rotation_degrees: int) -> Image
 
 
 def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, preview: bool) -> Image.Image:
-    layout = effective_layout(profile)
+    layout = effective_layout(profile, preview=preview)
     requested_w = layout["requested_width_dots"]
     requested_h = layout["requested_height_dots"]
     printable_w = layout["effective_width_dots"]

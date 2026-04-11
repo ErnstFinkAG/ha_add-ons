@@ -2,16 +2,16 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.55
+## What changed in v0.1.56
 
-This version moves field definitions to one global shared field set and adds multi-profile preview support.
+This version refines profile margins for print and adds new left-side margin controls.
 
-- fields are now global and apply to all label profiles
-- the label switch was removed from the web UI
-- each label profile now supports `show_in_preview`
-- the preview area renders one preview card per profile with `show_in_preview: true`
-- each preview card has its own print, ZPL preview, and PNG preview actions
-- older per-profile field storage is merged into one global field list automatically
+- profile margin settings now affect print output only and are ignored in preview
+- top and left profile margins now follow label orientation, so top stays top and left stays left on rotated labels
+- each label profile now supports `left_margin_mm`
+- each label profile now supports `text_block_margin_left_mm`
+- the text block can be shifted to the right independently of the QR block
+- the global-field and multi-profile preview behavior from v0.1.55 remains in place
 
 ## Add-on config
 
@@ -30,6 +30,8 @@ label_profiles:
     label_height_mm: 305
     qr_size_mm: 170
     top_margin_mm: 0
+    left_margin_mm: 0
+    text_block_margin_left_mm: 0
     footer_bottom_margin_mm: 0
     print_rotation_degrees: 0
     qr_quiet_zone_modules: 3
@@ -44,6 +46,8 @@ label_profiles:
     label_height_mm: 305
     qr_size_mm: 160
     top_margin_mm: 0
+    left_margin_mm: 0
+    text_block_margin_left_mm: 0
     footer_bottom_margin_mm: 0
     print_rotation_degrees: 90
     qr_quiet_zone_modules: 4
@@ -52,6 +56,8 @@ label_profiles:
 ```
 
 `show_in_preview` defaults to `false` when omitted.
+
+Profile margin settings (`top_margin_mm`, `left_margin_mm`, `text_block_margin_left_mm`, `footer_bottom_margin_mm`) affect **print only**. The PNG preview ignores those profile margins so the preview stays layout-focused. On rotated labels, top and left margins follow the label orientation.
 
 ## Field management in the web UI
 

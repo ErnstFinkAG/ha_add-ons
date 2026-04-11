@@ -32,10 +32,16 @@ configuration:
         description: Printed QR size.
       top_margin_mm:
         name: Top margin (mm)
-        description: Top offset before placing the QR code.
+        description: Print-only top offset. It follows the label orientation, so top stays top even on rotated labels.
+      left_margin_mm:
+        name: Left margin (mm)
+        description: Print-only left offset. It follows the label orientation, so left stays left even on rotated labels.
+      text_block_margin_left_mm:
+        name: Text block margin left (mm)
+        description: Print-only extra left offset for the text block. This shifts text content to the right.
       footer_bottom_margin_mm:
         name: Footer bottom margin (mm)
-        description: Bottom offset for footer text.
+        description: Print-only bottom offset for footer text. Preview ignores profile margin settings.
       print_rotation_degrees:
         name: Print rotation
         description: Rotation of the rendered label.
