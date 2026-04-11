@@ -4,7 +4,7 @@ configuration:
     description: Language used in the add-on web UI.
   label_profiles:
     name: Label profiles
-    description: Create one entry per label profile. Field definitions are managed in the add-on web UI for each selected label.
+    description: Create one entry per label profile. Field definitions are global and managed once in the add-on web UI.
     fields:
       id:
         name: Profile ID
@@ -18,6 +18,9 @@ configuration:
       printer_port:
         name: Printer port
         description: Raw TCP port of the printer, usually 9100.
+      show_in_preview:
+        name: Show in preview
+        description: When enabled, this label profile gets its own preview card in the web UI.
       label_width_mm:
         name: Label width (mm)
         description: Physical width of the label.

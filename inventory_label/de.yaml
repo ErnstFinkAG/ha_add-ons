@@ -4,7 +4,7 @@ configuration:
     description: Sprache der Add-on-Weboberfläche.
   label_profiles:
     name: Etikettenprofile
-    description: Erstelle pro Label ein eigenes Profil. Felddefinitionen werden im Add-on-Web-UI pro ausgewähltem Label verwaltet.
+    description: Erstelle pro Label ein eigenes Profil. Felddefinitionen sind global und werden einmalig im Add-on-Web-UI verwaltet.
     fields:
       id:
         name: Profil-ID
@@ -18,6 +18,9 @@ configuration:
       printer_port:
         name: Drucker-Port
         description: Raw-TCP-Port des Druckers, normalerweise 9100.
+      show_in_preview:
+        name: In Vorschau anzeigen
+        description: Wenn aktiviert, erhält dieses Etikettenprofil eine eigene Vorschaukarte in der Weboberfläche.
       label_width_mm:
         name: Labelbreite (mm)
         description: Physische Breite des Labels.
