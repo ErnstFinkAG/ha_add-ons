@@ -4,7 +4,7 @@ configuration:
     description: Language used in the add-on web UI.
   label_profiles:
     name: Label profiles
-    description: Create one entry per label profile. Field definitions are global and managed once in the add-on web UI.
+    description: Create one entry per label profile. Field definitions are managed in the add-on web UI for each selected label.
     fields:
       id:
         name: Profile ID
@@ -18,9 +18,6 @@ configuration:
       printer_port:
         name: Printer port
         description: Raw TCP port of the printer, usually 9100.
-      show_in_preview:
-        name: Show in preview
-        description: When enabled, this label profile gets its own preview card in the web UI.
       label_width_mm:
         name: Label width (mm)
         description: Physical width of the label.
@@ -32,16 +29,19 @@ configuration:
         description: Printed QR size.
       top_margin_mm:
         name: Top margin (mm)
-        description: Print-only top offset. It stays the label top even when the label is rotated.
+        description: Print-only top offset of the rendered content.
       left_margin_mm:
         name: Left margin (mm)
-        description: Print-only left offset. It stays the label left even when the label is rotated.
+        description: Print-only left offset of the rendered content.
       text_block_margin_left_mm:
         name: Text block margin left (mm)
-        description: Additional print-only left offset for text blocks. Shifts text to the right.
+        description: Print-only extra left offset for the text block.
       footer_bottom_margin_mm:
         name: Footer bottom margin (mm)
-        description: Bottom offset for footer text.
+        description: Print-only bottom offset for footer text.
+      show_in_preview:
+        name: Show in preview
+        description: Show this label profile in the web UI preview area.
       print_rotation_degrees:
         name: Print rotation
         description: Rotation of the rendered label.

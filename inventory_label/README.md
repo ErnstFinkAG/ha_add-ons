@@ -2,18 +2,32 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.59
+## What changed in v0.1.60
 
-This version repairs the UI/config structure so it matches the requested behavior again.
+This release reverts the add-on behavior back to the stable v0.1.57 rendering baseline after the later 90° rotation regression where logos and text blocks could overlap or render with the wrong orientation.
 
-- fields are now global and shared by all label profiles
-- label profiles now support `show_in_preview`
-- the web UI shows one preview card per profile with `show_in_preview: true`
-- the old label profile switch was removed from the main form
-- print-only profile margins remain separate from preview rendering
-- `top_margin_mm`, `left_margin_mm`, and `text_block_margin_left_mm` stay orientation-aware for rotated labels
+- reverted the renderer to the v0.1.57 code state
+- restores the earlier 90° rotation behavior
+- removes the later regression where logos and text blocks could overlap each other
+- keeps the profile settings available in this baseline, including `left_margin_mm`, `text_block_margin_left_mm`, and `show_in_preview`
+
+## Profile and field management
+
+This version splits the configuration into two layers:
+
+- **Add-on Configuration tab**: create and edit label profiles
+- **Add-on web UI**: create and edit fields for the selected label profile
+
+This matches the Home Assistant add-on settings UI much better:
+
+- `ui_language` stays global
+- every label profile gets its own structured entry in the settings UI
+- field definitions are stored separately per profile and are managed in the add-on UI
+- legacy `label_profiles_yaml` is migrated automatically on first start
 
 ## Add-on config
+
+Configure one or more label profiles in the add-on **Configuration** tab.
 
 Example:
 
@@ -23,8 +37,6 @@ label_profiles:
   - id: standard
     name: Standard
     printer_host: ""
-    printer_port: 9100
-    show_in_preview: true
     printer_dpi: 203
     label_width_mm: 170
     label_height_mm: 305
@@ -33,18 +45,105 @@ label_profiles:
     left_margin_mm: 0
     text_block_margin_left_mm: 0
     footer_bottom_margin_mm: 0
+    show_in_preview: false
     print_rotation_degrees: 0
     qr_quiet_zone_modules: 3
     qr_error_correction: M
+
+  - id: rotated
+    name: Rotated
+    printer_host: ""
+    printer_dpi: 203
+    label_width_mm: 170
+    label_height_mm: 305
+    qr_size_mm: 160
+    top_margin_mm: 0
+    left_margin_mm: 0
+    text_block_margin_left_mm: 0
+    footer_bottom_margin_mm: 0
+    show_in_preview: true
+    print_rotation_degrees: 90
+    qr_quiet_zone_modules: 4
+    qr_error_correction: M
 ```
 
-## UI behavior
+## Field management in the web UI
 
-- field definitions are edited once and apply to every profile
-- QR selection and field values are shared across the preview cards
-- each preview card prints against its own configured printer/profile
-- preview ignores profile print margins so the full usable area remains visible
+For the currently selected label profile, the web UI now provides a dedicated field manager.
 
-## Notes
+There you can:
 
-`show_in_preview` defaults to `false` when omitted in a profile.
+- add a new field
+- edit an existing field
+- delete a field
+- keep field definitions separate for each label profile
+
+Field settings supported in the UI:
+
+- `id`
+- `name`
+- `default_value`
+- `alignment`: `left`, `center`, `right`
+- `font_family`: `sans`, `serif`, `mono`
+- `font_size_mm`
+- `bold`
+- `italic`
+- `underline`
+- `print_by_default`
+- `required`
+- `number_only`
+- `suffix`
+- `position`: `body` or `footer`
+- `footer_text` (bottom-anchored footer text)
+- `footer_bottom_margin_mm` (additional bottom margin for bottom-anchored footer text)
+- `append_current_date`
+- `always_use_for_qr`
+- `value_options` (suggested values, free text still allowed)
+- `logo_field` (render uploaded PNG logos instead of text)
+- `logo_height_mm`
+- `max_lines`
+
+## Web UI
+
+Printer host, printer port, and printer DPI are configured per label profile. Host and port are optional so the add-on can start without them, previews still work, and printing only becomes available once both are set. DPI defaults to 203 when omitted. Label-profile margins now affect print output only; preview ignores them so the available label space is easier to inspect. `top_margin_mm`, `left_margin_mm`, and `footer_bottom_margin_mm` follow the label orientation for rotated prints. `text_block_margin_left_mm` shifts the body and footer text block to the right in mm. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, field inputs can offer suggested values while still accepting free text, and fields can be marked as footer text so their values stay anchored at the bottom of the label. Footer fields can also have their own additional bottom margin in mm. Fields can now also be configured as logo fields with uploaded PNG choices that are shown as selectable checkboxes in the label form. Multiple logos can be selected and rendered on one label. In the field editor, each uploaded logo can also be marked as selected by default so it appears in preview immediately.
+
+In the add-on web UI you can:
+
+- choose the active label profile
+- build the QR content by selecting one or more defined fields
+- persist QR and print checkbox changes back into the label template when clicked
+- enter each configured text field value with optional suggestion lists and free text
+- choose one or more uploaded PNG logos for logo fields via checkboxes
+- turn each field on/off for the current label
+- preview PNG and ZPL
+- print to the printer configured inside the selected profile
+- manage fields for the selected profile in a separate field section
+
+## API
+
+`POST /api/print`
+
+Example payload:
+
+```json
+{
+  "profile_id": "standard",
+  "qr_field_ids": ["project_no", "project_name"],
+  "copies": 1,
+  "field_values": {
+    "project_no": "250001",
+    "project_name": "EFH Huggentobbler Biel",
+    "element": "DE1",
+    "weight": "1",
+    "footer": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
+    "brand_logos": ["fink_logo", "iso_logo"]
+  },
+  "print_fields": {
+    "project_no": true,
+    "project_name": true,
+    "element": true,
+    "weight": false,
+    "footer": true
+  }
+}
+```
