@@ -48,6 +48,7 @@ DEFAULT_LOGO_GAP_MM = 4.0
 FIELD_GAP_MM = 4.0
 FOOTER_GAP_MM = 3.0
 GROUPED_FIELD_GAP_MM = 1.0
+DEFAULT_QR_TEXT_GAP_MM = 8.0
 SUPPORTED_UI_LANGUAGES = {"en", "de"}
 SUPPORTED_ROTATIONS = {0, 90, 270}
 ALIGNMENTS = {"left", "center", "right"}
@@ -244,6 +245,7 @@ UI_STRINGS = {
         "language_label": "Language",
         "profile_settings_source": "Profiles are defined in add-on settings",
         "printer_dpi": "Printer DPI",
+        "qr_text_gap_profile_label": "QR/text gap (mm)",
         "no_profiles_configured": "No label profile configured yet. Create your first label profile in the add-on configuration and restart the add-on.",
         "fields_available_after_profile": "Global fields become available after at least one label profile exists.",
         "preview_image_print_hint": "Click the preview image to print this label with the selected copy count.",
@@ -354,6 +356,7 @@ UI_STRINGS = {
         "language_label": "Sprache",
         "profile_settings_source": "Profile werden in den Add-on-Einstellungen definiert",
         "printer_dpi": "Drucker-DPI",
+        "qr_text_gap_profile_label": "Abstand QR/Textblock (mm)",
         "no_profiles_configured": "Es ist noch kein Etikettenprofil konfiguriert. Erstelle zuerst ein Etikettenprofil in der Add-on-Konfiguration und starte das Add-on danach neu.",
         "fields_available_after_profile": "Globale Felder stehen erst zur Verfügung, wenn mindestens ein Etikettenprofil existiert.",
         "preview_image_print_hint": "Klicke auf das Vorschaubild, um dieses Etikett mit der gewählten Anzahl zu drucken.",
@@ -559,6 +562,7 @@ HTML = """
                   <div class="tag-list">
                     <span class="tag">{{ profile.label_width_mm }} × {{ profile.label_height_mm }} mm</span>
                     <span class="tag">{{ ui.printer_dpi }}: {{ profile.printer_dpi }}</span>
+                    <span class="tag">{{ ui.qr_text_gap_profile_label }}: {{ profile.qr_text_gap_mm }} mm</span>
                     <span class="tag">{{ ui.print_rotation }}: {{ profile.print_rotation_degrees }}°</span>
                   </div>
                 </div>
@@ -1249,6 +1253,7 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "label_height_mm": normalize_float(data.get("label_height_mm"), 305.0, 50.0, 1000.0),
         "qr_size_mm": normalize_float(data.get("qr_size_mm"), 170.0, 0.0, 300.0),
         "top_margin_mm": normalize_float(data.get("top_margin_mm"), 0.0, 0.0, 100.0),
+        "qr_text_gap_mm": normalize_float(data.get("qr_text_gap_mm"), DEFAULT_QR_TEXT_GAP_MM, 0.0, 100.0),
         "footer_bottom_margin_mm": normalize_float(data.get("footer_bottom_margin_mm"), 0.0, 0.0, 50.0),
         "print_shift_x_mm": normalize_float(data.get("print_shift_x_mm"), 0.0, -100.0, 100.0),
         "print_shift_y_mm": normalize_float(data.get("print_shift_y_mm"), 0.0, -100.0, 100.0),
@@ -1797,6 +1802,7 @@ def effective_layout(profile: Dict) -> Dict:
     qr_size_mm = normalize_float(profile.get("qr_size_mm"), 170.0, 0.0, 300.0)
     qr_size_dots = mm_to_dots(qr_size_mm, profile) if qr_size_mm > 0 else 0
     top_margin_dots = mm_to_dots(profile["top_margin_mm"], profile)
+    qr_text_gap_dots = mm_to_dots(normalize_float(profile.get("qr_text_gap_mm"), DEFAULT_QR_TEXT_GAP_MM, 0.0, 100.0), profile)
     footer_bottom_margin_dots = mm_to_dots(profile.get("footer_bottom_margin_mm", 0.0), profile)
     max_width_dots = printer_max_width_dots(profile)
     effective_width_dots = min(requested_width_dots, max_width_dots)
@@ -1805,6 +1811,7 @@ def effective_layout(profile: Dict) -> Dict:
         "requested_height_dots": requested_height_dots,
         "qr_size_dots": qr_size_dots,
         "top_margin_dots": top_margin_dots,
+        "qr_text_gap_dots": qr_text_gap_dots,
         "footer_bottom_margin_dots": footer_bottom_margin_dots,
         "effective_width_dots": effective_width_dots,
         "width_warning": requested_width_dots > max_width_dots,
@@ -2134,7 +2141,7 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
             draw_preview_outline(draw, qr_left, qr_top, qr_size, qr_top + qr_size, profile)
         margin_x = max((printable_w - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
         text_width = max(1, printable_w - (margin_x * 2))
-        current_y = qr_top + qr_size + mm_to_dots(8, profile)
+        current_y = qr_top + qr_size + layout["qr_text_gap_dots"]
     text_top = current_y
     body_bottom = draw_body_blocks(img, draw, current_y, margin_x, text_width, body_blocks, profile)
     footer_bottom = None
@@ -2166,7 +2173,7 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
         landscape.paste(qr_img, (qr_left, qr_top))
         if preview:
             draw_preview_outline(draw, qr_left, qr_top, qr_size, qr_top + qr_size, profile)
-        inter_block_gap = mm_to_dots(8, profile)
+        inter_block_gap = layout["qr_text_gap_dots"]
         text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
         text_width = max(1, logical_w - text_left - right_margin)
         text_top = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)

@@ -33,6 +33,9 @@ configuration:
       top_margin_mm:
         name: Top margin (mm)
         description: Top offset before placing the QR code.
+      qr_text_gap_mm:
+        name: QR/text gap (mm)
+        description: Gap between the QR code and the text block in mm when a QR code is active. Applies to both preview and print.
       footer_bottom_margin_mm:
         name: Footer bottom margin (mm)
         description: Bottom offset for footer text.

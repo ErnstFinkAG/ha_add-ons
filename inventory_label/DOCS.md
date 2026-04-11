@@ -2,16 +2,16 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.64
+## What changed in v0.1.65
 
-This version makes the footer logo/text gap configurable per field in the web UI.
+This version adds a per-profile gap setting between the QR code and the text block.
 
-- the gap between footer logos and footer text can now be configured per field in the field editor
-- footer fields that render logos and text together still default to tighter spacing between the logo row and the footer text
-- each label profile can shift the printed content on the X axis in `+` and `-` mm
-- each label profile can shift the printed content on the Y axis in `+` and `-` mm
-- the shift affects the whole printed layout together, including QR code and text blocks
-- preview is not modified by these print shift settings
+- each label profile now supports `qr_text_gap_mm`
+- the gap between the QR code and the text block is configurable in mm
+- the setting is used in both preview and print
+- the setting only matters when a QR code is active for that label profile
+- footer logo/text gap per field remains available in the field editor
+- print shift X/Y per profile remains available for print-only positioning
 
 It keeps the recent behavior changes:
 
@@ -23,7 +23,7 @@ It keeps the recent behavior changes:
 
 ## Add-on config
 
-Configure one or more label profiles in the add-on **Configuration** tab. On a fresh install, add your first profile there before you start using the web UI. Set `qr_size_mm: 0` on a profile when that label should not generate a QR code at all. Use `print_shift_x_mm` and `print_shift_y_mm` to move only the printed output in mm without changing preview.
+Configure one or more label profiles in the add-on **Configuration** tab. On a fresh install, add your first profile there before you start using the web UI. Set `qr_size_mm: 0` on a profile when that label should not generate a QR code at all. Use `print_shift_x_mm` and `print_shift_y_mm` to move only the printed output in mm without changing preview. Use `qr_text_gap_mm` to control the gap between the QR code and the text block in both preview and print when QR is active.
 
 Example:
 
@@ -38,6 +38,7 @@ label_profiles:
     label_height_mm: 305
     qr_size_mm: 170
     top_margin_mm: 0
+    qr_text_gap_mm: 8
     footer_bottom_margin_mm: 0
     print_shift_x_mm: 0
     print_shift_y_mm: 0
@@ -54,6 +55,7 @@ label_profiles:
     label_height_mm: 305
     qr_size_mm: 160
     top_margin_mm: 0
+    qr_text_gap_mm: 8
     footer_bottom_margin_mm: 0
     print_shift_x_mm: 0
     print_shift_y_mm: 0

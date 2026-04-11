@@ -33,6 +33,9 @@ configuration:
       top_margin_mm:
         name: Oberer Rand (mm)
         description: Oberer Abstand vor dem QR-Code.
+      qr_text_gap_mm:
+        name: Abstand QR/Textblock (mm)
+        description: Abstand zwischen QR-Code und Textblock in mm, wenn ein QR-Code aktiv ist. Gilt für Vorschau und Druck.
       footer_bottom_margin_mm:
         name: Footer-Unterrand (mm)
         description: Unterer Abstand für Footer-Text.
