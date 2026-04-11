@@ -4,7 +4,7 @@ configuration:
     description: Language used in the add-on web UI.
   label_profiles:
     name: Label profiles
-    description: Create one entry per label profile. Global field definitions are managed once in the add-on web UI and apply to all label profiles.
+    description: Create at least one entry before first start. Global field definitions are managed once in the add-on web UI and apply to all label profiles.
     fields:
       id:
         name: Profile ID

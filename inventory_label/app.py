@@ -53,105 +53,11 @@ ALIGNMENTS = {"left", "center", "right"}
 FONT_FAMILIES = {"sans", "serif", "mono"}
 FIELD_POSITIONS = {"body", "footer"}
 
-DEFAULT_LABEL_PROFILES = [
-    {
-        "id": "standard",
-        "name": "Standard",
-        "printer_host": "",
-        "printer_port": None,
-        "label_width_mm": 170,
-        "label_height_mm": 305,
-        "qr_size_mm": 170,
-        "top_margin_mm": 0,
-        "footer_bottom_margin_mm": 0,
-        "print_rotation_degrees": 0,
-        "qr_quiet_zone_modules": 3,
-        "qr_error_correction": "M",
-        "printer_dpi": DEFAULT_PRINTER_DPI,
-        "show_in_preview": True,
-    }
-]
-
-DEFAULT_PROFILE_FIELDS = {
-    "standard": [
-        {
-            "id": "project_no",
-            "name": "Projektnummer",
-            "default_value": "250001",
-            "alignment": "center",
-            "font_family": "sans",
-            "font_size_mm": 18,
-            "bold": True,
-            "italic": False,
-            "underline": False,
-            "print_by_default": True,
-            "required": True,
-            "number_only": True,
-            "position": "body",
-        },
-        {
-            "id": "project_name",
-            "name": "Projektname",
-            "default_value": "EFH Huggentobbler Biel",
-            "alignment": "center",
-            "font_family": "sans",
-            "font_size_mm": 13,
-            "bold": False,
-            "italic": False,
-            "underline": False,
-            "print_by_default": True,
-            "position": "body",
-        },
-        {
-            "id": "element",
-            "name": "Element",
-            "default_value": "DE1",
-            "alignment": "center",
-            "font_family": "sans",
-            "font_size_mm": 18,
-            "bold": False,
-            "italic": False,
-            "underline": False,
-            "print_by_default": True,
-            "position": "body",
-        },
-        {
-            "id": "weight",
-            "name": "Gewicht",
-            "default_value": "",
-            "alignment": "center",
-            "font_family": "sans",
-            "font_size_mm": 7,
-            "bold": False,
-            "italic": False,
-            "underline": False,
-            "print_by_default": False,
-            "number_only": True,
-            "suffix": "kg",
-            "position": "body",
-        },
-        {
-            "id": "footer",
-            "name": "Footer",
-            "default_value": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
-            "alignment": "center",
-            "font_family": "sans",
-            "font_size_mm": 5,
-            "bold": False,
-            "italic": False,
-            "underline": False,
-            "print_by_default": True,
-            "position": "footer",
-            "footer_text": True,
-            "footer_bottom_margin_mm": 0.0,
-            "append_current_date": True,
-        },
-    ]
-}
+ALLOWED_QUICK_FIELD_SETTINGS = {"print_by_default", "always_use_for_qr"}
 
 DEFAULT_OPTIONS = {
     "ui_language": "de",
-    "label_profiles": deepcopy(DEFAULT_LABEL_PROFILES),
+    "label_profiles": [],
 }
 
 QR_ERROR_CORRECTION_MAP = {
@@ -331,6 +237,9 @@ UI_STRINGS = {
         "language_label": "Language",
         "profile_settings_source": "Profiles are defined in add-on settings",
         "printer_dpi": "Printer DPI",
+        "no_profiles_configured": "No label profile configured yet. Create your first label profile in the add-on configuration and restart the add-on.",
+        "fields_available_after_profile": "Global fields become available after at least one label profile exists.",
+        "preview_image_print_hint": "Click the preview image to print this label with the selected copy count.",
     },
     "de": {
         "lang": "de",
@@ -432,6 +341,9 @@ UI_STRINGS = {
         "language_label": "Sprache",
         "profile_settings_source": "Profile werden in den Add-on-Einstellungen definiert",
         "printer_dpi": "Drucker-DPI",
+        "no_profiles_configured": "Es ist noch kein Etikettenprofil konfiguriert. Erstelle zuerst ein Etikettenprofil in der Add-on-Konfiguration und starte das Add-on danach neu.",
+        "fields_available_after_profile": "Globale Felder stehen erst zur Verfügung, wenn mindestens ein Etikettenprofil existiert.",
+        "preview_image_print_hint": "Klicke auf das Vorschaubild, um dieses Etikett mit der gewählten Anzahl zu drucken.",
     },
 }
 
@@ -495,6 +407,7 @@ HTML = """
     .preview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
     .preview-card { background: #111827; border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
     .preview-frame { width: 100%; min-height: 240px; background: var(--label-bg); border: 1px solid var(--label-edge); border-radius: 12px; overflow: hidden; }
+    .preview-image-button { display: block; width: 100%; padding: 0; border: none; background: transparent; cursor: pointer; }
     .preview-frame img { display: block; width: 100%; height: auto; background: white; }
     .preview-meta { margin-top: 12px; font-size: 0.95rem; color: var(--muted); }
     .preview-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
@@ -548,6 +461,10 @@ HTML = """
                 <input value="{{ preview_profile_names_text }}" disabled>
               </div>
             </div>
+            {% if not has_profiles %}
+            <div class="flash error">{{ ui.no_profiles_configured }}</div>
+            <p class="muted small">{{ ui.fields_available_after_profile }}</p>
+            {% endif %}
 
             <label>{{ ui.qr_value_label }}</label>
             <div class="selector-grid">
@@ -632,9 +549,12 @@ HTML = """
                   </div>
                 </div>
                 <div class="preview-frame">
-                  <img class="preview-image" src="{{ ingress_base }}/preview.png?{{ profile.preview_query }}" alt="{{ ui.preview_alt }}">
+                  <button type="submit" class="preview-image-button" formaction="{{ ingress_base }}/print?profile_id={{ profile.id }}" title="{{ ui.preview_image_print_hint }}">
+                    <img class="preview-image" src="{{ ingress_base }}/preview.png?{{ profile.preview_query }}" alt="{{ ui.preview_alt }}">
+                  </button>
                 </div>
                 <div class="preview-meta">{{ ui.preview_meta.format(dpi=profile.printer_dpi) }}</div>
+                <div class="preview-meta">{{ ui.preview_image_print_hint }}</div>
                 <div class="preview-actions">
                   <button type="submit" formaction="{{ ingress_base }}/print?profile_id={{ profile.id }}">{{ ui.print_label_button }}</button>
                   <a class="button-link secondary preview-zpl-link" href="{{ ingress_base }}/preview?{{ profile.preview_query }}">{{ ui.preview_zpl }}</a>
@@ -669,6 +589,7 @@ HTML = """
         <span class="tag">{{ ui.global_fields_tag }}</span>
       </div>
 
+      {% if has_profiles %}
       <div class="field-grid">
         {% for field in configured_fields %}
         <div class="field-card">
@@ -846,6 +767,9 @@ HTML = """
           </div>
         </form>
       </div>
+      {% else %}
+      <div class="field-card muted">{{ ui.fields_available_after_profile }}</div>
+      {% endif %}
     </div>
   </div>
 
@@ -1341,16 +1265,8 @@ def load_options() -> Tuple[Dict, Dict[str, List[Dict]], str | None]:
             profiles = legacy_profiles
             migrated_notice = "legacy_migrated"
 
-    if not profiles:
-        profiles = parse_label_profiles(DEFAULT_OPTIONS["label_profiles"])
-
     options["label_profiles"] = profiles
     return options, legacy_field_store, migrated_notice
-
-
-def default_global_fields() -> List[Dict]:
-    defaults = DEFAULT_PROFILE_FIELDS.get("standard", [])
-    return [normalize_profile_field(field, idx) for idx, field in enumerate(defaults, start=1)]
 
 
 def merge_field_lists(*field_lists: object) -> List[Dict]:
@@ -1394,11 +1310,7 @@ def load_field_store(profiles: List[Dict], legacy_seed: Dict[str, List[Dict]] | 
         store = merge_field_lists(legacy_seed)
         wrote_file = True
 
-    if not store:
-        store = default_global_fields()
-        wrote_file = True
-
-    if wrote_file or not os.path.exists(FIELD_STORE_PATH):
+    if profiles and (wrote_file or not os.path.exists(FIELD_STORE_PATH)):
         save_field_store(store)
     return store
 
@@ -1424,8 +1336,6 @@ def select_profile(profiles: List[Dict], requested_profile_id: str | None = None
 def load_runtime_options(profile_id: str | None = None) -> Dict:
     opts, legacy_seed, migration_notice = load_options()
     profiles = parse_label_profiles(opts.get("label_profiles"))
-    if not profiles:
-        profiles = parse_label_profiles(DEFAULT_OPTIONS["label_profiles"])
     global_fields = load_field_store(profiles, legacy_seed)
     preview_profiles = [dict(profile) for profile in profiles if profile.get("show_in_preview")]
     requested_profile = select_profile(profiles, profile_id)
@@ -1648,6 +1558,13 @@ def resolve_printer_target(profile: Dict, language_or_options: object) -> Tuple[
     if not host or port is None:
         raise ValueError(ui_text(language_or_options, "printer_not_configured"))
     return host, port
+
+
+def require_requested_profile(opts: Dict) -> Dict:
+    profile = opts.get("requested_profile")
+    if not isinstance(profile, dict) or not profile.get("id"):
+        raise ValueError(ui_text(opts, "no_profiles_configured"))
+    return profile
 
 
 def validate_field_forms(field_forms: List[Dict], language: str) -> List[Dict]:
@@ -2481,6 +2398,7 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         alignments=sorted(ALIGNMENTS),
         font_families=sorted(FONT_FAMILIES),
         field_positions=["body", "footer"],
+        has_profiles=bool(opts.get("label_profiles")),
     )
 
 
@@ -2547,10 +2465,10 @@ def index():
 @APP.route("/print", methods=["POST"])
 def print_label():
     opts = load_runtime_options(request.values.get("profile_id") or request.args.get("profile_id") or None)
-    profile = opts.get("requested_profile") or {}
     form, field_forms = form_data_from_request(opts)
     result = {"success": False, "message": ui_text(opts, "unknown_error")}
     try:
+        profile = require_requested_profile(opts)
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
@@ -2569,6 +2487,9 @@ def print_label():
 def save_field():
     opts = load_runtime_options()
     form, field_forms = form_data_from_request(opts)
+    if not opts.get("label_profiles"):
+        result = {"success": False, "message": ui_text(opts, "no_profiles_configured")}
+        return render_page(form, opts, field_forms, field_result=result, editor_form=blank_editor_form())
     editor_form = blank_editor_form()
     result = None
     original_field_id = sanitize_id(str(request.form.get("original_field_id") or ""), "")
@@ -2624,6 +2545,9 @@ def save_field():
 def delete_field():
     opts = load_runtime_options()
     form, field_forms = form_data_from_request(opts)
+    if not opts.get("label_profiles"):
+        result = {"success": False, "message": ui_text(opts, "no_profiles_configured")}
+        return render_page(form, opts, field_forms, field_result=result)
     result = None
     try:
         field_id = sanitize_id(str(request.form.get("field_id") or ""), "")
@@ -2643,6 +2567,9 @@ def delete_field():
 @APP.route("/fields/quick-update", methods=["POST"])
 def quick_update_field_setting():
     try:
+        opts = load_runtime_options()
+        if not opts.get("label_profiles"):
+            raise ValueError(ui_text(opts, "no_profiles_configured"))
         field_id = sanitize_id(str(request.form.get("field_id") or ""), "")
         setting = normalize_string(request.form.get("setting"), "")
         value = normalize_bool(request.form.get("value"), False)
@@ -2667,9 +2594,9 @@ def serve_logo_asset(storage_name: str):
 @APP.route("/preview", methods=["GET"])
 def preview():
     opts = load_runtime_options(request.values.get("profile_id") or request.args.get("profile_id") or None)
-    profile = opts.get("requested_profile") or {}
     form, field_forms = form_data_from_request(opts)
     try:
+        profile = require_requested_profile(opts)
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
@@ -2684,9 +2611,9 @@ def preview():
 @APP.route("/preview.png", methods=["GET"])
 def preview_png():
     opts = load_runtime_options(request.values.get("profile_id") or request.args.get("profile_id") or None)
-    profile = opts.get("requested_profile") or {}
     form, field_forms = form_data_from_request(opts)
     try:
+        profile = require_requested_profile(opts)
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("requested_profile_id"), qr_value)
@@ -2705,8 +2632,8 @@ def preview_png():
 def api_print():
     payload = request.get_json(force=True, silent=False) or {}
     opts = load_runtime_options(str(payload.get("profile_id") or "") or None)
-    profile = opts.get("requested_profile") or {}
     try:
+        profile = require_requested_profile(opts)
         field_forms = validate_field_forms(api_field_forms_from_payload(opts.get("fields", []), payload), opts["ui_language"])
         qr_field_ids = selected_qr_field_ids_from_source(opts.get("fields", []), payload)
         qr_value = qr_payload_from_field_forms(field_forms, qr_field_ids) if qr_field_ids else normalize_qr_value(payload.get("qr_value", profile.get("qr_default_value", "")))

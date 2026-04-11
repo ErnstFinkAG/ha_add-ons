@@ -4,7 +4,7 @@ configuration:
     description: Sprache der Add-on-Weboberfläche.
   label_profiles:
     name: Etikettenprofile
-    description: Erstelle pro Etikettenprofil einen Eintrag. Die globalen Felddefinitionen werden einmalig in der Add-on-Weboberfläche verwaltet und gelten für alle Profile.
+    description: Erstelle vor dem ersten Start mindestens ein Etikettenprofil. Die globalen Felddefinitionen werden einmalig in der Add-on-Weboberfläche verwaltet und gelten für alle Profile.
     fields:
       id:
         name: Profil-ID
