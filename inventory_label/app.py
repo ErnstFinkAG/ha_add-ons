@@ -210,6 +210,8 @@ UI_STRINGS = {
         "always_use_for_qr_label": "Always use for QR code",
         "footer_text_label": "Footer text (bottom anchored)",
         "footer_bottom_margin_label": "Footer bottom margin (mm)",
+        "footer_logo_text_gap_label": "Footer logo/text gap (mm)",
+        "footer_logo_text_gap_help": "Gap between footer logos and footer text when both are rendered from the same field.",
         "value_options_label": "Value list",
         "value_options_help": "Optional suggestions, one value per line. Users can still enter any text.",
         "value_options_summary": "Choices",
@@ -318,6 +320,8 @@ UI_STRINGS = {
         "always_use_for_qr_label": "Immer für QR-Code verwenden",
         "footer_text_label": "Footer-Text (unten verankert)",
         "footer_bottom_margin_label": "Footer-Abstand unten (mm)",
+        "footer_logo_text_gap_label": "Abstand Logo/Text im Footer (mm)",
+        "footer_logo_text_gap_help": "Abstand zwischen Footer-Logos und Footer-Text, wenn beides aus demselben Feld gerendert wird.",
         "value_options_label": "Werteliste",
         "value_options_help": "Optionale Vorschläge, ein Wert pro Zeile. Freitext bleibt weiterhin möglich.",
         "value_options_summary": "Auswahlwerte",
@@ -618,6 +622,7 @@ HTML = """
             {% if field.always_use_for_qr %}<span class="tag">QR</span>{% endif %}
             {% if field.footer_text %}<span class="tag">{{ ui.footer_text_label }}</span>{% endif %}
             {% if field.footer_bottom_margin_mm %}<span class="tag">{{ ui.footer_bottom_margin_label }}: {{ field.footer_bottom_margin_mm }} mm</span>{% endif %}
+            {% if field.position == 'footer' and field.supports_logos and field.footer_text %}<span class="tag">{{ ui.footer_logo_text_gap_label }}: {{ field.footer_logo_text_gap_mm }} mm</span>{% endif %}
             {% if field.value_options %}<span class="tag">{{ ui.value_options_summary }}: {{ field.value_options|length }}</span>{% endif %}
             {% if field.supports_logos %}<span class="tag">{{ ui.logo_field_label }}</span>{% endif %}
             {% if field.logo_options %}<span class="tag">{{ ui.logo_options_summary }}: {{ field.logo_options|length }}</span>{% endif %}
@@ -768,6 +773,11 @@ HTML = """
             <div>
               <label for="editor_footer_bottom_margin_mm">{{ ui.footer_bottom_margin_label }}</label>
               <input id="editor_footer_bottom_margin_mm" name="footer_bottom_margin_mm" type="number" min="0" max="100" step="0.5" value="{{ editor_form.footer_bottom_margin_mm }}">
+            </div>
+            <div>
+              <label for="editor_footer_logo_text_gap_mm">{{ ui.footer_logo_text_gap_label }}</label>
+              <input id="editor_footer_logo_text_gap_mm" name="footer_logo_text_gap_mm" type="number" min="0" max="50" step="0.5" value="{{ editor_form.footer_logo_text_gap_mm }}">
+              <p class="muted small">{{ ui.footer_logo_text_gap_help }}</p>
             </div>
           </div>
 
@@ -932,6 +942,7 @@ HTML = """
         setValue("editor_sort_order", String(nextFieldSortOrder()));
         setValue("editor_max_lines", "3");
         setValue("editor_footer_bottom_margin_mm", "0.0");
+        setValue("editor_footer_logo_text_gap_mm", "1.0");
         setValue("editor_value_options_text", "");
         setValue("editor_logo_height_mm", "20.0");
         setCheckbox("editor_bold", false);
@@ -964,6 +975,7 @@ HTML = """
         setValue("editor_sort_order", data.sort_order || nextFieldSortOrder());
         setValue("editor_max_lines", data.max_lines || "3");
         setValue("editor_footer_bottom_margin_mm", data.footer_bottom_margin_mm ?? "0.0");
+        setValue("editor_footer_logo_text_gap_mm", data.footer_logo_text_gap_mm ?? "1.0");
         setValue("editor_value_options_text", data.value_options_text || "");
         setValue("editor_logo_height_mm", data.logo_height_mm || "20.0");
         setCheckbox("editor_bold", data.bold);
@@ -1212,6 +1224,7 @@ def normalize_profile_field(raw: object, idx: int) -> Dict:
         "sort_order": normalize_int(data.get("sort_order", data.get("field_order", idx)), idx, 1, 9999),
         "footer_text": footer_text,
         "footer_bottom_margin_mm": normalize_float(data.get("footer_bottom_margin_mm"), 0.0, 0.0, 100.0),
+        "footer_logo_text_gap_mm": normalize_float(data.get("footer_logo_text_gap_mm"), GROUPED_FIELD_GAP_MM, 0.0, 50.0),
         "append_current_date": normalize_bool(data.get("append_current_date"), False),
         "always_use_for_qr": normalize_bool(data.get("always_use_for_qr"), False),
         "value_options": normalize_value_options(data.get("value_options")),
@@ -1734,8 +1747,9 @@ def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
                 "profile": field.get("profile"),
                 "source_field_id": source_field_id,
             })
+        grouped_gap_mm = float(field.get("footer_logo_text_gap_mm", GROUPED_FIELD_GAP_MM) or 0.0) if is_footer else GROUPED_FIELD_GAP_MM
         for index, block in enumerate(field_blocks):
-            block["gap_before_mm"] = GROUPED_FIELD_GAP_MM if index > 0 else (default_gap_mm if target else 0.0)
+            block["gap_before_mm"] = grouped_gap_mm if index > 0 else (default_gap_mm if target else 0.0)
             target.append(block)
     return body, footer
 
@@ -2270,6 +2284,7 @@ def blank_editor_form() -> Dict:
         "sort_order": 1,
         "footer_text": False,
         "footer_bottom_margin_mm": 0.0,
+        "footer_logo_text_gap_mm": GROUPED_FIELD_GAP_MM,
         "append_current_date": False,
         "always_use_for_qr": False,
         "value_options": [],
@@ -2349,6 +2364,7 @@ def validate_and_normalize_editor_payload(source: Dict, language: str) -> Tuple[
             "sort_order": source.get("sort_order", 1),
             "footer_text": source.get("footer_text"),
             "footer_bottom_margin_mm": source.get("footer_bottom_margin_mm", 0.0),
+            "footer_logo_text_gap_mm": source.get("footer_logo_text_gap_mm", GROUPED_FIELD_GAP_MM),
             "append_current_date": source.get("append_current_date"),
             "always_use_for_qr": source.get("always_use_for_qr"),
             "value_options": normalize_value_options(source.get("value_options_text", source.get("value_options", []))),
@@ -2724,6 +2740,7 @@ def save_field():
             "sort_order": request.form.get("sort_order", 1),
             "footer_text": normalize_bool(request.form.get("footer_text"), False),
             "footer_bottom_margin_mm": request.form.get("footer_bottom_margin_mm", 0.0),
+            "footer_logo_text_gap_mm": request.form.get("footer_logo_text_gap_mm", GROUPED_FIELD_GAP_MM),
             "append_current_date": normalize_bool(request.form.get("append_current_date"), False),
             "always_use_for_qr": normalize_bool(request.form.get("always_use_for_qr"), False),
             "value_options": normalize_value_options(request.form.get("value_options_text", "")),
