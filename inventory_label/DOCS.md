@@ -2,7 +2,9 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.57
+## What changed in v0.1.58
+
+Footer fields can now render selected logos and text together, with the text placed below the logos. Mixed footer logo/text fields keep separate default text and default selected logos.
 
 This version removes built-in default profiles and fields, keeps fields global, and lets the preview image print directly.
 
@@ -90,6 +92,7 @@ Field settings supported in the UI:
 - `always_use_for_qr`
 - `value_options`
 - `logo_field`
+- footer fields may combine logo selection and text in the same field
 - `logo_height_mm`
 - `max_lines`
 
@@ -121,8 +124,10 @@ Example payload:
     "project_name": "EFH Huggentobbler Biel",
     "element": "DE1",
     "weight": "1",
-    "footer": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
-    "brand_logos": ["fink_logo", "iso_logo"]
+    "footer": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil"
+  },
+  "logo_field_values": {
+    "footer": ["fink_logo", "iso_logo"]
   },
   "print_fields": {
     "project_no": true,

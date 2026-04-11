@@ -502,18 +502,19 @@ HTML = """
                     <label for="print_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.print_field }}</label>
                   </div>
                   {% if field.supports_logos %}
-                  <input type="hidden" name="field_{{ field.id }}__present" value="1">
+                  <input type="hidden" name="field_{{ field.id }}__logos_present" value="1">
                   <div class="logo-option-grid">
                     {% for option in field.logo_options %}
                     <label class="logo-option-card">
-                      <input type="checkbox" name="field_{{ field.id }}" value="{{ option.id }}" {% if option.selected %}checked{% endif %}>
+                      <input type="checkbox" name="field_{{ field.id }}__logos" value="{{ option.id }}" {% if option.selected %}checked{% endif %}>
                       <img src="{{ option.asset_url }}" alt="{{ option.name }}">
                     </label>
                     {% else %}
                     <div class="muted small">{{ ui.no_logos_uploaded }}</div>
                     {% endfor %}
                   </div>
-                  {% else %}
+                  {% endif %}
+                  {% if field.supports_text %}
                   <input id="field_{{ field.id }}" name="field_{{ field.id }}" type="text" value="{{ field.value }}" {% if field.value_options %}list="field_options_{{ field.id }}"{% endif %} {% if field.number_only %}inputmode="numeric" pattern="[0-9]*" data-number-only="1"{% endif %}>
                   {% if field.value_options %}
                   <datalist id="field_options_{{ field.id }}">
@@ -1142,11 +1143,17 @@ def normalize_profile_field(raw: object, idx: int) -> Dict:
     logo_field = normalize_bool(data.get("logo_field"), False)
     if footer_text:
         position = "footer"
-    default_value = normalize_multi_value_ids(data.get("default_value", [])) if logo_field else data.get("default_value", "")
+    raw_default_value = data.get("default_value", "")
+    raw_default_logo_ids = data.get("default_logo_ids")
+    if logo_field and raw_default_logo_ids is None and isinstance(raw_default_value, (list, tuple, set)):
+        raw_default_logo_ids = raw_default_value
+        raw_default_value = ""
+    default_value = raw_default_value if raw_default_value is not None else ""
     return {
         "id": field_id,
         "name": name,
-        "default_value": default_value,
+        "default_value": str(default_value),
+        "default_logo_ids": normalize_multi_value_ids(raw_default_logo_ids or []),
         "alignment": normalize_alignment(data.get("alignment"), "center"),
         "font_family": normalize_font_family(data.get("font_family"), "sans"),
         "font_size_mm": normalize_float(data.get("font_size_mm"), 7.0, 2.0, 30.0),
@@ -1354,6 +1361,14 @@ def field_value_name(field_id: str) -> str:
     return f"field_{field_id}"
 
 
+def field_logo_value_name(field_id: str) -> str:
+    return f"field_{field_id}__logos"
+
+
+def field_logo_present_name(field_id: str) -> str:
+    return f"field_{field_id}__logos_present"
+
+
 def field_print_name(field_id: str) -> str:
     return f"print_{field_id}"
 
@@ -1362,31 +1377,51 @@ def field_supports_logos(field: Dict) -> bool:
     return normalize_bool(field.get("logo_field"), False) or bool(normalize_logo_options(field.get("logo_options", [])))
 
 
+def field_supports_text(field: Dict) -> bool:
+    return (not field_supports_logos(field)) or normalize_position(field.get("position"), "body") == "footer"
+
+
 def build_field_forms(fields: List[Dict], source: Dict | None = None) -> List[Dict]:
     source = source or {}
     forms: List[Dict] = []
     for field in fields:
         value_key = field_value_name(field["id"])
+        logo_value_key = field_logo_value_name(field["id"])
+        logo_present_key = field_logo_present_name(field["id"])
         print_key = field_print_name(field["id"])
+        supports_logos = field_supports_logos(field)
+        supports_text = field_supports_text(field)
         print_raw = source.get(print_key)
         print_enabled = field["print_by_default"] if print_raw is None else normalize_bool(print_raw, field["print_by_default"])
 
-        if field_supports_logos(field):
-            if hasattr(source, "getlist"):
-                has_submission = source.get(f"{value_key}__present") is not None or value_key in source
-                selected_values = normalize_multi_value_ids(source.getlist(value_key)) if has_submission else normalize_multi_value_ids(field.get("default_value", []))
-            else:
-                has_submission = isinstance(source, dict) and (f"{value_key}__present" in source or value_key in source)
-                selected_values = normalize_multi_value_ids(source.get(value_key, [])) if has_submission else normalize_multi_value_ids(field.get("default_value", []))
-            selected_lookup = set(selected_values)
-            logo_options = [{**option, "selected": option.get("id") in selected_lookup, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))]
-            forms.append({**field, "supports_logos": True, "value": selected_values, "selected_logo_ids": selected_values, "logo_options": logo_options, "print_enabled": print_enabled})
-            continue
+        value = ""
+        if supports_text:
+            value = source.get(value_key)
+            if value is None:
+                value = field.get("default_value", "")
+            value = str(value)
 
-        value = source.get(value_key)
-        if value is None:
-            value = field["default_value"]
-        forms.append({**field, "supports_logos": False, "value": str(value), "print_enabled": print_enabled})
+        selected_values: List[str] = []
+        logo_options = [{**option, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))]
+        if supports_logos:
+            if hasattr(source, "getlist"):
+                has_submission = source.get(logo_present_key) is not None or logo_value_key in source
+                selected_values = normalize_multi_value_ids(source.getlist(logo_value_key)) if has_submission else normalize_multi_value_ids(field.get("default_logo_ids", []))
+            else:
+                has_submission = isinstance(source, dict) and (logo_present_key in source or logo_value_key in source)
+                selected_values = normalize_multi_value_ids(source.get(logo_value_key, [])) if has_submission else normalize_multi_value_ids(field.get("default_logo_ids", []))
+            selected_lookup = set(selected_values)
+            logo_options = [{**option, "selected": option.get("id") in selected_lookup, "asset_url": option.get("asset_url") or logo_asset_url(option.get("storage_name"))} for option in logo_options]
+
+        forms.append({
+            **field,
+            "supports_logos": supports_logos,
+            "supports_text": supports_text,
+            "value": value,
+            "selected_logo_ids": selected_values,
+            "logo_options": logo_options,
+            "print_enabled": print_enabled,
+        })
     return forms
 
 
@@ -1396,7 +1431,10 @@ def default_form_from_fields(fields: List[Dict]) -> Dict[str, object]:
         "copies": "1",
     }
     for field in fields:
-        form[field_value_name(field["id"])] = field["default_value"]
+        if field_supports_text(field):
+            form[field_value_name(field["id"])] = field.get("default_value", "")
+        if field_supports_logos(field):
+            form[field_logo_value_name(field["id"])] = normalize_multi_value_ids(field.get("default_logo_ids", []))
         if field["print_by_default"]:
             form[field_print_name(field["id"])] = "1"
     return form
@@ -1412,7 +1450,10 @@ def form_data_from_request(opts: Dict) -> Tuple[Dict[str, object], List[Dict]]:
     }
     field_forms = build_field_forms(fields, request.values)
     for field in field_forms:
-        form[field_value_name(field["id"])] = field["value"]
+        if field.get("supports_text"):
+            form[field_value_name(field["id"])] = field["value"]
+        if field.get("supports_logos"):
+            form[field_logo_value_name(field["id"])] = normalize_multi_value_ids(field.get("selected_logo_ids", []))
         if field["print_enabled"]:
             form[field_print_name(field["id"])] = "1"
     return form, field_forms
@@ -1526,7 +1567,7 @@ def selected_qr_field_ids_from_source(fields: List[Dict], source: object) -> Lis
     selected = normalize_qr_field_ids(values)
     if not selected:
         selected = [field.get("id") for field in fields if normalize_bool(field.get("always_use_for_qr"), False)]
-    valid_ids = {field.get("id") for field in fields if not field_supports_logos(field)}
+    valid_ids = {field.get("id") for field in fields if field_supports_text(field)}
     return [field_id for field_id in selected if field_id in valid_ids]
 
 
@@ -1570,18 +1611,13 @@ def require_requested_profile(opts: Dict) -> Dict:
 def validate_field_forms(field_forms: List[Dict], language: str) -> List[Dict]:
     validated: List[Dict] = []
     for field in field_forms:
-        if field_supports_logos(field):
-            value = normalize_multi_value_ids(field.get("value", []))
-            if field.get("required") and field.get("print_enabled") and not value:
-                raise ValueError(ui_text(language, "field_required", field=field["name"]))
-            validated.append({**field, "value": value, "selected_logo_ids": value})
-            continue
-        value = str(field.get("value") or "").strip()
+        value = str(field.get("value") or "").strip() if field_supports_text(field) else ""
+        selected_logo_ids = normalize_multi_value_ids(field.get("selected_logo_ids", field.get("value", []))) if field_supports_logos(field) else []
         if field.get("number_only") and value and not value.isdigit():
             raise ValueError(ui_text(language, "field_numbers_only", field=field["name"]))
-        if field.get("required") and field.get("print_enabled"):
-            value = validate_required_text(value, field["name"], language)
-        validated.append({**field, "value": value})
+        if field.get("required") and field.get("print_enabled") and not value and not selected_logo_ids:
+            raise ValueError(ui_text(language, "field_required", field=field["name"]))
+        validated.append({**field, "value": value, "selected_logo_ids": selected_logo_ids})
     return validated
 
 
@@ -1612,50 +1648,39 @@ def apply_field_text_transform(field: Dict) -> str:
 
 def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     body: List[Dict] = []
-    footer_logo_rows: List[Dict] = []
-    footer_texts: List[Dict] = []
+    footer: List[Dict] = []
     for field in field_forms:
         if not field.get("print_enabled"):
             continue
+        target = footer if field.get("position") == "footer" else body
         if field_supports_logos(field):
-            selected_lookup = set(normalize_multi_value_ids(field.get("value", [])))
+            selected_lookup = set(normalize_multi_value_ids(field.get("selected_logo_ids", [])))
             selected_options = [option for option in normalize_logo_options(field.get("logo_options", [])) if option.get("id") in selected_lookup]
-            if not selected_options:
-                continue
-            block = {
-                "type": "logo_row",
+            if selected_options:
+                target.append({
+                    "type": "logo_row",
+                    "alignment": field["alignment"],
+                    "logos": selected_options,
+                    "logo_height_mm": field.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
+                    "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
+                    "profile": field.get("profile"),
+                })
+        text = apply_field_text_transform(field) if field_supports_text(field) else ""
+        if text:
+            target.append({
+                "type": "text",
+                "value": text,
                 "alignment": field["alignment"],
-                "logos": selected_options,
-                "logo_height_mm": field.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
+                "font_family": field["font_family"],
+                "font_size_mm": field["font_size_mm"],
+                "bold": field["bold"],
+                "italic": field["italic"],
+                "underline": field["underline"],
+                "max_lines": field["max_lines"],
                 "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
-            "profile": field.get("profile"),
-            }
-            if field.get("position") == "footer":
-                footer_logo_rows.append(block)
-            else:
-                body.append(block)
-            continue
-        text = apply_field_text_transform(field)
-        if not text:
-            continue
-        block = {
-            "type": "text",
-            "value": text,
-            "alignment": field["alignment"],
-            "font_family": field["font_family"],
-            "font_size_mm": field["font_size_mm"],
-            "bold": field["bold"],
-            "italic": field["italic"],
-            "underline": field["underline"],
-            "max_lines": field["max_lines"],
-            "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
-            "profile": field.get("profile"),
-        }
-        if field.get("position") == "footer":
-            footer_texts.append(block)
-        else:
-            body.append(block)
-    return body, (footer_logo_rows + footer_texts)
+                "profile": field.get("profile"),
+            })
+    return body, footer
 
 
 def printer_dpi(profile: Dict | int | float | None = None) -> int:
@@ -2118,12 +2143,14 @@ def preview_query_from_form(form: Dict[str, object], field_forms: List[Dict], pr
         params.append(("qr_field_ids", field_id))
     for field in field_forms:
         value_key = field_value_name(field["id"])
-        if field_supports_logos(field):
-            params.append((f"{value_key}__present", "1"))
-            for logo_id in normalize_multi_value_ids(field.get("value", [])):
-                params.append((value_key, logo_id))
-        else:
+        logo_value_key = field_logo_value_name(field["id"])
+        logo_present_key = field_logo_present_name(field["id"])
+        if field.get("supports_text"):
             params.append((value_key, str(field.get("value", ""))))
+        if field.get("supports_logos"):
+            params.append((logo_present_key, "1"))
+            for logo_id in normalize_multi_value_ids(field.get("selected_logo_ids", [])):
+                params.append((logo_value_key, logo_id))
         if field.get("print_enabled"):
             params.append((field_print_name(field["id"]), "1"))
     return urlencode(params, doseq=True)
@@ -2164,12 +2191,12 @@ def editor_form_from_field(field: Dict | None) -> Dict:
     if not field:
         return blank_editor_form()
     supports_logos = field_supports_logos(field)
-    default_logo_ids = normalize_multi_value_ids(field.get("default_value", [])) if supports_logos else []
+    default_logo_ids = normalize_multi_value_ids(field.get("default_logo_ids", [])) if supports_logos else []
     return {
         "original_field_id": field.get("id", ""),
         "id": field.get("id", ""),
         "name": field.get("name", ""),
-        "default_value": "" if supports_logos else field.get("default_value", ""),
+        "default_value": field.get("default_value", ""),
         "alignment": field.get("alignment", "center"),
         "font_family": field.get("font_family", "sans"),
         "font_size_mm": field.get("font_size_mm", 7.0),
@@ -2210,7 +2237,8 @@ def validate_and_normalize_editor_payload(source: Dict, language: str) -> Tuple[
         {
             "id": source.get("id") or raw_name,
             "name": raw_name,
-            "default_value": source.get("default_logo_ids", []) if logo_field else source.get("default_value", ""),
+            "default_value": source.get("default_value", ""),
+            "default_logo_ids": source.get("default_logo_ids", []),
             "alignment": source.get("alignment", "center"),
             "font_family": source.get("font_family", "sans"),
             "font_size_mm": source.get("font_size_mm", 7.0),
@@ -2370,7 +2398,7 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
             "value": normalize_qr_value(field.get("value", "")),
             "selected": field["id"] in qr_selected_ids,
         }
-        for field in field_forms if not field_supports_logos(field)
+        for field in field_forms if field_supports_text(field)
     ]
     editor_form = editor_form or blank_editor_form()
     preview_profiles = []
@@ -2425,22 +2453,33 @@ def api_field_forms_from_payload(fields: List[Dict], payload: Dict) -> List[Dict
     forms: List[Dict] = []
     for field in fields:
         current = dict(field)
-        if field_supports_logos(field):
-            if field["id"] in values:
-                current["value"] = normalize_multi_value_ids(values[field["id"]])
-            elif field["id"] in lookup:
-                current["value"] = normalize_multi_value_ids(lookup[field["id"]].get("value") or lookup[field["id"]].get("values") or [])
-            else:
-                current["value"] = normalize_multi_value_ids(field.get("default_value", []))
-            selected_lookup = set(current["value"])
-            current["logo_options"] = [{**option, "selected": option.get("id") in selected_lookup} for option in normalize_logo_options(field.get("logo_options", []))]
-        else:
-            if field["id"] in values:
+        supports_logos = field_supports_logos(field)
+        supports_text = field_supports_text(field)
+        if supports_text:
+            if field["id"] in values and not isinstance(values[field["id"]], (list, tuple, set, dict)):
                 current["value"] = str(values[field["id"]])
             elif field["id"] in lookup:
                 current["value"] = str(lookup[field["id"]].get("value") or "")
             else:
-                current["value"] = field["default_value"]
+                current["value"] = str(field.get("default_value", ""))
+        else:
+            current["value"] = ""
+        if supports_logos:
+            logo_values = payload.get("logo_field_values") if isinstance(payload.get("logo_field_values"), dict) else {}
+            if field["id"] in logo_values:
+                current["selected_logo_ids"] = normalize_multi_value_ids(logo_values[field["id"]])
+            elif field["id"] in lookup:
+                current["selected_logo_ids"] = normalize_multi_value_ids(lookup[field["id"]].get("logos") or lookup[field["id"]].get("logo_ids") or lookup[field["id"]].get("values") or [])
+            elif field["id"] in values and isinstance(values[field["id"]], (list, tuple, set)):
+                current["selected_logo_ids"] = normalize_multi_value_ids(values[field["id"]])
+            else:
+                current["selected_logo_ids"] = normalize_multi_value_ids(field.get("default_logo_ids", []))
+            selected_lookup = set(current["selected_logo_ids"])
+            current["logo_options"] = [{**option, "selected": option.get("id") in selected_lookup} for option in normalize_logo_options(field.get("logo_options", []))]
+        else:
+            current["selected_logo_ids"] = []
+        current["supports_logos"] = supports_logos
+        current["supports_text"] = supports_text
         if field["id"] in print_values:
             current["print_enabled"] = normalize_bool(print_values[field["id"]], field["print_by_default"])
         elif field["id"] in lookup and "print" in lookup[field["id"]]:
@@ -2524,7 +2563,8 @@ def save_field():
         editor_form = editor_form_from_field({
             "id": request.form.get("id", ""),
             "name": request.form.get("name", ""),
-            "default_value": request.form.getlist("default_logo_ids") if normalize_bool(request.form.get("logo_field"), False) else request.form.get("default_value", ""),
+            "default_value": request.form.get("default_value", ""),
+            "default_logo_ids": request.form.getlist("default_logo_ids"),
             "alignment": request.form.get("alignment", "center"),
             "font_family": request.form.get("font_family", "sans"),
             "font_size_mm": request.form.get("font_size_mm", 7.0),
