@@ -55,7 +55,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
-APP_VERSION = '0.6.8.1'
+APP_VERSION = '0.6.9.0'
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -923,12 +923,50 @@ INV_LOCK = threading.Lock()
 
 confirmed = {}
 inv_path = '/data/inventory.json'
+
+def _normalize_location_list(value):
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        value = value.get('locations') or value.get('values') or value.get('zones') or value.get('members')
+    if isinstance(value, str):
+        vals = [value]
+    elif isinstance(value, (list, tuple, set)):
+        vals = list(value)
+    else:
+        vals = [value]
+    out = []
+    seen = set()
+    for item in vals:
+        s = str(item or '').strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return _sort_naturally(out)
+
+
+def _normalize_confirmed_inventory(raw):
+    out = {}
+    if not isinstance(raw, dict):
+        return out
+    for payload, locations in raw.items():
+        key = str(payload or '').strip()
+        if not key:
+            continue
+        locs = _normalize_location_list(locations)
+        if locs:
+            out[key] = locs
+    return out
+
+
 if os.path.exists(inv_path):
     try:
         with open(inv_path, 'r', encoding='utf-8') as f:
-            confirmed = json.load(f) or {}
+            confirmed = _normalize_confirmed_inventory(json.load(f) or {})
     except Exception:
         confirmed = {}
+
 
 def _atomic_write_json(path: str, obj):
     try:
@@ -943,24 +981,62 @@ def _atomic_write_json(path: str, obj):
         logger.exception("Failed writing %s: %s", path, e)
         return False
 
+
+def build_confirmed_inventory(states: dict):
+    grouped = {}
+    if isinstance(states, dict):
+        for cam_id, st in states.items():
+            detections = (st or {}).get('propagated_detections') or []
+            for det in detections:
+                if not isinstance(det, dict) or not bool(det.get('decoded', False)):
+                    continue
+                payload = str(det.get('payload') or '').strip()
+                zone = str(det.get('zone') or '').strip()
+                if not payload or not zone:
+                    continue
+                det_cam_id = str(det.get('camera') or cam_id or '').strip() or str(cam_id or 'cam')
+                grouped.setdefault(payload, set()).add(_camera_location(det_cam_id, zone))
+    return {
+        payload: _sort_naturally(list(locations))
+        for payload, locations in sorted(grouped.items(), key=lambda kv: _natural_sort_key(kv[0]))
+        if locations
+    }
+
+
+def persist_confirmed_inventory(states: dict):
+    snapshot = build_confirmed_inventory(states)
+    with INV_LOCK:
+        global confirmed
+        if snapshot == confirmed:
+            return False
+        confirmed = copy.deepcopy(snapshot)
+        to_write = copy.deepcopy(confirmed)
+    if _atomic_write_json(inv_path, to_write):
+        logger.info('Persisted inventory snapshot: payloads=%s locations=%s', len(to_write), sum(len(v) for v in to_write.values()))
+        return True
+    return False
+
+
 def persist_mapping(payload: str, location: str):
     """
-    Persist payload -> location mapping.
-    location is typically "<camera_id>.<zone>", e.g. "cam1.A1".
+    Backward-compatible helper: persist one confirmed location into the
+    multi-location inventory model.
     """
-    payload = (payload or "").strip()
-    location = (location or "").strip()
+    payload = (payload or '').strip()
+    location = (location or '').strip()
     if not payload or not location:
         return
 
     with INV_LOCK:
-        prev = confirmed.get(payload)
-        if prev == location:
+        prev = _normalize_location_list(confirmed.get(payload))
+        if location in prev:
             return
-        confirmed[payload] = location
+        updated = _sort_naturally(prev + [location])
+        confirmed[payload] = updated
+        to_write = copy.deepcopy(confirmed)
 
-    if _atomic_write_json(inv_path, confirmed):
-        logger.info('Persisted mapping %s -> %s', payload, location)
+    if _atomic_write_json(inv_path, to_write):
+        logger.info('Persisted mapping %s -> %s', payload, ', '.join(updated))
 
 # ------------------------------------------------------------
 # Utility helpers (FIX: _safe_label added)
@@ -3839,30 +3915,9 @@ class CameraWorker(threading.Thread):
                     except Exception:
                         pass
 
-                decoded = [d for d in detections if d.get("decoded", False) and d.get("payload") and d.get("zone")]
-                by_payload = defaultdict(list)
-                for d in decoded:
-                    by_payload[d["payload"]].append(d)
-
-                for payload, items in by_payload.items():
-                    if len(items) > 1:
-                        def _rank(it):
-                            sc = float(it.get("score") or 0.0)
-                            ep = float((it.get("diag") or {}).get("edge_px") or 0.0)
-                            return (sc, ep)
-                        best = sorted(items, key=_rank, reverse=True)[0]
-                        logger.warning("Payload conflict resolved: cam=%s payload=%s choose=%s", self.cam_id, payload, best.get("zone"))
-                        items = [best]
-
-                    d = items[0]
-                    zone = str(d.get("zone"))
-                    loc = _camera_location(self.cam_id, zone)
-
-                    self.history[payload].append(loc)
-                    logger.info("Detected cam=%s payload=%s zone=%s history=%s", self.cam_id, payload, zone, list(self.history[payload]))
-
-                    if len(self.history[payload]) >= max(1, self.required) and len(set(self.history[payload])) == 1:
-                        persist_mapping(payload, loc)
+                # Inventory persistence now follows the propagated per-zone state,
+                # which already applies required-cycle retention and allows the
+                # same payload to exist in multiple zones at the same time.
 
                 t_mqtt0 = time.perf_counter()
                 MQTT_MANAGER.publish_camera_zone_states(self.cam_id, self.cam_name, self.zones, zone_status)
@@ -3912,6 +3967,8 @@ class CameraWorker(threading.Thread):
                         "frame_info": fi,
                     }
                     states_snapshot = {k: (v or {}).copy() for k, v in STATE.items()}
+
+                persist_confirmed_inventory(states_snapshot)
 
                 t_list0 = time.perf_counter()
                 MQTT_MANAGER.publish_detected_list(states_snapshot)

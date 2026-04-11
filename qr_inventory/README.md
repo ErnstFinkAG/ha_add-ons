@@ -149,6 +149,22 @@ Das gilt auch für:
 - `detected_no_value`
 - Mehrfachwerte in einer Zone
 
+## Persistente Inventar-Datei
+
+Die Datei `inventory.json` speichert die **aktuell bestätigten** Positionen pro Payload als Liste:
+
+```json
+{
+  "260054 - Test Projekt 123": ["camera2.D2", "camera2.D3"],
+  "250297 - Lochmatter EFH Bütigen": ["camera3.E1"]
+}
+```
+
+Wichtig:
+- gleiches Label in mehreren Zonen ist erlaubt und wird **nicht** mehr auf eine einzelne Zone reduziert
+- die Datei wird aus den propagierten Zonenzuständen aufgebaut und folgt damit weiterhin dem `required`-Verhalten
+- ältere Dateien mit `payload: "camera.zone"` werden beim Laden automatisch auf Listen normalisiert
+
 ## Lovelace Custom Card
 
 Die Suchkarte liegt als separate Datei bei:
@@ -162,13 +178,14 @@ entity: sensor.qr_inventory_detected_list
 print_base_url: http://YOUR_ADDON_HOST:8099
 ```
 
-## Version 0.6.8.0
+## Version 0.6.9.0
 
-- fresh rebuild from the original base
-- fast dual-decoder flow restored: ZBar for detection, OpenCV can override payload text on the same crop
-- per-zone canonicalization drops duplicate payload variants for the same QR, preferring OpenCV-backed / non-corrupted text
-- Unicode overlay rendering via Pillow with configurable pixel font sizes
-- process-pool recovery for broken worker pools
+- inventory persistence switched from `payload -> single location` to `payload -> [locations]`
+- inventory snapshots are now rebuilt from propagated per-zone states, so the same payload can stay active in multiple zones at the same time
+- removed single-zone conflict collapsing for identical payloads seen in multiple inventory spaces
+- legacy `inventory.json` files with single string values are normalized automatically on load
+- Unicode overlay rendering via Pillow keeps text aligned inside the red payload label
+- decoder fallback now avoids blindly replacing correct UTF-8 payloads with corrupted OpenCV text
 
 Overlay font options:
 
