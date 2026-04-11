@@ -66,7 +66,6 @@ DEFAULT_LABEL_PROFILES = [
         "left_margin_mm": 0,
         "text_block_margin_left_mm": 0,
         "footer_bottom_margin_mm": 0,
-        "show_in_preview": False,
         "print_rotation_degrees": 0,
         "qr_quiet_zone_modules": 3,
         "qr_error_correction": "M",
@@ -251,7 +250,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is exported at {dpi} dpi. Preview shows the label size and rotation, but ignores label-profile print margins so the available space is easier to inspect. The red outline shows the full QR footprint including the configured quiet zone.",
+        "preview_meta": "PNG is exported at {dpi} dpi. Preview ignores profile print margins so the full usable label area stays visible. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
         "fields_heading": "Configured fields",
         "print_field": "Print",
         "required": "Required",
@@ -351,7 +350,7 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Die PNG-Vorschau wird mit {dpi} dpi exportiert. Die Vorschau zeigt Labelgröße und Drehung, ignoriert aber die Druckränder des Etikettenprofils, damit die verfügbare Fläche leichter geprüft werden kann. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
+        "preview_meta": "Die PNG-Vorschau wird mit {dpi} dpi exportiert. Profil-Margen gelten nur für den Druck und werden in der Vorschau ignoriert, damit die gesamte nutzbare Etikettenfläche sichtbar bleibt. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
         "required": "Pflichtfeld",
@@ -1319,7 +1318,6 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "left_margin_mm": normalize_float(data.get("left_margin_mm"), 0.0, 0.0, 100.0),
         "text_block_margin_left_mm": normalize_float(data.get("text_block_margin_left_mm"), 0.0, 0.0, 100.0),
         "footer_bottom_margin_mm": normalize_float(data.get("footer_bottom_margin_mm"), 0.0, 0.0, 50.0),
-        "show_in_preview": normalize_bool(data.get("show_in_preview"), False),
         "print_rotation_degrees": normalize_rotation_degrees(data.get("print_rotation_degrees"), 0),
         "qr_default_value": "" if data.get("qr_default_value") is None else str(data.get("qr_default_value")),
         "qr_quiet_zone_modules": normalize_int(data.get("qr_quiet_zone_modules"), 3, 0, 20),
@@ -1806,6 +1804,10 @@ def mm_to_dots(mm_value: float, profile: Dict | int | float | None = None) -> in
     return max(1, int(round(float(mm_value) * dots_per_mm(profile))))
 
 
+def mm_to_dots_nonnegative(mm_value: float, profile: Dict | int | float | None = None) -> int:
+    return max(0, int(round(float(mm_value) * dots_per_mm(profile))))
+
+
 def dots_to_mm(dots: int, profile: Dict | int | float | None = None) -> float:
     return round(dots / dots_per_mm(profile), 1)
 
@@ -1814,16 +1816,22 @@ def printer_max_width_dots(profile: Dict | int | float | None = None) -> int:
     return mm_to_dots(PRINTER_MAX_WIDTH_MM, profile)
 
 
-def effective_layout(profile: Dict) -> Dict:
+def effective_layout(profile: Dict, preview: bool = False) -> Dict:
     requested_width_dots = mm_to_dots(profile["label_width_mm"], profile)
     requested_height_dots = mm_to_dots(profile["label_height_mm"], profile)
     qr_size_dots = mm_to_dots(profile["qr_size_mm"], profile)
-    top_margin_dots = mm_to_dots(profile.get("top_margin_mm", 0.0), profile)
-    left_margin_dots = mm_to_dots(profile.get("left_margin_mm", 0.0), profile)
-    text_block_margin_left_dots = mm_to_dots(profile.get("text_block_margin_left_mm", 0.0), profile)
-    footer_bottom_margin_dots = mm_to_dots(profile.get("footer_bottom_margin_mm", 0.0), profile)
     max_width_dots = printer_max_width_dots(profile)
     effective_width_dots = min(requested_width_dots, max_width_dots)
+    if preview:
+        top_margin_dots = 0
+        left_margin_dots = 0
+        text_block_margin_left_dots = 0
+        footer_bottom_margin_dots = 0
+    else:
+        top_margin_dots = mm_to_dots_nonnegative(profile.get("top_margin_mm", 0.0), profile)
+        left_margin_dots = mm_to_dots_nonnegative(profile.get("left_margin_mm", 0.0), profile)
+        text_block_margin_left_dots = mm_to_dots_nonnegative(profile.get("text_block_margin_left_mm", 0.0), profile)
+        footer_bottom_margin_dots = mm_to_dots_nonnegative(profile.get("footer_bottom_margin_mm", 0.0), profile)
     return {
         "requested_width_dots": requested_width_dots,
         "requested_height_dots": requested_height_dots,
@@ -2112,26 +2120,6 @@ def draw_footer_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, bottom_y: in
     return current_bottom
 
 
-def profile_margin_dots(profile: Dict, preview: bool) -> Dict[str, int]:
-    if preview:
-        return {
-            "top": 0,
-            "left": 0,
-            "text_block_left": 0,
-            "footer_bottom": 0,
-        }
-    return {
-        "top": mm_to_dots(profile.get("top_margin_mm", 0.0), profile),
-        "left": mm_to_dots(profile.get("left_margin_mm", 0.0), profile),
-        "text_block_left": mm_to_dots(profile.get("text_block_margin_left_mm", 0.0), profile),
-        "footer_bottom": mm_to_dots(profile.get("footer_bottom_margin_mm", 0.0), profile),
-    }
-
-
-def clamp_int(value: int, minimum: int, maximum: int) -> int:
-    return max(minimum, min(maximum, int(value)))
-
-
 def draw_background_for_preview(img: Image.Image, requested_w: int, requested_h: int, printable_left: int, printable_w: int) -> None:
     draw = ImageDraw.Draw(img)
     content_right = printable_left + printable_w
@@ -2144,87 +2132,206 @@ def draw_background_for_preview(img: Image.Image, requested_w: int, requested_h:
     draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=(205, 205, 205), width=2)
 
 
+def render_text_block_image(block: Dict, max_width: int) -> Image.Image:
+    max_width = max(1, int(max_width))
+    measure_img = Image.new("RGBA", (max_width, max(16, max_width)), color=(255, 255, 255, 0))
+    measure_draw = ImageDraw.Draw(measure_img)
+    font, lines, resolved = fit_block_lines(measure_draw, block["value"], block, max_width)
+    spacing = max(4, resolved // 7)
+    widths = []
+    for line in lines:
+        bbox = measure_draw.textbbox((0, 0), line, font=font)
+        widths.append(bbox[2] - bbox[0])
+    line_h = text_line_height(measure_draw, font)
+    underline_extra = max(2, line_h // 12) + max(1, line_h // 18) if block.get("underline") else 0
+    total_h = (line_h * len(lines)) + (max(0, len(lines) - 1) * spacing) + underline_extra
+    text_w = max(widths or [1])
+    img = Image.new("RGBA", (max(1, text_w), max(1, total_h)), color=(255, 255, 255, 0))
+    draw = ImageDraw.Draw(img)
+    draw_aligned_lines(draw, lines, 0, 0, img.width, font, "left", block["underline"], spacing)
+    return img
+
+
+def render_logo_row_block_image(block: Dict, max_width: int) -> Image.Image:
+    logos = fit_logo_row_images(block, max(1, int(max_width)))
+    if not logos:
+        return Image.new("RGBA", (1, 1), color=(255, 255, 255, 0))
+    gap = mm_to_dots_nonnegative(DEFAULT_LOGO_GAP_MM, block.get("profile"))
+    total_width = sum(logo.width for logo in logos) + (gap * max(0, len(logos) - 1))
+    max_height = max(logo.height for logo in logos)
+    img = Image.new("RGBA", (max(1, total_width), max(1, max_height)), color=(255, 255, 255, 0))
+    draw_aligned_logo_row(img, logos, 0, 0, img.width, "left", block.get("profile"))
+    return img
+
+
+def render_logo_block_image(block: Dict, max_width: int) -> Image.Image:
+    logo = fit_logo_image(block, max(1, int(max_width)))
+    img = Image.new("RGBA", (max(1, logo.width), max(1, logo.height)), color=(255, 255, 255, 0))
+    img.alpha_composite(logo, (0, 0))
+    return img
+
+
+def render_block_image(block: Dict, max_width: int) -> Image.Image:
+    if block.get("type") == "logo_row":
+        return render_logo_row_block_image(block, max_width)
+    if block.get("type") == "logo":
+        return render_logo_block_image(block, max_width)
+    return render_text_block_image(block, max_width)
+
+
+def resolve_cross_alignment(alignment: str, mirrored: bool) -> str:
+    if not mirrored:
+        return alignment
+    if alignment == "left":
+        return "right"
+    if alignment == "right":
+        return "left"
+    return alignment
+
+
+def paste_block_in_flow(canvas: Image.Image, block_img: Image.Image, current_x: int, cross_start: int, cross_size: int, alignment: str, mirrored: bool, forward: bool) -> int:
+    cross_size = max(1, int(cross_size))
+    bw, bh = block_img.size
+    effective_alignment = resolve_cross_alignment(alignment, mirrored)
+    if effective_alignment == "left":
+        y = cross_start
+    elif effective_alignment == "right":
+        y = cross_start + max(0, cross_size - bh)
+    else:
+        y = cross_start + max(0, (cross_size - bh) // 2)
+    y = int(max(0, min(y, max(0, canvas.height - bh))))
+    if forward:
+        x = int(max(0, min(current_x, max(0, canvas.width - bw))))
+        canvas.alpha_composite(block_img, (x, y))
+        return x + bw
+    x = int(max(0, min(current_x - bw, max(0, canvas.width - bw))))
+    canvas.alpha_composite(block_img, (x, y))
+    return x
+
+
+def draw_body_blocks_flow(canvas: Image.Image, blocks: List[Dict], flow_start: int, flow_end: int, cross_start: int, cross_size: int, profile: Dict, mirrored: bool, forward: bool) -> int:
+    current_x = int(flow_start)
+    gap = mm_to_dots_nonnegative(FIELD_GAP_MM, profile)
+    max_block_width = max(1, abs(int(flow_end) - int(flow_start)))
+    for block in blocks:
+        block_img = render_block_image(block, max_block_width)
+        current_x = paste_block_in_flow(canvas, block_img, current_x, cross_start, cross_size, block["alignment"], mirrored, forward)
+        current_x = current_x + gap if forward else current_x - gap
+    return current_x
+
+
+def draw_footer_blocks_flow(canvas: Image.Image, footer_blocks: List[Dict], flow_edge: int, cross_start: int, cross_size: int, profile: Dict, mirrored: bool, forward_from_edge: bool) -> int:
+    current_x = int(flow_edge)
+    gap = mm_to_dots_nonnegative(FOOTER_GAP_MM, profile)
+    max_block_width = max(1, canvas.width)
+    for block in reversed(footer_blocks):
+        footer_margin = mm_to_dots_nonnegative(block.get("footer_bottom_margin_mm", 0.0), profile)
+        current_x = current_x + footer_margin if forward_from_edge else current_x - footer_margin
+        block_img = render_block_image(block, max_block_width)
+        current_x = paste_block_in_flow(canvas, block_img, current_x, cross_start, cross_size, block["alignment"], mirrored, forward_from_edge)
+        current_x = current_x + gap if forward_from_edge else current_x - gap
+    return current_x
+
+
 def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body_blocks: List[Dict], footer_blocks: List[Dict], profile: Dict, preview: bool) -> Image.Image:
-    layout = effective_layout(profile)
-    margins = profile_margin_dots(profile, preview)
+    layout = effective_layout(profile, preview=preview)
     img = Image.new("RGBA", (printable_w, canvas_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(img)
     has_qr = bool(normalize_qr_value(qr_value))
-    default_text_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    content_left = clamp_int(margins["left"], 0, max(0, printable_w - 1))
-    available_width = max(1, printable_w - content_left)
-    base_text_margin = default_text_margin
-    text_left = content_left + base_text_margin + margins["text_block_left"]
-    text_width = max(1, available_width - (base_text_margin * 2) - margins["text_block_left"])
-    current_y = margins["top"]
+    default_text_margin = mm_to_dots_nonnegative(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    left_margin = layout["left_margin_dots"]
+    text_shift = layout["text_block_margin_left_dots"]
+    text_left = min(max(0, left_margin + default_text_margin + text_shift), max(0, printable_w - 1))
+    text_width = max(1, printable_w - text_left - default_text_margin)
+    current_y = layout["top_margin_dots"]
     if has_qr:
-        qr_size = min(layout["qr_size_dots"], available_width)
-        qr_left = content_left + max((available_width - qr_size) // 2, 0)
-        qr_top = margins["top"]
+        usable_width = max(1, printable_w - left_margin)
+        qr_size = min(layout["qr_size_dots"], usable_width, canvas_h - current_y)
+        qr_left = left_margin + max(0, (usable_width - qr_size) // 2)
+        qr_top = current_y
         qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
         img.paste(qr_img, (qr_left, qr_top))
         if preview:
             preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
             draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
-        base_text_margin = max((available_width - qr_size) // 2, default_text_margin)
-        text_left = content_left + base_text_margin + margins["text_block_left"]
-        text_width = max(1, available_width - (base_text_margin * 2) - margins["text_block_left"])
-        current_y = qr_top + qr_size + mm_to_dots(8, profile)
+        current_y = qr_top + qr_size + mm_to_dots_nonnegative(8, profile)
     draw_body_blocks(img, draw, current_y, text_left, text_width, body_blocks, profile)
     if footer_blocks:
-        footer_bottom = canvas_h - margins["footer_bottom"]
+        footer_bottom = canvas_h - layout["footer_bottom_margin_dots"]
         draw_footer_blocks(img, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
     return img
 
 
 def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_blocks: List[Dict], footer_blocks: List[Dict], profile: Dict, preview: bool, rotation_degrees: int) -> Image.Image:
-    layout = effective_layout(profile)
-    margins = profile_margin_dots(profile, preview)
+    layout = effective_layout(profile, preview=preview)
     logical_w = canvas_h
     logical_h = printable_w
     landscape = Image.new("RGBA", (logical_w, logical_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(landscape)
     has_qr = bool(normalize_qr_value(qr_value))
-    default_side_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    right_margin = default_side_margin
-    shift_sign = -1 if rotation_degrees == 90 else 1
-    content_y_shift = shift_sign * margins["left"]
-    text_y_shift = shift_sign * (margins["left"] + margins["text_block_left"])
-    text_left = clamp_int(margins["top"], 0, max(0, logical_w - 1))
-    text_width = max(1, logical_w - text_left - right_margin)
-    text_top = clamp_int(default_side_margin + text_y_shift, 0, max(0, logical_h - 1))
+    default_text_margin = mm_to_dots_nonnegative(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    top_margin = layout["top_margin_dots"]
+    left_margin = layout["left_margin_dots"]
+    text_shift = layout["text_block_margin_left_dots"]
+    footer_bottom_margin = layout["footer_bottom_margin_dots"]
+    inter_block_gap = mm_to_dots_nonnegative(8, profile)
+
+    if rotation_degrees == 90:
+        flow_start = top_margin
+        flow_end = max(flow_start + 1, logical_w - footer_bottom_margin)
+        qr_cross_start = 0
+        qr_cross_size = max(1, logical_h - left_margin)
+        text_cross_start = default_text_margin
+        text_cross_size = max(1, logical_h - left_margin - default_text_margin - text_shift)
+        mirrored = True
+        forward = True
+        current_x = flow_start
+        if has_qr:
+            qr_size = min(layout["qr_size_dots"], max(1, flow_end - flow_start), qr_cross_size)
+            qr_x = current_x
+            qr_y = qr_cross_start + max(0, (qr_cross_size - qr_size) // 2)
+            qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
+            landscape.paste(qr_img, (qr_x, qr_y))
+            if preview:
+                preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
+                draw.rectangle((qr_x, qr_y, qr_x + qr_size - 1, qr_y + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
+            current_x = qr_x + qr_size + inter_block_gap
+        draw_body_blocks_flow(landscape, body_blocks, current_x, flow_end, text_cross_start, text_cross_size, profile, mirrored, forward)
+        if footer_blocks:
+            draw_footer_blocks_flow(landscape, footer_blocks, flow_end, text_cross_start, text_cross_size, profile, mirrored, False)
+        return landscape.transpose(Image.Transpose.ROTATE_270)
+
+    flow_start = logical_w - top_margin
+    flow_end = footer_bottom_margin
+    qr_cross_start = left_margin
+    qr_cross_size = max(1, logical_h - left_margin)
+    text_cross_start = left_margin + default_text_margin + text_shift
+    text_cross_size = max(1, logical_h - text_cross_start - default_text_margin)
+    mirrored = False
+    forward = False
+    current_x = flow_start
     if has_qr:
-        qr_size = min(layout["qr_size_dots"], logical_h)
-        qr_left = min(max(margins["top"], 0), max(0, logical_w - qr_size))
-        qr_top = clamp_int(max((logical_h - qr_size) // 2, 0) + content_y_shift, 0, max(0, logical_h - qr_size))
+        qr_size = min(layout["qr_size_dots"], max(1, flow_start - flow_end), qr_cross_size)
+        qr_x = max(0, current_x - qr_size)
+        qr_y = qr_cross_start + max(0, (qr_cross_size - qr_size) // 2)
         qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
-        landscape.paste(qr_img, (qr_left, qr_top))
+        landscape.paste(qr_img, (qr_x, qr_y))
         if preview:
             preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
-            draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
-        inter_block_gap = mm_to_dots(8, profile)
-        text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
-        text_width = max(1, logical_w - text_left - right_margin)
-        text_top = clamp_int(default_side_margin + text_y_shift, 0, max(0, logical_h - 1))
-    draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
+            draw.rectangle((qr_x, qr_y, qr_x + qr_size - 1, qr_y + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
+        current_x = qr_x - inter_block_gap
+    draw_body_blocks_flow(landscape, body_blocks, current_x, flow_end, text_cross_start, text_cross_size, profile, mirrored, forward)
     if footer_blocks:
-        footer_bottom = clamp_int(logical_h - margins["footer_bottom"] + text_y_shift, 0, logical_h)
-        draw_footer_blocks(landscape, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
-    if rotation_degrees == 90:
-        return landscape.transpose(Image.Transpose.ROTATE_270)
+        draw_footer_blocks_flow(landscape, footer_blocks, flow_end, text_cross_start, text_cross_size, profile, mirrored, True)
     return landscape.transpose(Image.Transpose.ROTATE_90)
 
 
 def orient_preview_for_display(img: Image.Image, rotation_degrees: int) -> Image.Image:
-    if rotation_degrees == 90:
-        return img.transpose(Image.Transpose.ROTATE_90)
-    if rotation_degrees == 270:
-        return img.transpose(Image.Transpose.ROTATE_270)
     return img
 
 
 def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, preview: bool) -> Image.Image:
-    layout = effective_layout(profile)
+    layout = effective_layout(profile, preview=preview)
     requested_w = layout["requested_width_dots"]
     requested_h = layout["requested_height_dots"]
     printable_w = layout["effective_width_dots"]
@@ -2234,12 +2341,12 @@ def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, pr
     if not preview:
         return printable_image
     if requested_w <= printable_w:
-        return orient_preview_for_display(printable_image, rotation_degrees)
+        return printable_image
     canvas = Image.new("RGBA", (requested_w, requested_h), color=(255, 255, 255, 255))
     printable_left = max((requested_w - printable_w) // 2, 0)
     draw_background_for_preview(canvas, requested_w, requested_h, printable_left, printable_w)
     canvas.alpha_composite(printable_image, (printable_left, 0))
-    return orient_preview_for_display(canvas, rotation_degrees)
+    return canvas
 
 
 def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
