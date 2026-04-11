@@ -937,6 +937,9 @@ HTML = """
 
       let refreshTimer = null;
       let previewNonce = Date.now();
+      let livePreviewPollTimer = null;
+      let lastPreviewQuery = "";
+      let lastAppliedPreviewQuery = "";
       const ingressBase = {{ ingress_base|tojson }};
       const noLogosUploadedText = {{ ui.no_logos_uploaded|tojson }};
       const defaultLogoLabelText = {{ ui.default_logo_label|tojson }};
@@ -1001,8 +1004,16 @@ HTML = """
         return params;
       }
 
-      function applyPreviewUpdate() {
+      function currentPreviewQueryString() {
+        return buildQuery().toString();
+      }
+
+      function applyPreviewUpdate(force) {
         const params = buildQuery();
+        const serialized = params.toString();
+        if (!force && serialized === lastAppliedPreviewQuery) return;
+        lastPreviewQuery = serialized;
+        lastAppliedPreviewQuery = serialized;
         previewNonce += 1;
         previewImages.forEach((img) => {
           const pngParams = applyProfileSpecificParams(new URLSearchParams(params), img);
@@ -1021,7 +1032,25 @@ HTML = """
 
       function schedulePreviewUpdate() {
         window.clearTimeout(refreshTimer);
-        refreshTimer = window.setTimeout(applyPreviewUpdate, 180);
+        refreshTimer = window.setTimeout(() => applyPreviewUpdate(false), 120);
+      }
+
+      function forcePreviewUpdateSoon() {
+        window.clearTimeout(refreshTimer);
+        window.requestAnimationFrame(() => applyPreviewUpdate(false));
+        refreshTimer = window.setTimeout(() => applyPreviewUpdate(false), 80);
+      }
+
+      function startLivePreviewPolling() {
+        window.clearInterval(livePreviewPollTimer);
+        lastPreviewQuery = currentPreviewQueryString();
+        livePreviewPollTimer = window.setInterval(() => {
+          const nextQuery = currentPreviewQueryString();
+          if (nextQuery !== lastPreviewQuery) {
+            lastPreviewQuery = nextQuery;
+            applyPreviewUpdate(false);
+          }
+        }, 200);
       }
 
       function persistFieldCheckbox(fieldId, settingKey, checked) {
@@ -1167,23 +1196,23 @@ HTML = """
         if (input.dataset && input.dataset.numberOnly === "1") {
           sanitizeNumericInput(input);
         }
-        if (type === "checkbox") {
+        if (type === "checkbox" || type === "radio") {
           window.requestAnimationFrame(() => {
-            applyPreviewUpdate();
+            forcePreviewUpdateSoon();
             const fieldId = input.getAttribute("data-field-id") || "";
             if (fieldId && input.name === `print_${fieldId}`) persistFieldCheckbox(fieldId, "print_by_default", input.checked);
             if (fieldId && input.name === "qr_field_ids") persistFieldCheckbox(fieldId, "always_use_for_qr", input.checked);
           });
           return;
         }
-        if (event.type === "input" || event.type === "keyup") {
+        if (event.type === "input" || event.type === "keyup" || event.type === "paste") {
           schedulePreviewUpdate();
         } else {
-          applyPreviewUpdate();
+          forcePreviewUpdateSoon();
         }
       }
 
-      ["input", "change", "keyup", "click"].forEach((eventName) => {
+      ["input", "change", "keyup", "click", "paste"].forEach((eventName) => {
         document.addEventListener(eventName, handleLivePreviewEvent, true);
       });
 
@@ -1214,7 +1243,8 @@ HTML = """
         });
       }
 
-      applyPreviewUpdate();
+      applyPreviewUpdate(true);
+      startLivePreviewPolling();
     })();
   </script>
 </body>
