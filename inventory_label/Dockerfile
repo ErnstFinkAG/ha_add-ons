@@ -3,19 +3,18 @@ FROM $BUILD_FROM
 
 RUN apk add --no-cache \
     python3 \
-    py3-pip
-
-ENV VIRTUAL_ENV=/opt/venv
-ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+    py3-pip \
+    ttf-dejavu \
+  && pip3 install --no-cache-dir --break-system-packages \
+    flask==3.1.0 \
+    waitress==3.0.2 \
+    qrcode==8.2 \
+    pillow==11.1.0 \
+    pyyaml==6.0.2
 
 WORKDIR /app
-COPY rootfs/app/requirements.txt /app/requirements.txt
-RUN python3 -m venv "$VIRTUAL_ENV" \
-    && pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r /app/requirements.txt
-
-COPY rootfs/app /app
-COPY run.sh /
+COPY app.py /app/app.py
+COPY run.sh /run.sh
 RUN chmod a+x /run.sh
 
 CMD [ "/run.sh" ]
