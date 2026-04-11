@@ -1,163 +1,96 @@
 # Inventory Label
 
-Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
+## What this rewrite does
 
-## What changed in v0.2.21
+This add-on defines two top-level configuration objects:
 
-This version fixes preview refresh and makes preview rendering tolerant while editing field values.
+- `labelprofiles`: per-printer label settings
+- `labelfields`: shared fields applied to every profile
 
-- preview refresh now triggers immediately on QR checkbox click and change
-- preview and PNG/ZPL preview no longer fail just because a field is temporarily incomplete while editing
-- printing validation stays strict
+The service starts a small web page through ingress that shows:
 
-## What changed in v0.2.03
+- the raw `options.json`
+- the normalized configuration
+- configuration errors, if any
 
-This version renders all configured label profiles as clickable previews and prints the clicked profile on its own configured printer.
+## Important note about PNG uploads
 
-- preview now shows every configured label profile stacked below each other
-- each preview uses that profile's own size, rotation, and printer settings
-- clicking a preview prints that exact label profile on its configured printer
-- PNG and ZPL preview links are now available per preview card
-- matching field IDs reuse the values entered in the active profile, while missing fields fall back to that profile's defaults
+The Home Assistant add-on configuration schema supports typed values, nested arrays and nested dictionaries, but it does not provide a native file upload field in the add-on config form.
 
-## Profile and field management
+Because of that, logo images are handled through `logo_path`.
 
-This version splits the configuration into two layers:
+Recommended locations for PNG files:
 
-- **Add-on Configuration tab**: create and edit label profiles
-- **Add-on web UI**: create and edit fields for the selected label profile
+- `/config/logos/...`
+- `/share/...`
 
-This matches the Home Assistant add-on settings UI much better:
+Then reference the file from `logo_path`.
 
-- `ui_language` stays global
-- every label profile gets its own structured entry in the settings UI
-- field definitions are stored separately per profile and are managed in the add-on UI
-- legacy `label_profiles_yaml` is migrated automatically on first start
-
-## Add-on config
-
-Configure one or more label profiles in the add-on **Configuration** tab.
-
-Example:
+## Example configuration
 
 ```yaml
-ui_language: de
-label_profiles:
-  - id: standard
-    name: Standard
-    printer_host: ""
+labelprofiles:
+  - id: standard170x305
+    name: Standard 170 x 305
+    printerhost: 10.50.20.12
     printer_port: 9100
-    printer_dpi: 203
-    print_offset_x_mm: 0
-    print_offset_y_mm: 0
+    printer_dpi: 300
     label_width_mm: 170
-    label_height_mm: 305
-    qr_size_mm: 170
+    label_length_mm: 305
     top_margin_mm: 0
-    footer_bottom_margin_mm: 0
-    print_rotation_degrees: 0
-    qr_quiet_zone_modules: 3
-    qr_error_correction: M
-    printable_area_box_enabled: true
-    printable_area_box_margin_mm: 5
+    left_margin_mm: 0
+    print_rotation: 0
+    qr_code_quietzone_modules: 3
+    qr_code_error_correction: M
+    show_in_preview: true
 
-  - id: rotated
-    name: Rotated
-    printer_host: ""
-    printer_port: 9100
-    printer_dpi: 203
-    print_offset_x_mm: 0
-    print_offset_y_mm: 0
-    label_width_mm: 170
-    label_height_mm: 305
-    qr_size_mm: 160
-    top_margin_mm: 0
-    footer_bottom_margin_mm: 0
-    print_rotation_degrees: 90
-    qr_quiet_zone_modules: 4
-    qr_error_correction: M
-    printable_area_box_enabled: true
-    printable_area_box_margin_mm: 5
+labelfields:
+  - id: assetnumber
+    name: Asset Number
+    fontsize: 18
+    default_value: ""
+    valuelist: []
+    logo: false
+    logo_path: ""
+    heading: Inventory
+    fontfamily: Arial
+    position: text
+    max_lines: 1
+    footer_margin_bottom: 0
+    bold: true
+    italic: false
+    underline: false
+    print_by_default: true
+    numbers_only: true
+    append_current_date: false
+    default_for_rendering_qr_code: true
+
+  - id: companylogo
+    name: Company Logo
+    fontsize: 12
+    default_value: ""
+    valuelist: []
+    logo: true
+    logo_path: logos/company.png
+    heading: ""
+    fontfamily: Arial
+    position: footer
+    max_lines: 1
+    footer_margin_bottom: 2
+    bold: false
+    italic: false
+    underline: false
+    print_by_default: true
+    numbers_only: false
+    append_current_date: false
+    default_for_rendering_qr_code: false
 ```
 
-## Field management in the web UI
+## Current validation rules
 
-For the currently selected label profile, the web UI now provides a dedicated field manager.
-
-There you can:
-
-- add a new field
-- edit an existing field
-- delete a field
-- keep field definitions separate for each label profile
-
-Field settings supported in the UI:
-
-- `id`
-- `name`
-- `default_value`
-- `alignment`: `left`, `center`, `right`
-- `font_family`: `sans`, `serif`, `mono`
-- `font_size_mm`
-- `bold`
-- `italic`
-- `underline`
-- `print_by_default`
-- `required`
-- `number_only`
-- `suffix`
-- `position`: `body` or `footer`
-- `footer_text` (bottom-anchored footer text)
-- `footer_bottom_margin_mm` (additional bottom margin for bottom-anchored footer text)
-- `append_current_date`
-- `always_use_for_qr`
-- `value_options` (suggested values, free text still allowed)
-- `logo_field` (render uploaded PNG logos instead of text)
-- `logo_height_mm`
-- `max_lines`
-- `text_block_offset_x_mm` (horizontal shift for the text/footer block)
-
-## Web UI
-
-Printer host and printer port are optional. The add-on can start without them, previews still work, and printing only becomes available once both are set. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, field inputs can offer suggested values while still accepting free text, and fields can be marked as footer text so their values stay anchored at the bottom of the label. Footer fields can also have their own additional bottom margin in mm. Fields can now also be configured as logo fields with uploaded PNG choices that are shown as selectable checkboxes in the label form. Multiple logos can be selected and rendered on one label. In the field editor, each uploaded logo can also be marked as selected by default so it appears in preview immediately.
-
-In the add-on web UI you can:
-
-- choose the active label profile
-- build the QR content by selecting one or more defined fields
-- persist QR and print checkbox changes back into the label template when clicked
-- enter each configured text field value with optional suggestion lists and free text
-- choose one or more uploaded PNG logos for logo fields via checkboxes
-- turn each field on/off for the current label
-- preview PNG and ZPL
-- print to the printer configured inside the selected profile
-- manage fields for the selected profile in a separate field section
-
-## API
-
-`POST /api/print`
-
-Example payload:
-
-```json
-{
-  "profile_id": "standard",
-  "qr_field_ids": ["project_no", "project_name"],
-  "copies": 1,
-  "field_values": {
-    "project_no": "250001",
-    "project_name": "EFH Huggentobbler Biel",
-    "element": "DE1",
-    "weight": "1",
-    "footer": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
-    "brand_logos": ["fink_logo", "iso_logo"]
-  },
-  "print_fields": {
-    "project_no": true,
-    "project_name": true,
-    "element": true,
-    "weight": false,
-    "footer": true
-  }
-}
-```
+- profile IDs must be unique
+- field IDs must be unique
+- IDs must use lowercase letters and digits only
+- only one field may be the default QR value source
+- `numbers_only` fields may only contain numeric defaults and numeric value lists
+- non-logo fields automatically clear `logo_path`

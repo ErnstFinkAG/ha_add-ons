@@ -1,62 +1,105 @@
 configuration:
-  ui_language:
-    name: UI language
-    description: Language used in the add-on web UI.
-  label_profiles:
+  labelprofiles:
     name: Label profiles
-    description: Create one entry per label profile. Field definitions are managed in the add-on web UI for each selected label.
+    description: Create printer-bound label profiles used for rendering and output.
     fields:
       id:
-        name: Profile ID
-        description: Internal unique ID for the label profile.
+        name: ID
+        description: Lowercase letters and digits only, no spaces.
       name:
-        name: Profile name
-        description: Name shown in the add-on UI.
-      printer_host:
+        name: Name
+        description: Friendly display name for the label profile.
+      printerhost:
         name: Printer host
-        description: IP address or host name of the network printer.
+        description: Printer IP address or hostname.
       printer_port:
         name: Printer port
-        description: Raw TCP port of the printer, usually 9100.
+        description: Raw TCP printer port, usually 9100.
       printer_dpi:
         name: Printer DPI
-        description: Print resolution in dots per inch for this label profile, for example 203 or 300.
-      print_offset_x_mm:
-        name: Print offset X (mm)
-        description: Horizontal print calibration offset in millimeters. Positive values move the print right.
-      print_offset_y_mm:
-        name: Print offset Y (mm)
-        description: Vertical print calibration offset in millimeters. Positive values move the print down.
+        description: Printer resolution in dots per inch.
       label_width_mm:
-        name: Label width (mm)
-        description: Physical width of the label.
-      label_height_mm:
-        name: Label height (mm)
-        description: Physical height of the label.
-      qr_size_mm:
-        name: QR size (mm)
-        description: Printed QR size.
+        name: Label width
+        description: Label width in millimeters.
+      label_length_mm:
+        name: Label length
+        description: Label length in millimeters.
       top_margin_mm:
-        name: Top margin (mm)
-        description: Top offset before placing the QR code.
-      footer_bottom_margin_mm:
-        name: Footer bottom margin (mm)
-        description: Bottom offset for footer text.
-      print_rotation_degrees:
+        name: Top margin
+        description: Top margin in millimeters.
+      left_margin_mm:
+        name: Left margin
+        description: Left margin in millimeters.
+      print_rotation:
         name: Print rotation
-        description: Rotation of the rendered label.
-      qr_quiet_zone_modules:
-        name: QR quiet zone
-        description: Quiet zone in QR modules.
-      qr_error_correction:
+        description: Rotation in degrees.
+      qr_code_quietzone_modules:
+        name: QR quiet zone modules
+        description: Quiet zone around the QR code in modules.
+      qr_code_error_correction:
         name: QR error correction
         description: QR error correction level.
-      printable_area_box_enabled:
-        name: Printable area box
-        description: Draw a box inside the label based on the label size and configured box margin.
-      printable_area_box_margin_mm:
-        name: Printable area box margin (mm)
-        description: Margin from each label edge used to calculate the printable area box.
-      text_block_offset_x_mm:
-        name: Text block offset X (mm)
-        description: Horizontal offset of the text and footer block in millimeters. Positive values move the text block right.
+      show_in_preview:
+        name: Show in preview
+        description: Whether this label profile is available in preview mode.
+  labelfields:
+    name: Label fields
+    description: Create fields that are shared across all label profiles.
+    fields:
+      id:
+        name: ID
+        description: Lowercase letters and digits only, no spaces.
+      name:
+        name: Name
+        description: Friendly field name.
+      fontsize:
+        name: Font size
+        description: Text size used when rendering the field.
+      default_value:
+        name: Default value
+        description: Default field value.
+      valuelist:
+        name: Value list
+        description: Allowed or suggested values.
+      logo:
+        name: Logo field
+        description: Treat this field as a logo placeholder.
+      logo_path:
+        name: Logo path
+        description: Relative or absolute PNG path in a mapped folder.
+      heading:
+        name: Heading
+        description: Optional heading shown with the field.
+      fontfamily:
+        name: Font family
+        description: Font family name.
+      position:
+        name: Position
+        description: Render as normal text or as footer content.
+      max_lines:
+        name: Max lines
+        description: Maximum number of wrapped lines.
+      footer_margin_bottom:
+        name: Footer margin bottom
+        description: Margin below footer content in millimeters.
+      bold:
+        name: Bold
+        description: Render bold text.
+      italic:
+        name: Italic
+        description: Render italic text.
+      underline:
+        name: Underline
+        description: Render underlined text.
+      print_by_default:
+        name: Print by default
+        description: Include this field in printing by default.
+      numbers_only:
+        name: Numbers only
+        description: Restrict values to digits only.
+      append_current_date:
+        name: Append current date
+        description: Append today's date in YYYY.MM.DD format.
+      default_for_rendering_qr_code:
+        name: Default for rendering QR code
+        description: Use this field as the default QR value source.
