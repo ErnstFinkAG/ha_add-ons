@@ -4,7 +4,7 @@ configuration:
     description: Sprache der Add-on-Weboberfläche.
   label_profiles:
     name: Etikettenprofile
-    description: Erstelle pro Label ein eigenes Profil. Felddefinitionen werden im Add-on-Web-UI pro ausgewähltem Label verwaltet.
+    description: Erstelle pro Etikettenprofil einen Eintrag. Die globalen Felddefinitionen werden einmalig in der Add-on-Weboberfläche verwaltet und gelten für alle Profile.
     fields:
       id:
         name: Profil-ID
@@ -18,6 +18,9 @@ configuration:
       printer_port:
         name: Drucker-Port
         description: Raw-TCP-Port des Druckers, normalerweise 9100.
+      printer_dpi:
+        name: Drucker-DPI
+        description: Druckerauflösung für Rendering und Vorschau-Export.
       label_width_mm:
         name: Labelbreite (mm)
         description: Physische Breite des Labels.
@@ -29,19 +32,10 @@ configuration:
         description: Gedruckte QR-Größe.
       top_margin_mm:
         name: Oberer Rand (mm)
-        description: Nur für den Druck genutzter oberer Abstand des gerenderten Inhalts.
-      left_margin_mm:
-        name: Linker Rand (mm)
-        description: Nur für den Druck genutzter linker Abstand des gerenderten Inhalts.
-      text_block_margin_left_mm:
-        name: Textblock-Rand links (mm)
-        description: Zusätzlicher linker Druck-Abstand nur für den Textblock.
+        description: Oberer Abstand vor dem QR-Code.
       footer_bottom_margin_mm:
         name: Footer-Unterrand (mm)
-        description: Nur für den Druck genutzter unterer Abstand für Footer-Text.
-      show_in_preview:
-        name: In Vorschau anzeigen
-        description: Dieses Etikettenprofil im Vorschaubereich der Weboberfläche anzeigen.
+        description: Unterer Abstand für Footer-Text.
       print_rotation_degrees:
         name: Druckdrehung
         description: Drehung des gerenderten Labels.
@@ -51,3 +45,6 @@ configuration:
       qr_error_correction:
         name: QR-Fehlerkorrektur
         description: Fehlerkorrekturstufe des QR-Codes.
+      show_in_preview:
+        name: In Vorschau zeigen
+        description: Aktiviert dieses Profil im Mehrfach-Vorschaubereich der Weboberfläche.

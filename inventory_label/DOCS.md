@@ -2,29 +2,16 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.57
+## What changed in v0.1.55
 
-This version fixes label-profile margin handling and adds print-only left-side margin controls.
+This version moves field definitions to one global shared field set and adds multi-profile preview support.
 
-- label-profile margins now affect print only and are ignored in preview
-- new `left_margin_mm` per label profile
-- new `text_block_margin_left_mm` per label profile to shift the text block to the right
-- body and footer text now both use the text-block left shift
-- rotated labels now apply top and left margins against the label orientation instead of the preview orientation
-
-## Profile and field management
-
-This version splits the configuration into two layers:
-
-- **Add-on Configuration tab**: create and edit label profiles
-- **Add-on web UI**: create and edit fields for the selected label profile
-
-This matches the Home Assistant add-on settings UI much better:
-
-- `ui_language` stays global
-- every label profile gets its own structured entry in the settings UI
-- field definitions are stored separately per profile and are managed in the add-on UI
-- legacy `label_profiles_yaml` is migrated automatically on first start
+- fields are now global and apply to all label profiles
+- the label switch was removed from the web UI
+- each label profile now supports `show_in_preview`
+- the preview area renders one preview card per profile with `show_in_preview: true`
+- each preview card has its own print, ZPL preview, and PNG preview actions
+- older per-profile field storage is merged into one global field list automatically
 
 ## Add-on config
 
@@ -43,13 +30,11 @@ label_profiles:
     label_height_mm: 305
     qr_size_mm: 170
     top_margin_mm: 0
-    left_margin_mm: 0
-    text_block_margin_left_mm: 0
     footer_bottom_margin_mm: 0
-    show_in_preview: false
     print_rotation_degrees: 0
     qr_quiet_zone_modules: 3
     qr_error_correction: M
+    show_in_preview: true
 
   - id: rotated
     name: Rotated
@@ -59,25 +44,24 @@ label_profiles:
     label_height_mm: 305
     qr_size_mm: 160
     top_margin_mm: 0
-    left_margin_mm: 0
-    text_block_margin_left_mm: 0
     footer_bottom_margin_mm: 0
-    show_in_preview: true
     print_rotation_degrees: 90
     qr_quiet_zone_modules: 4
     qr_error_correction: M
+    show_in_preview: false
 ```
+
+`show_in_preview` defaults to `false` when omitted.
 
 ## Field management in the web UI
 
-For the currently selected label profile, the web UI now provides a dedicated field manager.
+The web UI now manages **one global field set**.
 
-There you can:
+Those fields:
 
-- add a new field
-- edit an existing field
-- delete a field
-- keep field definitions separate for each label profile
+- are defined once
+- apply to every label profile
+- are used by all preview cards and print actions
 
 Field settings supported in the UI:
 
@@ -95,30 +79,25 @@ Field settings supported in the UI:
 - `number_only`
 - `suffix`
 - `position`: `body` or `footer`
-- `footer_text` (bottom-anchored footer text)
-- `footer_bottom_margin_mm` (additional bottom margin for bottom-anchored footer text)
+- `footer_text`
+- `footer_bottom_margin_mm`
 - `append_current_date`
 - `always_use_for_qr`
-- `value_options` (suggested values, free text still allowed)
-- `logo_field` (render uploaded PNG logos instead of text)
+- `value_options`
+- `logo_field`
 - `logo_height_mm`
 - `max_lines`
 
 ## Web UI
 
-Printer host, printer port, and printer DPI are configured per label profile. Host and port are optional so the add-on can start without them, previews still work, and printing only becomes available once both are set. DPI defaults to 203 when omitted. Label-profile margins now affect print output only; preview ignores them so the available label space is easier to inspect. `top_margin_mm`, `left_margin_mm`, and `footer_bottom_margin_mm` follow the label orientation for rotated prints. `text_block_margin_left_mm` shifts the body and footer text block to the right in mm. If no QR field is selected, or all selected values are empty, no QR code is rendered. New label profiles use 0 mm for all margin options. Field templates can now mark fields as always used for QR, field inputs can offer suggested values while still accepting free text, and fields can be marked as footer text so their values stay anchored at the bottom of the label. Footer fields can also have their own additional bottom margin in mm. Fields can now also be configured as logo fields with uploaded PNG choices that are shown as selectable checkboxes in the label form. Multiple logos can be selected and rendered on one label. In the field editor, each uploaded logo can also be marked as selected by default so it appears in preview immediately. For non-rotated labels, printing now uses native ZPL for QR and text and only sends the selected logos as graphics, which significantly reduces the print payload compared with rendering the whole label as one bitmap.
-
 In the add-on web UI you can:
 
-- choose the active label profile
-- build the QR content by selecting one or more defined fields
-- persist QR and print checkbox changes back into the label template when clicked
-- enter each configured text field value with optional suggestion lists and free text
-- choose one or more uploaded PNG logos for logo fields via checkboxes
-- turn each field on/off for the current label
-- preview PNG and ZPL
-- print to the printer configured inside the selected profile
-- manage fields for the selected profile in a separate field section
+- enter the shared field values once
+- build the QR content by selecting one or more global fields
+- see multiple preview cards at the same time
+- print to the printer configured inside each visible profile
+- preview PNG and ZPL per visible profile
+- manage the global fields in one shared field section
 
 ## API
 
