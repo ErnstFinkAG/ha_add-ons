@@ -55,7 +55,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
-APP_VERSION = '0.6.8.0'
+APP_VERSION = '0.6.8.1'
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -1042,8 +1042,12 @@ def _measure_overlay_text(text: str, font_scale: float = 0.6, thickness: int = 1
         try:
             img = Image.new('RGB', (4, 4), (0, 0, 0))
             draw = ImageDraw.Draw(img)
-            bbox = draw.textbbox((0, 0), text, font=font)
-            return max(1, int(bbox[2] - bbox[0])), max(1, int(bbox[3] - bbox[1])), 0
+            # Use a left-baseline anchor so Pillow metrics match OpenCV's baseline semantics.
+            bbox = draw.textbbox((0, 0), text, font=font, anchor='ls')
+            tw = max(1, int(round(float(bbox[2] - bbox[0]))))
+            th = max(1, int(round(float(-bbox[1]))))
+            base = max(0, int(round(float(bbox[3]))))
+            return tw, th, base
         except Exception:
             pass
     (tw, th), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, float(font_scale), max(1, int(thickness)))
@@ -1059,7 +1063,14 @@ def _draw_overlay_text(img: np.ndarray, text: str, x: int, y: int, color_bgr, fo
                 rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 pil_img = Image.fromarray(rgb)
                 draw = ImageDraw.Draw(pil_img)
-                draw.text((int(x), int(y)), text, font=font, fill=(int(color_bgr[2]), int(color_bgr[1]), int(color_bgr[0])))
+                # Keep the same contract as cv2.putText: x/y is the text baseline.
+                draw.text(
+                    (int(x), int(y)),
+                    text,
+                    font=font,
+                    anchor='ls',
+                    fill=(int(color_bgr[2]), int(color_bgr[1]), int(color_bgr[0])),
+                )
                 img[:, :, :] = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
                 return
             except Exception:
@@ -1069,7 +1080,31 @@ def _draw_overlay_text(img: np.ndarray, text: str, x: int, y: int, color_bgr, fo
 
 def _safe_decode_qr_bytes(raw_bytes) -> str:
     try:
-        return (bytes(raw_bytes).decode('utf-8', errors='ignore') or '').strip()
+        raw = bytes(raw_bytes or b'')
+    except Exception:
+        raw = b''
+    if not raw:
+        return ''
+
+    for enc in ('utf-8', 'utf-8-sig'):
+        try:
+            s = raw.decode(enc)
+            if s:
+                return s.strip()
+        except Exception:
+            pass
+
+    # Fallbacks for QRs generated with single-byte encodings.
+    for enc in ('cp1252', 'latin-1'):
+        try:
+            s = raw.decode(enc)
+            if s:
+                return s.strip()
+        except Exception:
+            pass
+
+    try:
+        return raw.decode('utf-8', errors='ignore').strip()
     except Exception:
         return ''
 
@@ -1107,6 +1142,55 @@ def _quad_crop_with_border(gray_img: np.ndarray, quad_pts, border_px: int = 16):
         return None
 
 
+def _payload_has_cjk(text: str) -> bool:
+    s = str(text or '')
+    return any('一' <= ch <= '鿿' for ch in s)
+
+
+def _payload_text_quality_score(text: str) -> int:
+    s = str(text or '').strip()
+    if not s:
+        return -10_000
+
+    score = 0
+    score += min(len(s), 200)
+
+    # Reward ordinary label text and common European diacritics.
+    score += 2 * len(re.findall(r"[A-Za-z0-9À-ÖØ-öø-ÿ]", s))
+    score += len(re.findall(r"[ \-_/.,:;()%#&+]", s))
+
+    # Penalize obvious decoder artifacts harder than we reward length.
+    if '\ufffd' in s:
+        score -= 80
+    if _payload_has_cjk(s):
+        score -= 120
+    if re.search(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", s):
+        score -= 60
+
+    # Typical mojibake patterns from double-decoding / wrong decoder override.
+    score -= 20 * len(re.findall(r"(?:Ã.|Â.|â.|Ð.|Ñ.)", s))
+
+    return int(score)
+
+
+def _choose_preferred_payload(zbar_payload: str, op_payload: str):
+    zbar_payload = str(zbar_payload or '').strip()
+    op_payload = str(op_payload or '').strip()
+
+    if not op_payload:
+        return zbar_payload, 'zbar'
+    if not zbar_payload:
+        return op_payload, 'opencv'
+
+    z_score = _payload_text_quality_score(zbar_payload)
+    op_score = _payload_text_quality_score(op_payload)
+
+    # Keep the raw-byte ZBar text unless OpenCV is clearly better.
+    if op_score >= (z_score + 8):
+        return op_payload, 'opencv'
+    return zbar_payload, 'zbar'
+
+
 def _reconcile_payload_with_opencv(zbar_payload: str, gray_variant: np.ndarray, quad_pts, cam_id: str, zone_name: str, src: str = 'zbar'):
     payload = str(zbar_payload or '').strip()
     chosen_src = str(src or 'zbar')
@@ -1120,15 +1204,16 @@ def _reconcile_payload_with_opencv(zbar_payload: str, gray_variant: np.ndarray, 
         out = _opencv_decode_subprocess(img)
         op_payload = str((out or {}).get('payload') or '').strip()
         if op_payload:
+            chosen_payload, winner = _choose_preferred_payload(payload, op_payload)
             if op_payload != payload:
-                logger.warning('QR decoder mismatch cam=%s zone=%s src=%s zbar=%r opencv=%r choosing=opencv', cam_id, zone_name, src, payload, op_payload)
-            return op_payload, f'{chosen_src}+opencv'
+                logger.warning(
+                    'QR decoder mismatch cam=%s zone=%s src=%s zbar=%r opencv=%r choosing=%s',
+                    cam_id, zone_name, src, payload, op_payload, winner
+                )
+            if winner == 'opencv':
+                return chosen_payload, f'{chosen_src}+opencv'
+            return chosen_payload, chosen_src
     return payload, chosen_src
-
-
-def _payload_has_cjk(text: str) -> bool:
-    s = str(text or '')
-    return any('一' <= ch <= '鿿' for ch in s)
 
 
 def _canonicalize_zone_payload_variants(detections):
