@@ -2477,6 +2477,7 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         font_families=sorted(FONT_FAMILIES),
         field_positions=["body", "footer"],
         has_profiles=bool(opts.get("label_profiles")),
+        next_field_sort_order=next_field_sort_order,
     )
 
 

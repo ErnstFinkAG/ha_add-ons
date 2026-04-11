@@ -2,23 +2,17 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-This version adds per-field text block ordering so fields can switch render positions within the body or footer.
+## What changed in v0.1.60
 
-## What changed in v0.1.59
+This version fixes the web UI crash introduced with field ordering.
 
-Footer fields can now render selected logos and text together, with the text placed below the logos. Mixed footer logo/text fields keep separate default text and default selected logos.
+It keeps the recent behavior changes:
 
-This version removes built-in default profiles and fields, keeps fields global, and lets the preview image print directly.
-
-- there are no built-in default label profiles anymore
-- there are no built-in default fields anymore
-- create the first label profile in the add-on configuration before using the UI
-- global fields still apply to all label profiles
-- the preview area renders one preview card per profile with `show_in_preview: true`
+- fields can switch render order inside the body or footer text block
+- footer fields can render logos and text together, with text below the logos
+- `qr_size_mm: 0` disables QR generation completely for that label profile
+- there are no built-in default label profiles or fields anymore
 - clicking a preview image prints that exact profile using the selected copy count
-- setting `qr_size_mm: 0` disables QR generation completely for that label profile in preview and print
-- each preview card still has its own print, ZPL preview, and PNG preview actions
-- older per-profile field storage is merged into one global field list automatically
 
 ## Add-on config
 
