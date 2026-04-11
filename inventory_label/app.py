@@ -47,6 +47,7 @@ DEFAULT_LOGO_HEIGHT_MM = 20.0
 DEFAULT_LOGO_GAP_MM = 4.0
 FIELD_GAP_MM = 4.0
 FOOTER_GAP_MM = 3.0
+GROUPED_FIELD_GAP_MM = 1.0
 SUPPORTED_UI_LANGUAGES = {"en", "de"}
 SUPPORTED_ROTATIONS = {0, 90, 270}
 ALIGNMENTS = {"left", "center", "right"}
@@ -1699,22 +1700,27 @@ def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     for field in field_forms:
         if not field.get("print_enabled"):
             continue
-        target = footer if field.get("position") == "footer" else body
+        is_footer = field.get("position") == "footer"
+        target = footer if is_footer else body
+        default_gap_mm = FOOTER_GAP_MM if is_footer else FIELD_GAP_MM
+        source_field_id = field.get("id") or ""
+        field_blocks: List[Dict] = []
         if field_supports_logos(field):
             selected_lookup = set(normalize_multi_value_ids(field.get("selected_logo_ids", [])))
             selected_options = [option for option in normalize_logo_options(field.get("logo_options", [])) if option.get("id") in selected_lookup]
             if selected_options:
-                target.append({
+                field_blocks.append({
                     "type": "logo_row",
                     "alignment": field["alignment"],
                     "logos": selected_options,
                     "logo_height_mm": field.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
                     "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
                     "profile": field.get("profile"),
+                    "source_field_id": source_field_id,
                 })
         text = apply_field_text_transform(field) if field_supports_text(field) else ""
         if text:
-            target.append({
+            field_blocks.append({
                 "type": "text",
                 "value": text,
                 "alignment": field["alignment"],
@@ -1726,7 +1732,11 @@ def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
                 "max_lines": field["max_lines"],
                 "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
                 "profile": field.get("profile"),
+                "source_field_id": source_field_id,
             })
+        for index, block in enumerate(field_blocks):
+            block["gap_before_mm"] = GROUPED_FIELD_GAP_MM if index > 0 else (default_gap_mm if target else 0.0)
+            target.append(block)
     return body, footer
 
 
@@ -2018,6 +2028,9 @@ def draw_aligned_logo_row(img: Image.Image, logos: List[Image.Image], y: int, bo
 def draw_body_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, start_y: int, box_left: int, box_width: int, body_blocks: List[Dict], profile: Dict) -> int:
     current_y = start_y
     for block in body_blocks:
+        gap_before_mm = float(block.get("gap_before_mm", FIELD_GAP_MM if current_y > start_y else 0.0) or 0.0)
+        if gap_before_mm > 0:
+            current_y += mm_to_dots(gap_before_mm, profile)
         if block.get("type") == "logo_row":
             logos = fit_logo_row_images(block, box_width)
             current_y = draw_aligned_logo_row(img, logos, current_y, box_left, box_width, block["alignment"], profile)
@@ -2028,7 +2041,6 @@ def draw_body_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, start_y: int, 
             font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
             spacing = max(4, resolved // 7)
             current_y = draw_aligned_lines(draw, lines, current_y, box_left, box_width, font, block["alignment"], block["underline"], spacing)
-        current_y += mm_to_dots(FIELD_GAP_MM, profile)
     return current_y
 
 
@@ -2058,7 +2070,8 @@ def draw_footer_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, bottom_y: in
             draw_aligned_logo(img, payload, top_y, box_left, box_width, block["alignment"])
         else:
             draw_aligned_lines(draw, lines, top_y, box_left, box_width, payload, block["alignment"], block["underline"], spacing)
-        current_bottom = top_y - mm_to_dots(FOOTER_GAP_MM, profile)
+        gap_before_mm = float(block.get("gap_before_mm", FOOTER_GAP_MM if top_y < bottom_y else 0.0) or 0.0)
+        current_bottom = top_y - mm_to_dots(gap_before_mm, profile)
     return current_bottom
 
 

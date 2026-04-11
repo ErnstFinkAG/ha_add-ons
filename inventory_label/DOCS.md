@@ -2,10 +2,11 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.62
+## What changed in v0.1.63
 
 This version adds per-profile print shift settings on the X and Y axis in millimeters.
 
+- footer fields that render logos and text together now use tighter spacing between the logo row and the footer text
 - each label profile can shift the printed content on the X axis in `+` and `-` mm
 - each label profile can shift the printed content on the Y axis in `+` and `-` mm
 - the shift affects the whole printed layout together, including QR code and text blocks
