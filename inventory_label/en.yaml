@@ -4,7 +4,7 @@ configuration:
     description: Language used in the add-on web UI.
   label_profiles:
     name: Label profiles
-    description: Create one entry per label profile. Global field definitions are managed once in the add-on web UI and apply to all label profiles.
+    description: Create one entry per label profile. Field definitions are managed in the add-on web UI for each selected label.
     fields:
       id:
         name: Profile ID
@@ -18,9 +18,6 @@ configuration:
       printer_port:
         name: Printer port
         description: Raw TCP port of the printer, usually 9100.
-      printer_dpi:
-        name: Printer DPI
-        description: Printer resolution used for rendering and preview export.
       label_width_mm:
         name: Label width (mm)
         description: Physical width of the label.
@@ -32,16 +29,19 @@ configuration:
         description: Printed QR size.
       top_margin_mm:
         name: Top margin (mm)
-        description: Print-only top offset. It follows the label orientation, so top stays top even on rotated labels.
+        description: Print-only top offset of the rendered content.
       left_margin_mm:
         name: Left margin (mm)
-        description: Print-only left offset. It follows the label orientation, so left stays left even on rotated labels.
+        description: Print-only left offset of the rendered content.
       text_block_margin_left_mm:
         name: Text block margin left (mm)
-        description: Print-only extra left offset for the text block. This shifts text content to the right.
+        description: Print-only extra left offset for the text block.
       footer_bottom_margin_mm:
         name: Footer bottom margin (mm)
-        description: Print-only bottom offset for footer text. Preview ignores profile margin settings.
+        description: Print-only bottom offset for footer text.
+      show_in_preview:
+        name: Show in preview
+        description: Show this label profile in the web UI preview area.
       print_rotation_degrees:
         name: Print rotation
         description: Rotation of the rendered label.
@@ -51,6 +51,3 @@ configuration:
       qr_error_correction:
         name: QR error correction
         description: QR error correction level.
-      show_in_preview:
-        name: Show in preview
-        description: Enable this profile in the web UI multi-preview section.

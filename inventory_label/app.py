@@ -66,11 +66,11 @@ DEFAULT_LABEL_PROFILES = [
         "left_margin_mm": 0,
         "text_block_margin_left_mm": 0,
         "footer_bottom_margin_mm": 0,
+        "show_in_preview": False,
         "print_rotation_degrees": 0,
         "qr_quiet_zone_modules": 3,
         "qr_error_correction": "M",
         "printer_dpi": DEFAULT_PRINTER_DPI,
-        "show_in_preview": True,
     }
 ]
 
@@ -236,8 +236,9 @@ UI_STRINGS = {
     "en": {
         "lang": "en",
         "page_title": "Inventory Label",
-        "intro_text": "Create label profiles in the add-on configuration. Fields are global and managed once here in the web UI for all label profiles.",
-                "profile_none": "(none)",
+        "intro_text": "Create label profiles in the add-on configuration. Field definitions are managed here in the web UI for the currently selected label.",
+        "profile_select": "Label profile",
+        "profile_none": "(none)",
         "qr_value_label": "QR fields",
         "qr_field_help": "Select one or more defined fields. The QR content is built automatically from their current values.",
         "qr_field_empty": "No QR field selected. No QR code will be generated.",
@@ -250,7 +251,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at {dpi} dpi. Profile margin settings are ignored in preview and only affect print output. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
+        "preview_meta": "PNG is exported at {dpi} dpi. Preview shows the label size and rotation, but ignores label-profile print margins so the available space is easier to inspect. The red outline shows the full QR footprint including the configured quiet zone.",
         "fields_heading": "Configured fields",
         "print_field": "Print",
         "required": "Required",
@@ -258,8 +259,9 @@ UI_STRINGS = {
         "position": "Position",
         "position_body": "Body",
         "position_footer": "Footer",
-        "configured_label_mapping": "Current label setup",
-                "current_qr_payload": "Current QR payload",
+        "configured_label_mapping": "Active profile summary",
+        "profile_active": "Active profile",
+        "current_qr_payload": "Current QR payload",
         "requested_label": "Requested label",
         "requested_qr": "Requested QR",
         "effective_print_width": "Effective print width on ZT420/ZT421 @ {dpi} dpi",
@@ -274,14 +276,14 @@ UI_STRINGS = {
         "unknown_error": "Unknown error",
         "none": "(none)",
         "field_manager_heading": "Field manager",
-        "field_manager_intro": "These global fields are shared by all label profiles. Add, edit, or delete them here without touching the add-on settings.",
+        "field_manager_intro": "The active label has its own field submenu here. Add, edit, or delete fields without touching the add-on settings.",
         "save_field_button": "Save field",
         "new_field_button": "New field",
         "delete_field_button": "Delete",
         "edit_field_button": "Edit",
         "no_fields_configured": "No fields configured for this label yet.",
-        "field_saved_message": "Field '{field}' saved.",
-        "field_deleted_message": "Field '{field}' deleted.",
+        "field_saved_message": "Field '{field}' saved for profile '{profile}'.",
+        "field_deleted_message": "Field '{field}' deleted from profile '{profile}'.",
         "field_delete_failed": "Field delete failed: {error}",
         "field_save_failed": "Field save failed: {error}",
         "field_id_label": "Field ID",
@@ -326,9 +328,6 @@ UI_STRINGS = {
         "field_duplicate_error": "Field ID '{field_id}' already exists in this profile.",
         "field_name_required": "Field name is required.",
         "profile_not_found": "Label profile not found.",
-        "preview_profiles_label": "Profiles shown in preview",
-        "no_preview_profiles": "No label profile has show_in_preview enabled.",
-        "global_fields_tag": "Global fields",
         "legacy_migrated": "Legacy label_profiles_yaml was detected and migrated. Profiles now live in add-on settings, fields live in the web UI store.",
         "language_label": "Language",
         "profile_settings_source": "Profiles are defined in add-on settings",
@@ -337,8 +336,9 @@ UI_STRINGS = {
     "de": {
         "lang": "de",
         "page_title": "Inventory Label",
-        "intro_text": "Lege die Etikettenprofile in der Add-on-Konfiguration an. Die Felder sind global und werden hier einmalig für alle Etikettenprofile verwaltet.",
-                "profile_none": "(keins)",
+        "intro_text": "Lege die Etikettenprofile in der Add-on-Konfiguration an. Die Felddefinitionen werden hier in der Weboberfläche pro ausgewähltem Label verwaltet.",
+        "profile_select": "Etikettenprofil",
+        "profile_none": "(keins)",
         "qr_value_label": "QR-Felder",
         "qr_field_help": "Wähle ein oder mehrere definierte Felder. Der QR-Inhalt wird automatisch aus deren aktuellen Werten zusammengesetzt.",
         "qr_field_empty": "Kein QR-Feld ausgewählt. Es wird kein QR-Code erzeugt.",
@@ -351,7 +351,7 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit {dpi} dpi exportiert. Profil-Margins werden in der Vorschau ignoriert und wirken nur auf den Druck. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
+        "preview_meta": "Die PNG-Vorschau wird mit {dpi} dpi exportiert. Die Vorschau zeigt Labelgröße und Drehung, ignoriert aber die Druckränder des Etikettenprofils, damit die verfügbare Fläche leichter geprüft werden kann. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
         "required": "Pflichtfeld",
@@ -359,8 +359,9 @@ UI_STRINGS = {
         "position": "Position",
         "position_body": "Inhalt",
         "position_footer": "Footer",
-        "configured_label_mapping": "Aktuelle Etikettenkonfiguration",
-                "current_qr_payload": "Aktueller QR-Inhalt",
+        "configured_label_mapping": "Zusammenfassung des aktiven Profils",
+        "profile_active": "Aktives Profil",
+        "current_qr_payload": "Aktueller QR-Inhalt",
         "requested_label": "Gewünschtes Label",
         "requested_qr": "Gewünschter QR",
         "effective_print_width": "Effektive Druckbreite auf ZT420/ZT421 @ {dpi} dpi",
@@ -375,14 +376,14 @@ UI_STRINGS = {
         "unknown_error": "Unbekannter Fehler",
         "none": "(keins)",
         "field_manager_heading": "Feldverwaltung",
-        "field_manager_intro": "Diese globalen Felder gelten für alle Etikettenprofile. Hier können sie hinzugefügt, bearbeitet oder gelöscht werden, ohne die Add-on-Einstellungen anzufassen.",
+        "field_manager_intro": "Das aktive Label hat hier sein eigenes Untermenü. Felder können hinzugefügt, bearbeitet oder gelöscht werden, ohne die Add-on-Einstellungen anzufassen.",
         "save_field_button": "Feld speichern",
         "new_field_button": "Neues Feld",
         "delete_field_button": "Löschen",
         "edit_field_button": "Bearbeiten",
         "no_fields_configured": "Für dieses Label sind noch keine Felder konfiguriert.",
-        "field_saved_message": "Feld '{field}' gespeichert.",
-        "field_deleted_message": "Feld '{field}' gelöscht.",
+        "field_saved_message": "Feld '{field}' für Profil '{profile}' gespeichert.",
+        "field_deleted_message": "Feld '{field}' aus Profil '{profile}' gelöscht.",
         "field_delete_failed": "Feld löschen fehlgeschlagen: {error}",
         "field_save_failed": "Feld speichern fehlgeschlagen: {error}",
         "field_id_label": "Feld-ID",
@@ -427,9 +428,6 @@ UI_STRINGS = {
         "field_duplicate_error": "Feld-ID '{field_id}' existiert in diesem Profil bereits.",
         "field_name_required": "Feldname ist erforderlich.",
         "profile_not_found": "Etikettenprofil nicht gefunden.",
-        "preview_profiles_label": "Profile in der Vorschau",
-        "no_preview_profiles": "Kein Etikettenprofil hat show_in_preview aktiviert.",
-        "global_fields_tag": "Globale Felder",
         "legacy_migrated": "Altes label_profiles_yaml erkannt und migriert. Profile liegen jetzt in den Add-on-Einstellungen, Felder im Web-UI-Speicher.",
         "language_label": "Sprache",
         "profile_settings_source": "Profile werden in den Add-on-Einstellungen definiert",
@@ -460,7 +458,7 @@ HTML = """
     }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
-    .wrap { max-width: 1400px; margin: 0 auto; padding: 24px; }
+    .wrap { max-width: 1250px; margin: 0 auto; padding: 24px; }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); margin-bottom: 20px; }
     h1, h2, h3 { margin-top: 0; }
     label { display: block; font-weight: 600; margin-bottom: 8px; }
@@ -468,7 +466,7 @@ HTML = """
     textarea { min-height: 110px; resize: vertical; }
     input[type="checkbox"] { width: auto; margin: 0; accent-color: var(--accent); }
     .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
-    .row-compact { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+    .row-compact { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
     .btns { display: flex; gap: 12px; flex-wrap: wrap; }
     button, .button-link { border: none; background: var(--accent); color: white; padding: 12px 18px; border-radius: 12px; font: inherit; cursor: pointer; text-decoration: none; display: inline-block; }
     button.secondary, .button-link.secondary { background: transparent; border: 1px solid var(--border); }
@@ -477,47 +475,58 @@ HTML = """
     .flash.ok { background: rgba(16,185,129,0.14); border: 1px solid var(--ok); }
     .flash.error { background: rgba(239,68,68,0.14); border: 1px solid var(--danger); }
     .muted { color: var(--muted); }
-    .headline-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
-    .top-layout { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr); gap: 20px; align-items: start; }
-    .top-panel { background: #111827; border: 1px solid var(--border); border-radius: 16px; padding: 18px; }
-    .fields-section { margin-top: 0; }
-    .value-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .preview-wrap { overflow: auto; background: #0b1220; border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
+    .preview-stage { display: flex; justify-content: center; align-items: flex-start; min-width: 0; width: 100%; }
+    .preview-frame { width: {{ preview_display_width_mm }}mm; height: {{ preview_display_height_mm }}mm; flex: 0 0 auto; max-width: none; background: var(--label-bg); border: 1px solid var(--label-edge); box-shadow: 0 10px 30px rgba(0,0,0,0.28); }
+    .preview-frame img { display: block; width: 100%; height: 100%; object-fit: contain; background: white; }
+    .preview-meta { margin-top: 12px; font-size: 0.95rem; color: var(--muted); }
+    .preview-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-top: 14px; }
+    .preview-actions .btns { margin: 0; }
+    .copies-inline { width: 120px; }
+    .copies-inline label { margin-bottom: 6px; }
+    .copies-inline input { margin-bottom: 0; }
+    .config-list { margin: 0; padding-left: 18px; color: var(--muted); }
+    .config-list li + li { margin-top: 8px; }
     .field-grid { display: grid; gap: 14px; }
     .field-card { background: #111827; border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
     .field-card h3 { margin-bottom: 10px; font-size: 1rem; }
     .field-meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 0.92rem; margin-bottom: 12px; }
     .checkline { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-    .selector-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px; }
-    .selector-option { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: #111827; cursor: pointer; }
-    .selector-option input { margin-top: 3px; margin-bottom: 0; }
-    .selector-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-    .selector-text strong, .selector-text span { word-break: break-word; }
-    .config-list { margin: 0; padding-left: 18px; color: var(--muted); }
-    .config-list li + li { margin-top: 8px; }
-    .preview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
-    .preview-card { background: #111827; border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
-    .preview-frame { width: 100%; min-height: 240px; background: var(--label-bg); border: 1px solid var(--label-edge); border-radius: 12px; overflow: hidden; }
-    .preview-frame img { display: block; width: 100%; height: auto; background: white; }
-    .preview-meta { margin-top: 12px; font-size: 0.95rem; color: var(--muted); }
-    .preview-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
-    .copies-inline { width: 130px; }
-    .copies-inline label { margin-bottom: 6px; }
-    .copies-inline input { margin-bottom: 0; }
-    .tag-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-    .tag { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; background: #0f172a; border: 1px solid var(--border); color: var(--muted); font-size: 0.9rem; }
-    .field-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
-    .small { font-size: 0.92rem; }
-    .editor { background: #111827; border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
     .logo-option-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
     .logo-option-card { display: flex; flex-direction: column; gap: 8px; align-items: center; text-align: center; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #0f172a; }
     .logo-option-card img, .logo-thumb { max-width: 100%; max-height: 70px; object-fit: contain; background: white; border-radius: 8px; padding: 4px; box-sizing: border-box; }
     .logo-manager { display: grid; gap: 10px; }
     .logo-manager-item { display: grid; grid-template-columns: 90px 1fr 120px auto; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #111827; }
     .logo-order-input { margin: 0; }
+    .top-layout { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(340px, 0.95fr); gap: 20px; align-items: start; }
+    .top-panel { background: #111827; border: 1px solid var(--border); border-radius: 16px; padding: 18px; }
+    .top-panel > :last-child { margin-bottom: 0; }
+    .fields-section { margin-top: 18px; }
+    .fields-section.top-fields { margin-top: 0; }
+    .controls-panel { margin-top: 18px; }
+    .value-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .value-field-grid .field-card { padding: 12px; }
+    .value-field-grid .field-card h3 { margin-bottom: 8px; }
+    .value-field-grid .field-meta { margin-bottom: 10px; gap: 10px; }
+    .value-field-grid .checkline { margin-bottom: 10px; }
+    .value-field-grid .field-card input[type="text"] { margin-bottom: 0; }
+    .value-field-grid .field-card .logo-option-grid { margin-top: 8px; }
+    .compact-section-title { margin-bottom: 10px; }
+    .editor { background: #111827; border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
+    .editor .btns { margin-top: 4px; }
+    .tag-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .tag { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; background: #0f172a; border: 1px solid var(--border); color: var(--muted); font-size: 0.9rem; }
+    .field-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .small { font-size: 0.92rem; }
+    .headline-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+    .selector-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .selector-option { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: #111827; cursor: pointer; }
+    .selector-option input { margin-top: 3px; margin-bottom: 0; }
+    .selector-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .selector-text strong, .selector-text span { word-break: break-word; }
     code { word-break: break-word; }
     @media (max-width: 980px) {
       .top-layout, .value-field-grid { grid-template-columns: 1fr; }
-      .logo-manager-item { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -530,47 +539,10 @@ HTML = """
       {% if field_result %}
         <div class="flash {{ 'ok' if field_result.success else 'error' }}">{{ field_result.message }}</div>
       {% endif %}
-      <form id="label-form" method="post">
+      <form id="label-form" method="post" action="{{ ingress_base }}/print">
         <div class="top-layout">
           <div class="top-panel">
-            <div class="headline-row">
-              <div>
-                <h1>{{ ui.page_title }}</h1>
-                <p class="muted">{{ ui.intro_text }}</p>
-              </div>
-            </div>
-
-            <div class="row-compact">
-              <div class="copies-inline">
-                <label for="copies">{{ ui.copies }}</label>
-                <input id="copies" name="copies" type="number" min="1" max="50" value="{{ form.copies }}" required>
-              </div>
-              <div>
-                <label>{{ ui.preview_profiles_label }}</label>
-                <input value="{{ preview_profile_names_text }}" disabled>
-              </div>
-            </div>
-
-            <label>{{ ui.qr_value_label }}</label>
-            <div class="selector-grid">
-              {% for field in qr_field_options %}
-              <label class="selector-option" for="qr_field_{{ field.id }}">
-                <input id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" data-field-id="{{ field.id }}" {% if field.selected %}checked{% endif %}>
-                <div class="selector-text">
-                  <strong>{{ field.name }}</strong>
-                  <span class="muted small">{{ field.value or ui.none }}</span>
-                </div>
-              </label>
-              {% else %}
-              <div class="field-card muted">{{ ui.no_fields_configured }}</div>
-              {% endfor %}
-            </div>
-            <p class="muted small">{{ ui.qr_field_help }}</p>
-            {% if not qr_selected_ids %}
-            <p class="muted small">{{ ui.qr_field_empty }}</p>
-            {% endif %}
-
-            <div class="fields-section">
+            <div class="fields-section top-fields">
               <h2>{{ ui.fields_heading }}</h2>
               <div class="value-field-grid">
                 {% for field in field_forms %}
@@ -599,7 +571,14 @@ HTML = """
                     {% endfor %}
                   </div>
                   {% else %}
-                  <input id="field_{{ field.id }}" name="field_{{ field.id }}" type="text" value="{{ field.value }}" {% if field.value_options %}list="field_options_{{ field.id }}"{% endif %} {% if field.number_only %}inputmode="numeric" pattern="[0-9]*" data-number-only="1"{% endif %}>
+                  <input
+                    id="field_{{ field.id }}"
+                    name="field_{{ field.id }}"
+                    type="text"
+                    value="{{ field.value }}"
+                    {% if field.value_options %}list="field_options_{{ field.id }}"{% endif %}
+                    {% if field.number_only %}inputmode="numeric" pattern="[0-9]*" data-number-only="1"{% endif %}
+                  >
                   {% if field.value_options %}
                   <datalist id="field_options_{{ field.id }}">
                     {% for option in field.value_options %}
@@ -618,46 +597,85 @@ HTML = """
 
           <div class="top-panel">
             <h2>{{ ui.preview_heading }}</h2>
-            {% if preview_profiles %}
-            <div class="preview-grid">
-              {% for profile in preview_profiles %}
-              <div class="preview-card preview-card-js" data-profile-id="{{ profile.id }}">
-                <div class="headline-row">
-                  <div>
-                    <h3 style="margin-bottom:4px;">{{ profile.name }}</h3>
-                    <div class="muted small">{{ profile.printer_target }}</div>
-                  </div>
-                  <div class="tag-list">
-                    <span class="tag">{{ profile.label_width_mm }} × {{ profile.label_height_mm }} mm</span>
-                    <span class="tag">{{ ui.printer_dpi }}: {{ profile.printer_dpi }}</span>
-                    <span class="tag">{{ ui.print_rotation }}: {{ profile.print_rotation_degrees }}°</span>
-                  </div>
-                </div>
+            <div class="preview-wrap">
+              <div class="preview-stage">
                 <div class="preview-frame">
-                  <img class="preview-image" src="{{ ingress_base }}/preview.png?{{ profile.preview_query }}" alt="{{ ui.preview_alt }}">
-                </div>
-                <div class="preview-meta">{{ ui.preview_meta.format(dpi=profile.printer_dpi) }}</div>
-                <div class="preview-actions">
-                  <button type="submit" formaction="{{ ingress_base }}/print?profile_id={{ profile.id }}">{{ ui.print_label_button }}</button>
-                  <a class="button-link secondary preview-zpl-link" href="{{ ingress_base }}/preview?{{ profile.preview_query }}">{{ ui.preview_zpl }}</a>
-                  <a class="button-link secondary preview-png-link" href="{{ ingress_base }}/preview.png?{{ profile.preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
+                  <img id="preview-image" src="{{ ingress_base }}/preview.png?{{ preview_query }}" alt="{{ ui.preview_alt }}">
                 </div>
               </div>
-              {% endfor %}
             </div>
-            {% else %}
-            <p class="muted">{{ ui.no_preview_profiles }}</p>
-            {% endif %}
+            <div class="preview-meta">{{ preview_meta_text }}</div>
+            <div class="preview-actions">
+              <div class="copies-inline">
+                <label for="copies">{{ ui.copies }}</label>
+                <input id="copies" name="copies" type="number" min="1" max="50" value="{{ form.copies }}" required>
+              </div>
+              <div class="btns">
+                <button type="submit">{{ ui.print_label_button }}</button>
+                <a id="preview-zpl-link" class="button-link secondary" href="{{ ingress_base }}/preview?{{ preview_query }}">{{ ui.preview_zpl }}</a>
+                <a id="preview-png-link" class="button-link secondary" href="{{ ingress_base }}/preview.png?{{ preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div class="top-panel" style="margin-top:18px;">
-          <h2>{{ ui.configured_label_mapping }}</h2>
+        <div class="top-panel controls-panel">
+          <div class="headline-row">
+            <div>
+              <h1>{{ ui.page_title }}</h1>
+              <p class="muted">{{ ui.intro_text }}</p>
+            </div>
+          </div>
+
+          <div class="row-compact">
+            <div>
+              <label for="profile_id">{{ ui.profile_select }}</label>
+              <select id="profile_id" name="profile_id">
+                {% for profile in label_profiles %}
+                  <option value="{{ profile.id }}" {% if profile.id == active_profile_id %}selected{% endif %}>{{ profile.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label>{{ ui.configured_printer }}</label>
+              <input value="{{ printer_target }}" disabled>
+            </div>
+          </div>
+
+          <label>{{ ui.qr_value_label }}</label>
+          <div class="selector-grid">
+            {% for field in qr_field_options %}
+            <label class="selector-option" for="qr_field_{{ field.id }}">
+              <input id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" data-field-id="{{ field.id }}" {% if field.selected %}checked{% endif %}>
+              <div class="selector-text">
+                <strong>{{ field.name }}</strong>
+                <span class="muted small">{{ field.value or ui.none }}</span>
+              </div>
+            </label>
+            {% else %}
+            <div class="field-card muted">{{ ui.no_fields_configured }}</div>
+            {% endfor %}
+          </div>
+          <p class="muted small">{{ ui.qr_field_help }}</p>
+          {% if not qr_selected_ids %}
+          <p class="muted small">{{ ui.qr_field_empty }}</p>
+          {% endif %}
+
+          <h2 class="compact-section-title">{{ ui.configured_label_mapping }}</h2>
           <ul class="config-list">
+            <li><strong>{{ ui.profile_active }}:</strong> <code>{{ active_profile_name or ui.profile_none }}</code></li>
             <li><strong>{{ ui.current_qr_payload }}:</strong> <code>{{ qr_preview or ui.none }}</code></li>
-            <li><strong>{{ ui.preview_profiles_label }}:</strong> <code>{{ preview_profile_names_text or ui.none }}</code></li>
+            <li><strong>{{ ui.requested_label }}:</strong> <code>{{ requested_width_mm }} × {{ requested_height_mm }} mm</code></li>
+            <li><strong>{{ ui.requested_qr }}:</strong> <code>{{ requested_qr_mm }} × {{ requested_qr_mm }} mm</code></li>
+            <li><strong>QR:</strong> <code>quiet zone {{ qr_quiet_zone_modules }}, ECC {{ qr_error_correction }}</code></li>
+            <li><strong>{{ ui.print_rotation }}:</strong> <code>{{ print_rotation_degrees }}°</code></li>
+            <li><strong>{{ effective_print_width_text }}:</strong> <code>{{ effective_width_mm }} mm ({{ effective_width_dots }} dots)</code></li>
+            <li><strong>{{ ui.printer_dpi }}:</strong> <code>{{ printer_dpi }}</code></li>
             <li><strong>{{ ui.language_label }}:</strong> <code>{{ ui.lang }}</code></li>
           </ul>
+          {% if width_warning %}
+          <p class="muted">{{ ui.width_warning }}</p>
+          {% endif %}
         </div>
       </form>
     </div>
@@ -668,11 +686,11 @@ HTML = """
           <h2>{{ ui.field_manager_heading }}</h2>
           <p class="muted">{{ ui.field_manager_intro }}</p>
         </div>
-        <span class="tag">{{ ui.global_fields_tag }}</span>
+        <span class="tag">{{ ui.profile_active }}: {{ active_profile_name or ui.profile_none }}</span>
       </div>
 
       <div class="field-grid">
-        {% for field in configured_fields %}
+        {% for field in active_profile_fields %}
         <div class="field-card">
           <div class="headline-row">
             <h3>{{ field.name }}</h3>
@@ -706,6 +724,7 @@ HTML = """
           <div class="field-actions">
             <button type="button" class="secondary edit-field-button" data-field-id="{{ field.id }}">{{ ui.edit_field_button }}</button>
             <form method="post" action="{{ ingress_base }}/fields/delete" style="margin:0;">
+              <input type="hidden" name="profile_id" value="{{ active_profile_id }}">
               <input type="hidden" name="field_id" value="{{ field.id }}">
               <button type="submit" class="danger">{{ ui.delete_field_button }}</button>
             </form>
@@ -718,6 +737,7 @@ HTML = """
 
       <div class="editor" style="margin-top: 18px;">
         <form id="field-editor-form" method="post" action="{{ ingress_base }}/fields/save" enctype="multipart/form-data">
+          <input type="hidden" name="profile_id" value="{{ active_profile_id }}">
           <input type="hidden" id="original_field_id" name="original_field_id" value="{{ editor_form.original_field_id }}">
 
           <div class="headline-row">
@@ -854,19 +874,27 @@ HTML = """
   <script>
     (function () {
       const form = document.getElementById("label-form");
-      const previewCards = Array.from(document.querySelectorAll(".preview-card-js"));
+      const profileSelect = document.getElementById("profile_id");
+      const previewImage = document.getElementById("preview-image");
+      const previewFrame = document.querySelector(".preview-frame");
+      const previewWrap = document.querySelector(".preview-wrap");
+      const previewStage = document.querySelector(".preview-stage");
+      const previewPngLink = document.getElementById("preview-png-link");
+      const previewZplLink = document.getElementById("preview-zpl-link");
       const newFieldButton = document.getElementById("new-field-button");
       const fieldEditorForm = document.getElementById("field-editor-form");
       const fieldData = {{ field_editor_json|tojson }};
+      if (!form || !previewImage || !previewFrame || !previewWrap || !previewStage || !previewPngLink || !previewZplLink) return;
+
+      let refreshTimer = null;
+      let previewNonce = Date.now();
       const ingressBase = {{ ingress_base|tojson }};
+      const portraitWidthMm = {{ preview_display_width_mm|tojson }};
+      const portraitHeightMm = {{ preview_display_height_mm|tojson }};
       const noLogosUploadedText = {{ ui.no_logos_uploaded|tojson }};
       const defaultLogoLabelText = {{ ui.default_logo_label|tojson }};
       const logoOrderLabelText = {{ ui.logo_order_label|tojson }};
       const removeLogoLabelText = {{ ui.remove_logo_label|tojson }};
-      if (!form) return;
-
-      let refreshTimer = null;
-      let previewNonce = Date.now();
 
       function sanitizeNumericInput(input) {
         if (!input || input.dataset.numberOnly !== "1") return;
@@ -881,31 +909,46 @@ HTML = """
         return String(Math.max(1, Math.min(50, raw)));
       }
 
-      function buildQuery(profileId) {
+      function buildQuery() {
         const params = new URLSearchParams();
         const formData = new FormData(form);
         for (const [key, value] of formData.entries()) {
+          if (key === "copies") continue;
           params.append(key, String(value));
         }
         params.set("copies", normalizedCopies());
-        if (profileId) params.set("profile_id", profileId);
         return params;
       }
 
+      function syncPreviewFrameToImage() {
+        const naturalWidth = previewImage.naturalWidth || 0;
+        const naturalHeight = previewImage.naturalHeight || 0;
+        if (!naturalWidth || !naturalHeight) return;
+        const wrapStyles = window.getComputedStyle(previewWrap);
+        const horizontalPadding = (parseFloat(wrapStyles.paddingLeft || "0") || 0) + (parseFloat(wrapStyles.paddingRight || "0") || 0);
+        const availableWidth = Math.max(160, Math.floor(previewWrap.clientWidth - horizontalPadding - 2));
+        if (naturalWidth >= naturalHeight) {
+          const scaledHeight = Math.max(1, Math.round((availableWidth * naturalHeight) / naturalWidth));
+          previewWrap.style.overflowX = "hidden";
+          previewStage.style.width = "100%";
+          previewFrame.style.width = `${availableWidth}px`;
+          previewFrame.style.height = `${scaledHeight}px`;
+        } else {
+          previewWrap.style.overflowX = "auto";
+          previewStage.style.width = "100%";
+          previewFrame.style.width = `${portraitWidthMm}mm`;
+          previewFrame.style.height = `${portraitHeightMm}mm`;
+        }
+      }
+
       function applyPreviewUpdate() {
+        const params = buildQuery();
         previewNonce += 1;
-        previewCards.forEach((card) => {
-          const profileId = card.getAttribute("data-profile-id") || "";
-          const params = buildQuery(profileId);
-          const pngParams = new URLSearchParams(params);
-          pngParams.set("_", String(previewNonce));
-          const img = card.querySelector(".preview-image");
-          const pngLink = card.querySelector(".preview-png-link");
-          const zplLink = card.querySelector(".preview-zpl-link");
-          if (img) img.src = `${ingressBase}/preview.png?${pngParams.toString()}`;
-          if (pngLink) pngLink.href = `${ingressBase}/preview.png?${params.toString()}`;
-          if (zplLink) zplLink.href = `${ingressBase}/preview?${params.toString()}`;
-        });
+        const pngParams = new URLSearchParams(params);
+        pngParams.set("_", String(previewNonce));
+        previewImage.src = `${ingressBase}/preview.png?${pngParams.toString()}`;
+        previewPngLink.href = `${ingressBase}/preview.png?${params.toString()}`;
+        previewZplLink.href = `${ingressBase}/preview?${params.toString()}`;
       }
 
       function schedulePreviewUpdate() {
@@ -916,6 +959,7 @@ HTML = """
       function persistFieldCheckbox(fieldId, settingKey, checked) {
         if (!fieldId || !settingKey) return;
         const body = new URLSearchParams();
+        body.set("profile_id", profileSelect ? (profileSelect.value || "") : "");
         body.set("field_id", fieldId);
         body.set("setting", settingKey);
         body.set("value", checked ? "1" : "0");
@@ -1026,6 +1070,14 @@ HTML = """
         renderExistingLogos(data.logo_options || []);
       }
 
+      if (profileSelect) {
+        profileSelect.addEventListener("change", () => {
+          const url = new URL(`${ingressBase}/`, window.location.origin);
+          if (profileSelect.value) url.searchParams.set("profile_id", profileSelect.value);
+          window.location.href = url.toString();
+        });
+      }
+
       form.querySelectorAll("input, select").forEach((input) => {
         if (input.dataset && input.dataset.numberOnly === "1") {
           input.addEventListener("input", () => { sanitizeNumericInput(input); schedulePreviewUpdate(); });
@@ -1072,6 +1124,8 @@ HTML = """
         });
       }
 
+      previewImage.addEventListener("load", syncPreviewFrameToImage);
+      window.addEventListener("resize", syncPreviewFrameToImage);
       applyPreviewUpdate();
     })();
   </script>
@@ -1265,11 +1319,11 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "left_margin_mm": normalize_float(data.get("left_margin_mm"), 0.0, 0.0, 100.0),
         "text_block_margin_left_mm": normalize_float(data.get("text_block_margin_left_mm"), 0.0, 0.0, 100.0),
         "footer_bottom_margin_mm": normalize_float(data.get("footer_bottom_margin_mm"), 0.0, 0.0, 50.0),
+        "show_in_preview": normalize_bool(data.get("show_in_preview"), False),
         "print_rotation_degrees": normalize_rotation_degrees(data.get("print_rotation_degrees"), 0),
         "qr_default_value": "" if data.get("qr_default_value") is None else str(data.get("qr_default_value")),
         "qr_quiet_zone_modules": normalize_int(data.get("qr_quiet_zone_modules"), 3, 0, 20),
         "qr_error_correction": str(data.get("qr_error_correction") or "M").strip().upper() if str(data.get("qr_error_correction") or "M").strip().upper() in QR_ERROR_CORRECTION_MAP else "M",
-        "show_in_preview": normalize_bool(data.get("show_in_preview"), False),
     }
 
 
@@ -1352,77 +1406,59 @@ def load_options() -> Tuple[Dict, Dict[str, List[Dict]], str | None]:
     return options, legacy_field_store, migrated_notice
 
 
-def default_global_fields() -> List[Dict]:
-    defaults = DEFAULT_PROFILE_FIELDS.get("standard", [])
-    return [normalize_profile_field(field, idx) for idx, field in enumerate(defaults, start=1)]
+def default_field_store_for_profiles(profiles: List[Dict]) -> Dict[str, List[Dict]]:
+    store: Dict[str, List[Dict]] = {}
+    for profile in profiles:
+        defaults = DEFAULT_PROFILE_FIELDS.get(profile["id"], [])
+        store[profile["id"]] = [normalize_profile_field(field, idx) for idx, field in enumerate(defaults, start=1)]
+    return store
 
 
-def merge_field_lists(*field_lists: object) -> List[Dict]:
-    merged: List[Dict] = []
-    seen = set()
-    for field_list in field_lists:
-        if isinstance(field_list, dict):
-            iterable = []
-            for nested in field_list.values():
-                if isinstance(nested, list):
-                    iterable.extend(nested)
-        elif isinstance(field_list, list):
-            iterable = field_list
-        else:
-            iterable = []
-        for item in iterable:
-            if not isinstance(item, dict):
-                continue
-            field = normalize_profile_field(item, len(merged) + 1)
-            field_id = field.get("id")
-            if not field_id or field_id in seen:
-                continue
-            seen.add(field_id)
-            merged.append(field)
-    return merged
-
-
-def load_field_store(profiles: List[Dict], legacy_seed: Dict[str, List[Dict]] | None = None) -> List[Dict]:
-    store: List[Dict] = []
+def load_field_store(profiles: List[Dict], legacy_seed: Dict[str, List[Dict]] | None = None) -> Dict[str, List[Dict]]:
+    profile_ids = {profile["id"] for profile in profiles}
+    store: Dict[str, List[Dict]] = {}
     wrote_file = False
     if os.path.exists(FIELD_STORE_PATH):
         try:
             with open(FIELD_STORE_PATH, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
-            store = merge_field_lists(data)
-            wrote_file = isinstance(data, dict)
+            if isinstance(data, dict):
+                for profile_id, fields in data.items():
+                    if profile_id not in profile_ids or not isinstance(fields, list):
+                        continue
+                    store[profile_id] = [normalize_profile_field(field, idx) for idx, field in enumerate(fields, start=1)]
         except Exception as exc:
             LOGGER.warning("Failed to load %s: %s", FIELD_STORE_PATH, exc)
 
-    if not store and legacy_seed:
-        store = merge_field_lists(legacy_seed)
-        wrote_file = True
+    defaults = default_field_store_for_profiles(profiles)
+    legacy_seed = legacy_seed or {}
+    for profile in profiles:
+        profile_id = profile["id"]
+        if profile_id in store:
+            continue
+        seed_fields = legacy_seed.get(profile_id)
+        if seed_fields:
+            store[profile_id] = [normalize_profile_field(field, idx) for idx, field in enumerate(seed_fields, start=1)]
+            wrote_file = True
+        else:
+            store[profile_id] = defaults.get(profile_id, [])
+            if defaults.get(profile_id):
+                wrote_file = True
 
-    if not store:
-        store = default_global_fields()
-        wrote_file = True
-
+    # Keep only active profile ids.
+    store = {profile_id: store.get(profile_id, []) for profile_id in sorted(profile_ids)}
     if wrote_file or not os.path.exists(FIELD_STORE_PATH):
         save_field_store(store)
     return store
 
 
-def save_field_store(store: List[Dict]) -> None:
-    serializable = [normalize_profile_field(field, idx) for idx, field in enumerate(store, start=1)]
+def save_field_store(store: Dict[str, List[Dict]]) -> None:
+    serializable = {
+        profile_id: [normalize_profile_field(field, idx) for idx, field in enumerate(fields, start=1)]
+        for profile_id, fields in store.items()
+    }
     with open(FIELD_STORE_PATH, "w", encoding="utf-8") as handle:
         json.dump(serializable, handle, ensure_ascii=False, indent=2)
-
-
-def select_profile(profiles: List[Dict], requested_profile_id: str | None = None) -> Dict | None:
-    selected_id = requested_profile_id or request.values.get("profile_id") or request.args.get("profile_id") or request.form.get("profile_id")
-    if selected_id:
-        match = next((profile for profile in profiles if profile["id"] == selected_id), None)
-        if match is not None:
-            return match
-    preview_profiles = [profile for profile in profiles if profile.get("show_in_preview")]
-    if preview_profiles:
-        return preview_profiles[0]
-    return profiles[0] if profiles else None
 
 
 def load_runtime_options(profile_id: str | None = None) -> Dict:
@@ -1430,16 +1466,27 @@ def load_runtime_options(profile_id: str | None = None) -> Dict:
     profiles = parse_label_profiles(opts.get("label_profiles"))
     if not profiles:
         profiles = parse_label_profiles(DEFAULT_OPTIONS["label_profiles"])
-    global_fields = load_field_store(profiles, legacy_seed)
-    preview_profiles = [dict(profile) for profile in profiles if profile.get("show_in_preview")]
-    requested_profile = select_profile(profiles, profile_id)
+    field_store = load_field_store(profiles, legacy_seed)
 
-    opts["label_profiles"] = [dict(profile) for profile in profiles]
-    opts["fields"] = deepcopy(global_fields)
-    opts["preview_profiles"] = preview_profiles
-    opts["requested_profile"] = dict(requested_profile) if requested_profile else None
-    opts["requested_profile_id"] = requested_profile["id"] if requested_profile else ""
-    opts["requested_profile_name"] = requested_profile["name"] if requested_profile else ""
+    selected_id = profile_id or request.values.get("profile_id") or request.args.get("profile_id") or request.form.get("profile_id")
+    active_profile = None
+    if selected_id:
+        active_profile = next((profile for profile in profiles if profile["id"] == selected_id), None)
+    if active_profile is None and profiles:
+        active_profile = profiles[0]
+
+    enriched_profiles = []
+    for profile in profiles:
+        enriched_profiles.append({**profile, "fields": deepcopy(field_store.get(profile["id"], []))})
+
+    if active_profile:
+        active_profile = next((profile for profile in enriched_profiles if profile["id"] == active_profile["id"]), active_profile)
+
+    opts["label_profiles"] = enriched_profiles
+    opts["active_profile"] = active_profile
+    opts["active_profile_id"] = active_profile["id"] if active_profile else ""
+    opts["active_profile_name"] = active_profile["name"] if active_profile else ""
+    opts["field_store"] = field_store
     opts["migration_notice"] = migration_notice
     return opts
 
@@ -1456,10 +1503,10 @@ def field_supports_logos(field: Dict) -> bool:
     return normalize_bool(field.get("logo_field"), False) or bool(normalize_logo_options(field.get("logo_options", [])))
 
 
-def build_field_forms(fields: List[Dict], source: Dict | None = None) -> List[Dict]:
+def build_field_forms(profile: Dict, source: Dict | None = None) -> List[Dict]:
     source = source or {}
     forms: List[Dict] = []
-    for field in fields:
+    for field in profile.get("fields", []):
         value_key = field_value_name(field["id"])
         print_key = field_print_name(field["id"])
         print_raw = source.get(print_key)
@@ -1474,22 +1521,23 @@ def build_field_forms(fields: List[Dict], source: Dict | None = None) -> List[Di
                 selected_values = normalize_multi_value_ids(source.get(value_key, [])) if has_submission else normalize_multi_value_ids(field.get("default_value", []))
             selected_lookup = set(selected_values)
             logo_options = [{**option, "selected": option.get("id") in selected_lookup, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))]
-            forms.append({**field, "supports_logos": True, "value": selected_values, "selected_logo_ids": selected_values, "logo_options": logo_options, "print_enabled": print_enabled})
+            forms.append({**field, "supports_logos": True, "value": selected_values, "selected_logo_ids": selected_values, "logo_options": logo_options, "print_enabled": print_enabled, "profile": profile})
             continue
 
         value = source.get(value_key)
         if value is None:
             value = field["default_value"]
-        forms.append({**field, "supports_logos": False, "value": str(value), "print_enabled": print_enabled})
+        forms.append({**field, "supports_logos": False, "value": str(value), "print_enabled": print_enabled, "profile": profile})
     return forms
 
 
-def default_form_from_fields(fields: List[Dict]) -> Dict[str, object]:
+def default_form_from_profile(profile: Dict | None) -> Dict[str, object]:
     form: Dict[str, object] = {
+        "profile_id": profile["id"] if profile else "",
         "qr_field_ids": [],
         "copies": "1",
     }
-    for field in fields:
+    for field in (profile or {}).get("fields", []):
         form[field_value_name(field["id"])] = field["default_value"]
         if field["print_by_default"]:
             form[field_print_name(field["id"])] = "1"
@@ -1497,14 +1545,15 @@ def default_form_from_fields(fields: List[Dict]) -> Dict[str, object]:
 
 
 def form_data_from_request(opts: Dict) -> Tuple[Dict[str, object], List[Dict]]:
-    fields = opts.get("fields") or []
-    defaults = default_form_from_fields(fields)
-    selected_qr_fields = selected_qr_field_ids_from_source(fields, request.values)
+    profile = opts.get("active_profile") or {}
+    defaults = default_form_from_profile(profile)
+    selected_qr_fields = selected_qr_field_ids_from_source(profile, request.values)
     form: Dict[str, object] = {
+        "profile_id": request.values.get("profile_id", defaults.get("profile_id", "")),
         "qr_field_ids": selected_qr_fields,
         "copies": request.values.get("copies", defaults.get("copies", "1")),
     }
-    field_forms = build_field_forms(fields, request.values)
+    field_forms = build_field_forms(profile, request.values)
     for field in field_forms:
         form[field_value_name(field["id"])] = field["value"]
         if field["print_enabled"]:
@@ -1611,7 +1660,7 @@ def normalize_qr_field_ids(values: object) -> List[str]:
     return result
 
 
-def selected_qr_field_ids_from_source(fields: List[Dict], source: object) -> List[str]:
+def selected_qr_field_ids_from_source(profile: Dict, source: object) -> List[str]:
     values: object = []
     if hasattr(source, "getlist"):
         values = source.getlist("qr_field_ids")
@@ -1619,8 +1668,8 @@ def selected_qr_field_ids_from_source(fields: List[Dict], source: object) -> Lis
         values = source.get("qr_field_ids", source.get("qr_fields", []))
     selected = normalize_qr_field_ids(values)
     if not selected:
-        selected = [field.get("id") for field in fields if normalize_bool(field.get("always_use_for_qr"), False)]
-    valid_ids = {field.get("id") for field in fields if not field_supports_logos(field)}
+        selected = [field.get("id") for field in profile.get("fields", []) if normalize_bool(field.get("always_use_for_qr"), False)]
+    valid_ids = {field.get("id") for field in profile.get("fields", []) if not field_supports_logos(field)}
     return [field_id for field_id in selected if field_id in valid_ids]
 
 
@@ -1670,10 +1719,6 @@ def validate_field_forms(field_forms: List[Dict], language: str) -> List[Dict]:
             value = validate_required_text(value, field["name"], language)
         validated.append({**field, "value": value})
     return validated
-
-
-def bind_field_forms_to_profile(field_forms: List[Dict], profile: Dict) -> List[Dict]:
-    return [{**field, "profile": profile} for field in field_forms]
 
 
 def current_label_date_str() -> str:
@@ -1761,10 +1806,6 @@ def mm_to_dots(mm_value: float, profile: Dict | int | float | None = None) -> in
     return max(1, int(round(float(mm_value) * dots_per_mm(profile))))
 
 
-def mm_to_dots_nonnegative(mm_value: float, profile: Dict | int | float | None = None) -> int:
-    return max(0, int(round(float(mm_value) * dots_per_mm(profile))))
-
-
 def dots_to_mm(dots: int, profile: Dict | int | float | None = None) -> float:
     return round(dots / dots_per_mm(profile), 1)
 
@@ -1773,14 +1814,14 @@ def printer_max_width_dots(profile: Dict | int | float | None = None) -> int:
     return mm_to_dots(PRINTER_MAX_WIDTH_MM, profile)
 
 
-def effective_layout(profile: Dict, preview: bool = False) -> Dict:
+def effective_layout(profile: Dict) -> Dict:
     requested_width_dots = mm_to_dots(profile["label_width_mm"], profile)
     requested_height_dots = mm_to_dots(profile["label_height_mm"], profile)
     qr_size_dots = mm_to_dots(profile["qr_size_mm"], profile)
-    top_margin_dots = mm_to_dots_nonnegative(0.0 if preview else profile.get("top_margin_mm", 0.0), profile)
-    left_margin_dots = mm_to_dots_nonnegative(0.0 if preview else profile.get("left_margin_mm", 0.0), profile)
-    text_block_margin_left_dots = mm_to_dots_nonnegative(0.0 if preview else profile.get("text_block_margin_left_mm", 0.0), profile)
-    footer_bottom_margin_dots = mm_to_dots_nonnegative(0.0 if preview else profile.get("footer_bottom_margin_mm", 0.0), profile)
+    top_margin_dots = mm_to_dots(profile.get("top_margin_mm", 0.0), profile)
+    left_margin_dots = mm_to_dots(profile.get("left_margin_mm", 0.0), profile)
+    text_block_margin_left_dots = mm_to_dots(profile.get("text_block_margin_left_mm", 0.0), profile)
+    footer_bottom_margin_dots = mm_to_dots(profile.get("footer_bottom_margin_mm", 0.0), profile)
     max_width_dots = printer_max_width_dots(profile)
     effective_width_dots = min(requested_width_dots, max_width_dots)
     return {
@@ -2058,7 +2099,7 @@ def block_height(draw: ImageDraw.ImageDraw, block: Dict, box_width: int) -> Tupl
 def draw_footer_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, bottom_y: int, box_left: int, box_width: int, footer_blocks: List[Dict], profile: Dict) -> int:
     current_bottom = bottom_y
     for block in reversed(footer_blocks):
-        current_bottom -= mm_to_dots_nonnegative(block.get("footer_bottom_margin_mm", 0.0), profile)
+        current_bottom -= mm_to_dots(block.get("footer_bottom_margin_mm", 0.0), profile)
         total_h, payload, lines, spacing = block_height(draw, block, box_width)
         top_y = current_bottom - total_h
         if block.get("type") == "logo_row":
@@ -2069,6 +2110,26 @@ def draw_footer_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, bottom_y: in
             draw_aligned_lines(draw, lines, top_y, box_left, box_width, payload, block["alignment"], block["underline"], spacing)
         current_bottom = top_y - mm_to_dots(FOOTER_GAP_MM, profile)
     return current_bottom
+
+
+def profile_margin_dots(profile: Dict, preview: bool) -> Dict[str, int]:
+    if preview:
+        return {
+            "top": 0,
+            "left": 0,
+            "text_block_left": 0,
+            "footer_bottom": 0,
+        }
+    return {
+        "top": mm_to_dots(profile.get("top_margin_mm", 0.0), profile),
+        "left": mm_to_dots(profile.get("left_margin_mm", 0.0), profile),
+        "text_block_left": mm_to_dots(profile.get("text_block_margin_left_mm", 0.0), profile),
+        "footer_bottom": mm_to_dots(profile.get("footer_bottom_margin_mm", 0.0), profile),
+    }
+
+
+def clamp_int(value: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(maximum, int(value)))
 
 
 def draw_background_for_preview(img: Image.Image, requested_w: int, requested_h: int, printable_left: int, printable_w: int) -> None:
@@ -2084,69 +2145,70 @@ def draw_background_for_preview(img: Image.Image, requested_w: int, requested_h:
 
 
 def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body_blocks: List[Dict], footer_blocks: List[Dict], profile: Dict, preview: bool) -> Image.Image:
-    layout = effective_layout(profile, preview=preview)
+    layout = effective_layout(profile)
+    margins = profile_margin_dots(profile, preview)
     img = Image.new("RGBA", (printable_w, canvas_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(img)
     has_qr = bool(normalize_qr_value(qr_value))
-    left_margin = layout["left_margin_dots"]
-    default_text_margin = mm_to_dots_nonnegative(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    text_shift = layout["text_block_margin_left_dots"]
-    text_left = min(max(0, left_margin + default_text_margin + text_shift), max(0, printable_w - 1))
-    text_right = max(text_left + 1, printable_w - default_text_margin)
-    text_width = max(1, text_right - text_left)
-    current_y = layout["top_margin_dots"]
+    default_text_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    content_left = clamp_int(margins["left"], 0, max(0, printable_w - 1))
+    available_width = max(1, printable_w - content_left)
+    base_text_margin = default_text_margin
+    text_left = content_left + base_text_margin + margins["text_block_left"]
+    text_width = max(1, available_width - (base_text_margin * 2) - margins["text_block_left"])
+    current_y = margins["top"]
     if has_qr:
-        qr_size = min(layout["qr_size_dots"], max(1, printable_w - left_margin))
-        qr_left_base = max((printable_w - qr_size) // 2, 0)
-        qr_left = min(max(qr_left_base + left_margin, left_margin), max(0, printable_w - qr_size))
-        qr_top = layout["top_margin_dots"]
+        qr_size = min(layout["qr_size_dots"], available_width)
+        qr_left = content_left + max((available_width - qr_size) // 2, 0)
+        qr_top = margins["top"]
         qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
         img.paste(qr_img, (qr_left, qr_top))
         if preview:
             preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
             draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
-        text_left = min(max(qr_left, left_margin + default_text_margin) + text_shift, max(0, printable_w - 1))
-        text_right = min(max(text_left + 1, qr_left + qr_size), max(text_left + 1, printable_w - default_text_margin))
-        text_width = max(1, text_right - text_left)
-        current_y = qr_top + qr_size + mm_to_dots_nonnegative(8, profile)
+        base_text_margin = max((available_width - qr_size) // 2, default_text_margin)
+        text_left = content_left + base_text_margin + margins["text_block_left"]
+        text_width = max(1, available_width - (base_text_margin * 2) - margins["text_block_left"])
+        current_y = qr_top + qr_size + mm_to_dots(8, profile)
     draw_body_blocks(img, draw, current_y, text_left, text_width, body_blocks, profile)
     if footer_blocks:
-        footer_bottom = canvas_h - layout["footer_bottom_margin_dots"]
+        footer_bottom = canvas_h - margins["footer_bottom"]
         draw_footer_blocks(img, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
     return img
 
 
 def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_blocks: List[Dict], footer_blocks: List[Dict], profile: Dict, preview: bool, rotation_degrees: int) -> Image.Image:
-    layout = effective_layout(profile, preview=preview)
+    layout = effective_layout(profile)
+    margins = profile_margin_dots(profile, preview)
     logical_w = canvas_h
     logical_h = printable_w
     landscape = Image.new("RGBA", (logical_w, logical_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(landscape)
     has_qr = bool(normalize_qr_value(qr_value))
-    left_margin = layout["left_margin_dots"]
-    top_margin = layout["top_margin_dots"]
-    default_text_margin = mm_to_dots_nonnegative(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
-    text_shift = layout["text_block_margin_left_dots"]
-    right_margin = default_text_margin
-    text_left = min(max(0, left_margin + default_text_margin + text_shift), max(0, logical_w - 1))
+    default_side_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    right_margin = default_side_margin
+    shift_sign = -1 if rotation_degrees == 90 else 1
+    content_y_shift = shift_sign * margins["left"]
+    text_y_shift = shift_sign * (margins["left"] + margins["text_block_left"])
+    text_left = clamp_int(margins["top"], 0, max(0, logical_w - 1))
     text_width = max(1, logical_w - text_left - right_margin)
-    text_top = min(max(0, top_margin + default_text_margin), max(0, logical_h - 1))
+    text_top = clamp_int(default_side_margin + text_y_shift, 0, max(0, logical_h - 1))
     if has_qr:
-        qr_size = min(layout["qr_size_dots"], max(1, logical_h - top_margin))
-        qr_left = min(max(0, left_margin), max(0, logical_w - qr_size))
-        qr_top_base = max((logical_h - qr_size) // 2, 0)
-        qr_top = min(max(qr_top_base + top_margin, top_margin), max(0, logical_h - qr_size))
+        qr_size = min(layout["qr_size_dots"], logical_h)
+        qr_left = min(max(margins["top"], 0), max(0, logical_w - qr_size))
+        qr_top = clamp_int(max((logical_h - qr_size) // 2, 0) + content_y_shift, 0, max(0, logical_h - qr_size))
         qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
         landscape.paste(qr_img, (qr_left, qr_top))
         if preview:
             preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
             draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
-        inter_block_gap = mm_to_dots_nonnegative(8, profile)
-        text_left = min(max(0, qr_left + qr_size + inter_block_gap + text_shift), max(0, logical_w - 1))
+        inter_block_gap = mm_to_dots(8, profile)
+        text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
         text_width = max(1, logical_w - text_left - right_margin)
+        text_top = clamp_int(default_side_margin + text_y_shift, 0, max(0, logical_h - 1))
     draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
     if footer_blocks:
-        footer_bottom = logical_h - layout["footer_bottom_margin_dots"]
+        footer_bottom = clamp_int(logical_h - margins["footer_bottom"] + text_y_shift, 0, logical_h)
         draw_footer_blocks(landscape, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
     if rotation_degrees == 90:
         return landscape.transpose(Image.Transpose.ROTATE_270)
@@ -2162,7 +2224,7 @@ def orient_preview_for_display(img: Image.Image, rotation_degrees: int) -> Image
 
 
 def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, preview: bool) -> Image.Image:
-    layout = effective_layout(profile, preview=preview)
+    layout = effective_layout(profile)
     requested_w = layout["requested_width_dots"]
     requested_h = layout["requested_height_dots"]
     printable_w = layout["effective_width_dots"]
@@ -2204,10 +2266,11 @@ def send_to_printer(host: str, port: int, payload: str) -> None:
     LOGGER.info("Finished sending label payload to printer %s:%s", host, port)
 
 
-def preview_query_from_form(form: Dict[str, object], field_forms: List[Dict], profile_id: str | None = None) -> str:
-    params: List[Tuple[str, str]] = [("copies", str(form.get("copies", "1")))]
-    if profile_id:
-        params.append(("profile_id", str(profile_id)))
+def preview_query_from_form(form: Dict[str, object], field_forms: List[Dict]) -> str:
+    params: List[Tuple[str, str]] = [
+        ("profile_id", str(form.get("profile_id", ""))),
+        ("copies", str(form.get("copies", "1"))),
+    ]
     for field_id in normalize_qr_field_ids(form.get("qr_field_ids", [])):
         params.append(("qr_field_ids", field_id))
     for field in field_forms:
@@ -2290,8 +2353,8 @@ def editor_form_from_field(field: Dict | None) -> Dict:
     }
 
 
-def field_store_map(fields: List[Dict]) -> Dict[str, Dict]:
-    return {field["id"]: editor_form_from_field(field) for field in fields}
+def field_store_map_for_profile(profile: Dict) -> Dict[str, Dict]:
+    return {field["id"]: editor_form_from_field(field) for field in profile.get("fields", [])}
 
 
 def validate_and_normalize_editor_payload(source: Dict, language: str) -> Tuple[str, Dict]:
@@ -2396,10 +2459,11 @@ def resolve_logo_options_for_save(profile: Dict, source: object, files: object, 
     return merged, created_with_order
 
 
-def save_global_field(original_field_id: str, field: Dict, language: str) -> None:
+def save_profile_field(profile_id: str, original_field_id: str, field: Dict, profile_name: str, language: str) -> None:
     opts, _, _ = load_options()
     profiles = parse_label_profiles(opts.get("label_profiles"))
-    fields = list(load_field_store(profiles))
+    field_store = load_field_store(profiles)
+    fields = list(field_store.get(profile_id, []))
     new_id = field["id"]
     collision = next((existing for existing in fields if existing["id"] == new_id and existing["id"] != original_field_id), None)
     if collision:
@@ -2414,47 +2478,62 @@ def save_global_field(original_field_id: str, field: Dict, language: str) -> Non
             break
     if not updated:
         fields.append(field)
-    save_field_store(fields)
+    field_store[profile_id] = fields
+    save_field_store(field_store)
     if previous_field:
+        old_ids = {option.get('storage_name') for option in normalize_logo_options(previous_field.get('logo_options', []))}
         new_ids = {option.get('storage_name') for option in normalize_logo_options(field.get('logo_options', []))}
         remove_logo_assets([option for option in normalize_logo_options(previous_field.get('logo_options', [])) if option.get('storage_name') not in new_ids])
-    LOGGER.info("Saved global field %s", field["id"])
+    LOGGER.info("Saved field %s for profile %s (%s)", field["id"], profile_id, profile_name)
 
 
-def delete_global_field(field_id: str) -> bool:
+def delete_profile_field(profile_id: str, field_id: str, profile_name: str) -> bool:
     opts, _, _ = load_options()
     profiles = parse_label_profiles(opts.get("label_profiles"))
-    fields = list(load_field_store(profiles))
+    field_store = load_field_store(profiles)
+    fields = list(field_store.get(profile_id, []))
     removed = [field for field in fields if field.get("id") == field_id]
     remaining = [field for field in fields if field.get("id") != field_id]
     changed = len(remaining) != len(fields)
-    save_field_store(remaining)
+    field_store[profile_id] = remaining
+    save_field_store(field_store)
     for field in removed:
         remove_logo_assets(field.get('logo_options', []))
     if changed:
-        LOGGER.info("Deleted global field %s", field_id)
+        LOGGER.info("Deleted field %s from profile %s (%s)", field_id, profile_id, profile_name)
     return changed
 
 
-def update_global_field_setting(field_id: str, setting: str, value: bool) -> Dict:
+ALLOWED_QUICK_FIELD_SETTINGS = {"print_by_default", "always_use_for_qr"}
+
+
+def update_profile_field_setting(profile_id: str, field_id: str, setting: str, value: bool) -> Dict:
     if setting not in ALLOWED_QUICK_FIELD_SETTINGS:
         raise ValueError(f"Unsupported field setting: {setting}")
     opts, _, _ = load_options()
     profiles = parse_label_profiles(opts.get("label_profiles"))
-    fields = list(load_field_store(profiles))
+    field_store = load_field_store(profiles)
+    fields = list(field_store.get(profile_id, []))
     for idx, field in enumerate(fields):
         if field.get("id") != field_id:
             continue
         updated = normalize_profile_field({**field, setting: value}, idx + 1)
         fields[idx] = updated
-        save_field_store(fields)
-        LOGGER.info("Updated global field setting %s=%s for %s", setting, value, field_id)
+        field_store[profile_id] = fields
+        save_field_store(field_store)
+        LOGGER.info("Updated field setting %s=%s for %s in profile %s", setting, value, field_id, profile_id)
         return updated
     raise ValueError(f"Unknown field: {field_id}")
 
 
 def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], result: Dict | None = None, field_result: Dict | None = None, editor_form: Dict | None = None) -> str:
+    profile = opts.get("active_profile") or {}
+    layout = effective_layout(profile)
     ui = get_ui_strings(opts.get("ui_language"))
+    preview_display_width_mm = profile.get("label_width_mm", 170.0)
+    preview_display_height_mm = profile.get("label_height_mm", 305.0)
+    if profile.get("print_rotation_degrees") in (90, 270):
+        preview_display_width_mm, preview_display_height_mm = preview_display_height_mm, preview_display_width_mm
     qr_selected_ids = normalize_qr_field_ids(form.get("qr_field_ids", []))
     qr_preview = qr_payload_from_field_forms(field_forms, qr_selected_ids) or ui["none"]
     qr_field_options = [
@@ -2467,22 +2546,6 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         for field in field_forms if not field_supports_logos(field)
     ]
     editor_form = editor_form or blank_editor_form()
-    preview_profiles = []
-    for profile in opts.get("preview_profiles", []):
-        preview_profiles.append({
-            **profile,
-            "printer_target": format_printer_target(profile, opts),
-            "preview_query": preview_query_from_form(form, field_forms, profile.get("id")),
-        })
-    preview_profile_names_text = ", ".join(profile.get("name", "") for profile in preview_profiles) or ui["none"]
-    configured_fields = [
-        {
-            **field,
-            "supports_logos": field_supports_logos(field),
-            "logo_options": [{**option, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))],
-        }
-        for field in opts.get("fields", [])
-    ]
     return render_template_string(
         HTML,
         ui=ui,
@@ -2490,13 +2553,32 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         field_result=field_result,
         form=form,
         field_forms=field_forms,
-        configured_fields=configured_fields,
-        preview_profiles=preview_profiles,
-        preview_profile_names_text=preview_profile_names_text,
+        active_profile_fields=[{**field, "supports_logos": field_supports_logos(field), "logo_options": [{**option, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))]} for field in profile.get("fields", [])],
+        label_profiles=opts.get("label_profiles", []),
+        active_profile_id=opts.get("active_profile_id", ""),
+        active_profile_name=opts.get("active_profile_name", ""),
+        printer_host=profile.get("printer_host", ""),
+        printer_port=profile.get("printer_port", ""),
+        printer_target=format_printer_target(profile, opts),
         qr_preview=qr_preview,
+        requested_width_mm=profile.get("label_width_mm", 0),
+        requested_height_mm=profile.get("label_height_mm", 0),
+        requested_qr_mm=profile.get("qr_size_mm", 0),
+        qr_quiet_zone_modules=profile.get("qr_quiet_zone_modules", 0),
+        qr_error_correction=profile.get("qr_error_correction", "M"),
+        print_rotation_degrees=profile.get("print_rotation_degrees", 0),
+        effective_width_mm=dots_to_mm(layout["effective_width_dots"], profile),
+        effective_width_dots=layout["effective_width_dots"],
+        width_warning=layout["width_warning"],
+        printer_dpi=printer_dpi(profile),
+        preview_meta_text=ui_text(opts, "preview_meta", dpi=printer_dpi(profile)),
+        effective_print_width_text=ui_text(opts, "effective_print_width", dpi=printer_dpi(profile)),
+        preview_display_width_mm=preview_display_width_mm,
+        preview_display_height_mm=preview_display_height_mm,
         ingress_base=ingress_base_path(),
+        preview_query=preview_query_from_form(form, field_forms),
         editor_form=editor_form,
-        field_editor_json=field_store_map(opts.get("fields", [])),
+            field_editor_json=field_store_map_for_profile(profile),
         qr_field_options=qr_field_options,
         qr_selected_ids=qr_selected_ids,
         alignments=sorted(ALIGNMENTS),
@@ -2505,7 +2587,7 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
     )
 
 
-def api_field_forms_from_payload(fields: List[Dict], payload: Dict) -> List[Dict]:
+def api_field_forms_from_payload(profile: Dict, payload: Dict) -> List[Dict]:
     values = payload.get("field_values") if isinstance(payload.get("field_values"), dict) else {}
     print_values = payload.get("print_fields") if isinstance(payload.get("print_fields"), dict) else {}
     field_list = payload.get("fields") if isinstance(payload.get("fields"), list) else []
@@ -2516,7 +2598,7 @@ def api_field_forms_from_payload(fields: List[Dict], payload: Dict) -> List[Dict
             if item_id:
                 lookup[item_id] = item
     forms: List[Dict] = []
-    for field in fields:
+    for field in profile.get("fields", []):
         current = dict(field)
         if field_supports_logos(field):
             if field["id"] in values:
@@ -2540,6 +2622,7 @@ def api_field_forms_from_payload(fields: List[Dict], payload: Dict) -> List[Dict
             current["print_enabled"] = normalize_bool(lookup[field["id"]].get("print"), field["print_by_default"])
         else:
             current["print_enabled"] = field["print_by_default"]
+        current["profile"] = profile
         forms.append(current)
     return forms
 
@@ -2558,7 +2641,8 @@ def restrict_ingress():
 def index():
     opts = load_runtime_options()
     form, field_forms = form_data_from_request(opts)
-    LOGGER.info("Opened UI")
+    profile = opts.get("active_profile") or {}
+    LOGGER.info("Opened UI for printer %s:%s", profile.get("printer_host"), profile.get("printer_port"))
     field_result = None
     if opts.get("migration_notice"):
         field_result = {"success": True, "message": ui_text(opts, opts["migration_notice"])}
@@ -2567,15 +2651,15 @@ def index():
 
 @APP.route("/print", methods=["POST"])
 def print_label():
-    opts = load_runtime_options(request.values.get("profile_id") or request.args.get("profile_id") or None)
-    profile = opts.get("requested_profile") or {}
+    opts = load_runtime_options()
+    profile = opts.get("active_profile") or {}
     form, field_forms = form_data_from_request(opts)
     result = {"success": False, "message": ui_text(opts, "unknown_error")}
     try:
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
-        zpl = build_zpl(qr_value, bind_field_forms_to_profile(field_forms, profile), copies, profile)
+        zpl = build_zpl(qr_value, field_forms, copies, profile)
         host, port = resolve_printer_target(profile, opts)
         LOGGER.info("Print request received: profile=%s copies=%s qr_payload=%r", profile.get("id"), copies, qr_value)
         send_to_printer(host, port, zpl)
@@ -2588,22 +2672,28 @@ def print_label():
 
 @APP.route("/fields/save", methods=["POST"])
 def save_field():
-    opts = load_runtime_options()
+    opts = load_runtime_options(request.form.get("profile_id") or None)
+    profile = opts.get("active_profile") or {}
     form, field_forms = form_data_from_request(opts)
     editor_form = blank_editor_form()
     result = None
     original_field_id = sanitize_id(str(request.form.get("original_field_id") or ""), "")
-    existing_field = next((field for field in opts.get("fields", []) if field.get("id") == original_field_id), None)
-    merged_logo_options: List[Dict[str, str]] = normalize_logo_options(existing_field.get('logo_options', [])) if existing_field else []
+    existing_field = next((field for field in profile.get("fields", []) if field.get("id") == original_field_id), None)
+    merged_logo_options: List[Dict[str, str]] = normalize_logo_options(existing_field.get("logo_options", [])) if existing_field else []
     created_logo_options: List[Dict[str, str]] = []
     try:
-        merged_logo_options, created_logo_options = resolve_logo_options_for_save({"fields": opts.get("fields", [])}, request.form, request.files, opts["ui_language"])
+        if not profile:
+            raise ValueError(ui_text(opts, "profile_not_found"))
+        merged_logo_options, created_logo_options = resolve_logo_options_for_save(profile, request.form, request.files, opts["ui_language"])
         payload = {**request.form.to_dict(flat=True), "default_logo_ids": request.form.getlist("default_logo_ids"), "logo_options": merged_logo_options}
         original_field_id, normalized_field = validate_and_normalize_editor_payload(payload, opts["ui_language"])
-        save_global_field(original_field_id, normalized_field, opts["ui_language"])
-        opts = load_runtime_options()
+        save_profile_field(profile["id"], original_field_id, normalized_field, profile.get("name", ""), opts["ui_language"])
+        opts = load_runtime_options(profile["id"])
         form, field_forms = form_data_from_request(opts)
-        result = {"success": True, "message": ui_text(opts, "field_saved_message", field=normalized_field["name"])}
+        result = {
+            "success": True,
+            "message": ui_text(opts, "field_saved_message", field=normalized_field["name"], profile=opts.get("active_profile_name", "")),
+        }
         editor_form = blank_editor_form()
     except Exception as exc:
         remove_logo_assets(created_logo_options)
@@ -2614,7 +2704,7 @@ def save_field():
         editor_form = editor_form_from_field({
             "id": request.form.get("id", ""),
             "name": request.form.get("name", ""),
-            "default_value": request.form.getlist("default_logo_ids") if normalize_bool(request.form.get("logo_field"), False) else request.form.get("default_value", ""),
+            "default_value": request.form.get("default_value", ""),
             "alignment": request.form.get("alignment", "center"),
             "font_family": request.form.get("font_family", "sans"),
             "font_size_mm": request.form.get("font_size_mm", 7.0),
@@ -2631,6 +2721,7 @@ def save_field():
             "append_current_date": normalize_bool(request.form.get("append_current_date"), False),
             "always_use_for_qr": normalize_bool(request.form.get("always_use_for_qr"), False),
             "value_options": normalize_value_options(request.form.get("value_options_text", "")),
+            "default_value": request.form.getlist("default_logo_ids") if normalize_bool(request.form.get("logo_field"), False) else request.form.get("default_value", ""),
             "logo_field": normalize_bool(request.form.get("logo_field"), False),
             "logo_height_mm": request.form.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
             "logo_options": merged_logo_options,
@@ -2643,17 +2734,20 @@ def save_field():
 
 @APP.route("/fields/delete", methods=["POST"])
 def delete_field():
-    opts = load_runtime_options()
+    opts = load_runtime_options(request.form.get("profile_id") or None)
+    profile = opts.get("active_profile") or {}
     form, field_forms = form_data_from_request(opts)
     result = None
     try:
+        if not profile:
+            raise ValueError(ui_text(opts, "profile_not_found"))
         field_id = sanitize_id(str(request.form.get("field_id") or ""), "")
-        deleted = delete_global_field(field_id)
-        opts = load_runtime_options()
+        deleted = delete_profile_field(profile["id"], field_id, profile.get("name", ""))
+        opts = load_runtime_options(profile["id"])
         form, field_forms = form_data_from_request(opts)
         result = {
             "success": deleted,
-            "message": ui_text(opts, "field_deleted_message", field=field_id) if deleted else ui_text(opts, "field_delete_failed", error=field_id or ui_text(opts, "unknown_error")),
+            "message": ui_text(opts, "field_deleted_message", field=field_id, profile=opts.get("active_profile_name", "")) if deleted else ui_text(opts, "field_delete_failed", error=ui_text(opts, "profile_not_found") if not field_id else field_id),
         }
     except Exception as exc:
         LOGGER.exception("Field delete failed")
@@ -2663,12 +2757,16 @@ def delete_field():
 
 @APP.route("/fields/quick-update", methods=["POST"])
 def quick_update_field_setting():
+    opts = load_runtime_options(request.form.get("profile_id") or None)
+    profile = opts.get("active_profile") or {}
     try:
+        if not profile:
+            raise ValueError(ui_text(opts, "profile_not_found"))
         field_id = sanitize_id(str(request.form.get("field_id") or ""), "")
         setting = normalize_string(request.form.get("setting"), "")
         value = normalize_bool(request.form.get("value"), False)
-        updated = update_global_field_setting(field_id, setting, value)
-        return jsonify({"ok": True, "field": updated})
+        updated = update_profile_field_setting(profile["id"], field_id, setting, value)
+        return jsonify({"ok": True, "field": updated, "profile_id": profile["id"]})
     except Exception as exc:
         LOGGER.exception("Quick field update failed")
         return jsonify({"ok": False, "error": str(exc)}), 400
@@ -2687,14 +2785,14 @@ def serve_logo_asset(storage_name: str):
 
 @APP.route("/preview", methods=["GET"])
 def preview():
-    opts = load_runtime_options(request.values.get("profile_id") or request.args.get("profile_id") or None)
-    profile = opts.get("requested_profile") or {}
+    opts = load_runtime_options()
+    profile = opts.get("active_profile") or {}
     form, field_forms = form_data_from_request(opts)
     try:
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
-        zpl = build_zpl(qr_value, bind_field_forms_to_profile(field_forms, profile), copies, profile)
+        zpl = build_zpl(qr_value, field_forms, copies, profile)
         LOGGER.info("Generated ZPL preview for profile=%s copies=%s", profile.get("id"), copies)
         return Response(zpl, mimetype="text/plain; charset=utf-8")
     except Exception as exc:
@@ -2704,16 +2802,15 @@ def preview():
 
 @APP.route("/preview.png", methods=["GET"])
 def preview_png():
-    opts = load_runtime_options(request.values.get("profile_id") or request.args.get("profile_id") or None)
-    profile = opts.get("requested_profile") or {}
+    opts = load_runtime_options()
     form, field_forms = form_data_from_request(opts)
     try:
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
         qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
-        LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("requested_profile_id"), qr_value)
-        img = render_label_image(qr_value, bind_field_forms_to_profile(field_forms, profile), profile, preview=True)
+        LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("active_profile_id"), qr_value)
+        img = render_label_image(qr_value, field_forms, opts["active_profile"], preview=True)
         bio = BytesIO()
-        current_dpi = printer_dpi(profile)
+        current_dpi = printer_dpi(opts["active_profile"])
         img.save(bio, format="PNG", dpi=(current_dpi, current_dpi), optimize=True)
         bio.seek(0)
         return send_file(bio, mimetype="image/png", download_name="label-preview.png")
@@ -2726,13 +2823,13 @@ def preview_png():
 def api_print():
     payload = request.get_json(force=True, silent=False) or {}
     opts = load_runtime_options(str(payload.get("profile_id") or "") or None)
-    profile = opts.get("requested_profile") or {}
+    profile = opts.get("active_profile") or {}
     try:
-        field_forms = validate_field_forms(api_field_forms_from_payload(opts.get("fields", []), payload), opts["ui_language"])
-        qr_field_ids = selected_qr_field_ids_from_source(opts.get("fields", []), payload)
+        field_forms = validate_field_forms(api_field_forms_from_payload(profile, payload), opts["ui_language"])
+        qr_field_ids = selected_qr_field_ids_from_source(profile, payload)
         qr_value = qr_payload_from_field_forms(field_forms, qr_field_ids) if qr_field_ids else normalize_qr_value(payload.get("qr_value", profile.get("qr_default_value", "")))
         copies = max(1, min(50, int(payload.get("copies", 1))))
-        zpl = build_zpl(qr_value, bind_field_forms_to_profile(field_forms, profile), copies, profile)
+        zpl = build_zpl(qr_value, field_forms, copies, profile)
         host, port = resolve_printer_target(profile, opts)
         LOGGER.info("API print request received: profile=%s copies=%s qr_value=%r", profile.get("id"), copies, qr_value)
         send_to_printer(host, port, zpl)
