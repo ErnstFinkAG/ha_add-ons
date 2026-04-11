@@ -29,19 +29,16 @@ configuration:
         description: Gedruckte QR-Größe.
       top_margin_mm:
         name: Oberer Rand (mm)
-        description: Nur für den Druck genutzter oberer Abstand des gerenderten Inhalts.
+        description: Nur für den Druck. Bleibt auch bei gedrehtem Label oben.
       left_margin_mm:
         name: Linker Rand (mm)
-        description: Nur für den Druck genutzter linker Abstand des gerenderten Inhalts.
+        description: Nur für den Druck. Bleibt auch bei gedrehtem Label links.
       text_block_margin_left_mm:
-        name: Textblock-Rand links (mm)
-        description: Zusätzlicher linker Druck-Abstand nur für den Textblock.
+        name: Linker Textblock-Rand (mm)
+        description: Zusätzlicher linker Rand nur für Textblöcke im Druck. Verschiebt Text nach rechts.
       footer_bottom_margin_mm:
         name: Footer-Unterrand (mm)
-        description: Nur für den Druck genutzter unterer Abstand für Footer-Text.
-      show_in_preview:
-        name: In Vorschau anzeigen
-        description: Dieses Etikettenprofil im Vorschaubereich der Weboberfläche anzeigen.
+        description: Unterer Abstand für Footer-Text.
       print_rotation_degrees:
         name: Druckdrehung
         description: Drehung des gerenderten Labels.
