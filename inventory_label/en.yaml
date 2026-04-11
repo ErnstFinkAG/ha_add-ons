@@ -29,7 +29,7 @@ configuration:
         description: Physical height of the label.
       qr_size_mm:
         name: QR size (mm)
-        description: Printed QR size.
+        description: Printed QR size. Set to 0 to disable QR generation for this label profile.
       top_margin_mm:
         name: Top margin (mm)
         description: Top offset before placing the QR code.

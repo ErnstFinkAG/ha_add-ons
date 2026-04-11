@@ -1182,7 +1182,7 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "printer_dpi": normalize_int(data.get("printer_dpi"), DEFAULT_PRINTER_DPI, 100, 1200),
         "label_width_mm": normalize_float(data.get("label_width_mm"), 170.0, 50.0, 500.0),
         "label_height_mm": normalize_float(data.get("label_height_mm"), 305.0, 50.0, 1000.0),
-        "qr_size_mm": normalize_float(data.get("qr_size_mm"), 170.0, 10.0, 300.0),
+        "qr_size_mm": normalize_float(data.get("qr_size_mm"), 170.0, 0.0, 300.0),
         "top_margin_mm": normalize_float(data.get("top_margin_mm"), 0.0, 0.0, 100.0),
         "footer_bottom_margin_mm": normalize_float(data.get("footer_bottom_margin_mm"), 0.0, 0.0, 50.0),
         "print_rotation_degrees": normalize_rotation_degrees(data.get("print_rotation_degrees"), 0),
@@ -1682,10 +1682,20 @@ def printer_max_width_dots(profile: Dict | int | float | None = None) -> int:
     return mm_to_dots(PRINTER_MAX_WIDTH_MM, profile)
 
 
+def profile_qr_enabled(profile: Dict, qr_value: object = None) -> bool:
+    qr_size_mm = normalize_float(profile.get("qr_size_mm"), 170.0, 0.0, 300.0)
+    if qr_size_mm <= 0:
+        return False
+    if qr_value is None:
+        return True
+    return bool(normalize_qr_value(qr_value))
+
+
 def effective_layout(profile: Dict) -> Dict:
     requested_width_dots = mm_to_dots(profile["label_width_mm"], profile)
     requested_height_dots = mm_to_dots(profile["label_height_mm"], profile)
-    qr_size_dots = mm_to_dots(profile["qr_size_mm"], profile)
+    qr_size_mm = normalize_float(profile.get("qr_size_mm"), 170.0, 0.0, 300.0)
+    qr_size_dots = mm_to_dots(qr_size_mm, profile) if qr_size_mm > 0 else 0
     top_margin_dots = mm_to_dots(profile["top_margin_mm"], profile)
     footer_bottom_margin_dots = mm_to_dots(profile.get("footer_bottom_margin_mm", 0.0), profile)
     max_width_dots = printer_max_width_dots(profile)
@@ -1992,7 +2002,7 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
     layout = effective_layout(profile)
     img = Image.new("RGBA", (printable_w, canvas_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(img)
-    has_qr = bool(normalize_qr_value(qr_value))
+    has_qr = profile_qr_enabled(profile, qr_value)
     margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
     text_width = max(1, printable_w - (margin_x * 2))
     current_y = layout["top_margin_dots"]
@@ -2021,7 +2031,7 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
     logical_h = printable_w
     landscape = Image.new("RGBA", (logical_w, logical_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(landscape)
-    has_qr = bool(normalize_qr_value(qr_value))
+    has_qr = profile_qr_enabled(profile, qr_value)
     left_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
     right_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
     text_left = left_margin

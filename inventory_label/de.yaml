@@ -29,7 +29,7 @@ configuration:
         description: Physische Höhe des Labels.
       qr_size_mm:
         name: QR-Größe (mm)
-        description: Gedruckte QR-Größe.
+        description: Gedruckte QR-Größe. Mit 0 wird der QR-Code für dieses Etikettenprofil deaktiviert.
       top_margin_mm:
         name: Oberer Rand (mm)
         description: Oberer Abstand vor dem QR-Code.
