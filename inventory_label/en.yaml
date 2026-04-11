@@ -36,6 +36,12 @@ configuration:
       footer_bottom_margin_mm:
         name: Footer bottom margin (mm)
         description: Bottom offset for footer text.
+      print_shift_x_mm:
+        name: Print shift X (mm)
+        description: Moves the full printed label content left or right in mm. Positive moves right, negative moves left. Preview is not affected.
+      print_shift_y_mm:
+        name: Print shift Y (mm)
+        description: Moves the full printed label content up or down in mm. Positive moves down, negative moves up. Preview is not affected.
       print_rotation_degrees:
         name: Print rotation
         description: Rotation of the rendered label.

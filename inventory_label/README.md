@@ -2,16 +2,14 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.61
+## What changed in v0.1.62
 
-This version replaces numeric field ordering with up/down field buttons and adds a red preview outline for the text box.
+This version adds per-profile print shift settings on the X and Y axis in millimeters.
 
-- fields are reordered with up/down buttons in the field list
-- the numeric field order input was removed from the editor
-- preview now shows a red border around the text box area
-
-
-This version fixes the web UI crash introduced with field ordering.
+- each label profile can shift the printed content on the X axis in `+` and `-` mm
+- each label profile can shift the printed content on the Y axis in `+` and `-` mm
+- the shift affects the whole printed layout together, including QR code and text blocks
+- preview is not modified by these print shift settings
 
 It keeps the recent behavior changes:
 
@@ -23,7 +21,7 @@ It keeps the recent behavior changes:
 
 ## Add-on config
 
-Configure one or more label profiles in the add-on **Configuration** tab. On a fresh install, add your first profile there before you start using the web UI. Set `qr_size_mm: 0` on a profile when that label should not generate a QR code at all.
+Configure one or more label profiles in the add-on **Configuration** tab. On a fresh install, add your first profile there before you start using the web UI. Set `qr_size_mm: 0` on a profile when that label should not generate a QR code at all. Use `print_shift_x_mm` and `print_shift_y_mm` to move only the printed output in mm without changing preview.
 
 Example:
 
@@ -39,6 +37,8 @@ label_profiles:
     qr_size_mm: 170
     top_margin_mm: 0
     footer_bottom_margin_mm: 0
+    print_shift_x_mm: 0
+    print_shift_y_mm: 0
     print_rotation_degrees: 0
     qr_quiet_zone_modules: 3
     qr_error_correction: M
@@ -53,6 +53,8 @@ label_profiles:
     qr_size_mm: 160
     top_margin_mm: 0
     footer_bottom_margin_mm: 0
+    print_shift_x_mm: 0
+    print_shift_y_mm: 0
     print_rotation_degrees: 90
     qr_quiet_zone_modules: 4
     qr_error_correction: M

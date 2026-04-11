@@ -1236,6 +1236,8 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "qr_size_mm": normalize_float(data.get("qr_size_mm"), 170.0, 0.0, 300.0),
         "top_margin_mm": normalize_float(data.get("top_margin_mm"), 0.0, 0.0, 100.0),
         "footer_bottom_margin_mm": normalize_float(data.get("footer_bottom_margin_mm"), 0.0, 0.0, 50.0),
+        "print_shift_x_mm": normalize_float(data.get("print_shift_x_mm"), 0.0, -100.0, 100.0),
+        "print_shift_y_mm": normalize_float(data.get("print_shift_y_mm"), 0.0, -100.0, 100.0),
         "print_rotation_degrees": normalize_rotation_degrees(data.get("print_rotation_degrees"), 0),
         "qr_default_value": "" if data.get("qr_default_value") is None else str(data.get("qr_default_value")),
         "qr_quiet_zone_modules": normalize_int(data.get("qr_quiet_zone_modules"), 3, 0, 20),
@@ -1744,6 +1746,10 @@ def mm_to_dots(mm_value: float, profile: Dict | int | float | None = None) -> in
     return max(1, int(round(float(mm_value) * dots_per_mm(profile))))
 
 
+def mm_to_signed_dots(mm_value: float, profile: Dict | int | float | None = None) -> int:
+    return int(round(float(mm_value) * dots_per_mm(profile)))
+
+
 def dots_to_mm(dots: int, profile: Dict | int | float | None = None) -> float:
     return round(dots / dots_per_mm(profile), 1)
 
@@ -2176,11 +2182,21 @@ def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, pr
     return orient_preview_for_display(canvas, rotation_degrees)
 
 
+def apply_print_shift(printable_image: Image.Image, profile: Dict) -> Image.Image:
+    shift_x_dots = mm_to_signed_dots(profile.get("print_shift_x_mm", 0.0), profile) if profile.get("print_shift_x_mm") else 0
+    shift_y_dots = mm_to_signed_dots(profile.get("print_shift_y_mm", 0.0), profile) if profile.get("print_shift_y_mm") else 0
+    if shift_x_dots == 0 and shift_y_dots == 0:
+        return printable_image
+    shifted = Image.new("RGBA", printable_image.size, color=(255, 255, 255, 255))
+    shifted.alpha_composite(printable_image, (shift_x_dots, shift_y_dots))
+    return shifted
+
+
 def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
     layout = effective_layout(profile)
     pw = layout["effective_width_dots"]
     ll = layout["requested_height_dots"]
-    label_img = render_label_image(qr_value, field_forms, profile, preview=False).convert("1")
+    label_img = apply_print_shift(render_label_image(qr_value, field_forms, profile, preview=False), profile).convert("1")
     total_bytes, bytes_per_row, graphic_hex = image_to_gfa(label_img)
     return f"""^XA
 ^CI28

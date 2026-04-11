@@ -36,6 +36,12 @@ configuration:
       footer_bottom_margin_mm:
         name: Footer-Unterrand (mm)
         description: Unterer Abstand für Footer-Text.
+      print_shift_x_mm:
+        name: Druckverschiebung X (mm)
+        description: Verschiebt den gesamten gedruckten Labelinhalt in mm nach links oder rechts. Positiv verschiebt nach rechts, negativ nach links. Die Vorschau bleibt unverändert.
+      print_shift_y_mm:
+        name: Druckverschiebung Y (mm)
+        description: Verschiebt den gesamten gedruckten Labelinhalt in mm nach oben oder unten. Positiv verschiebt nach unten, negativ nach oben. Die Vorschau bleibt unverändert.
       print_rotation_degrees:
         name: Druckdrehung
         description: Drehung des gerenderten Labels.
