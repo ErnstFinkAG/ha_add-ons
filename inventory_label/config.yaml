@@ -1,5 +1,5 @@
 name: "Inventory Label"
-version: "0.1.65"
+version: "0.1.66"
 slug: "inventory_label"
 description: >-
   Print large QR-code labels to a networked Zebra ZT420/ZT421 with live PNG preview,
@@ -33,7 +33,8 @@ schema:
       label_height_mm: float
       qr_size_mm: float
       top_margin_mm: float
-      qr_text_gap_mm: float
+      text_box_margin_left_mm: float
+      text_box_margin_right_mm: float
       footer_bottom_margin_mm: float
       print_shift_x_mm: float
       print_shift_y_mm: float

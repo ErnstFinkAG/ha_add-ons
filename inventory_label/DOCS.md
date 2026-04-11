@@ -2,14 +2,14 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.65
+## What changed in v0.1.66
 
-This version adds a per-profile gap setting between the QR code and the text block.
+This version replaces the separate QR/text gap profile setting with configurable text box side margins.
 
-- each label profile now supports `qr_text_gap_mm`
-- the gap between the QR code and the text block is configurable in mm
-- the setting is used in both preview and print
-- the setting only matters when a QR code is active for that label profile
+- each label profile now supports `text_box_margin_left_mm` and `text_box_margin_right_mm`
+- the previous `qr_text_gap_mm` profile setting was removed
+- text box side margins are used in both preview and print
+- on rotated labels with QR, the left text box margin also acts as the gap between the QR block and the text box
 - footer logo/text gap per field remains available in the field editor
 - print shift X/Y per profile remains available for print-only positioning
 
@@ -23,7 +23,7 @@ It keeps the recent behavior changes:
 
 ## Add-on config
 
-Configure one or more label profiles in the add-on **Configuration** tab. On a fresh install, add your first profile there before you start using the web UI. Set `qr_size_mm: 0` on a profile when that label should not generate a QR code at all. Use `print_shift_x_mm` and `print_shift_y_mm` to move only the printed output in mm without changing preview. Use `qr_text_gap_mm` to control the gap between the QR code and the text block in both preview and print when QR is active.
+Configure one or more label profiles in the add-on **Configuration** tab. On a fresh install, add your first profile there before you start using the web UI. Set `qr_size_mm: 0` on a profile when that label should not generate a QR code at all. Use `print_shift_x_mm` and `print_shift_y_mm` to move only the printed output in mm without changing preview. Use `text_box_margin_left_mm` and `text_box_margin_right_mm` to control the text box side margins. On rotated labels with QR, the left text box margin also acts as the gap between the QR block and the text box.
 
 Example:
 
@@ -38,7 +38,8 @@ label_profiles:
     label_height_mm: 305
     qr_size_mm: 170
     top_margin_mm: 0
-    qr_text_gap_mm: 8
+    text_box_margin_left_mm: 8
+    text_box_margin_right_mm: 8
     footer_bottom_margin_mm: 0
     print_shift_x_mm: 0
     print_shift_y_mm: 0
@@ -55,7 +56,8 @@ label_profiles:
     label_height_mm: 305
     qr_size_mm: 160
     top_margin_mm: 0
-    qr_text_gap_mm: 8
+    text_box_margin_left_mm: 8
+    text_box_margin_right_mm: 8
     footer_bottom_margin_mm: 0
     print_shift_x_mm: 0
     print_shift_y_mm: 0
