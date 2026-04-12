@@ -2151,11 +2151,18 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
         qr_size = min(layout["qr_size_dots"], printable_w)
         qr_left = max((printable_w - qr_size) // 2, 0)
         qr_top = layout["top_margin_dots"]
-        qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
-        img.paste(qr_img, (qr_left, qr_top))
-        if preview:
-            draw_preview_outline(draw, qr_left, qr_top, qr_size, qr_top + qr_size, profile)
-        current_y = qr_top + qr_size + mm_to_dots(DEFAULT_QR_TEXT_GAP_MM, profile)
+        try:
+            qr_img = build_qr_image(normalize_qr_value(qr_value), qr_size, profile).convert("RGB")
+            img.paste(qr_img, (qr_left, qr_top))
+            if preview:
+                draw_preview_outline(draw, qr_left, qr_top, qr_size, qr_top + qr_size, profile)
+            current_y = qr_top + qr_size + mm_to_dots(DEFAULT_QR_TEXT_GAP_MM, profile)
+        except Exception as exc:
+            LOGGER.warning("Failed to render portrait QR block, continuing without QR: %s", exc)
+            has_qr = False
+            text_left = text_right
+            text_width = max(1, printable_w - text_left - text_right)
+            current_y = layout["top_margin_dots"]
     text_top = current_y
     body_bottom = draw_body_blocks(img, draw, current_y, text_left, text_width, body_blocks, profile)
     footer_bottom = None
@@ -2183,14 +2190,21 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
         qr_size = min(layout["qr_size_dots"], logical_h)
         qr_left = min(max(layout["top_margin_dots"], 0), max(0, logical_w - qr_size))
         qr_top = max((logical_h - qr_size) // 2, 0)
-        qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
-        landscape.paste(qr_img, (qr_left, qr_top))
-        if preview:
-            draw_preview_outline(draw, qr_left, qr_top, qr_size, qr_top + qr_size, profile)
-        inter_block_gap = left_margin
-        text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
-        text_width = max(1, logical_w - text_left - right_margin)
-        text_top = mm_to_dots(DEFAULT_TEXTBOX_TOP_MARGIN_MM, profile)
+        try:
+            qr_img = build_qr_image(normalize_qr_value(qr_value), qr_size, profile).convert("RGB")
+            landscape.paste(qr_img, (qr_left, qr_top))
+            if preview:
+                draw_preview_outline(draw, qr_left, qr_top, qr_size, qr_top + qr_size, profile)
+            inter_block_gap = left_margin
+            text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
+            text_width = max(1, logical_w - text_left - right_margin)
+            text_top = mm_to_dots(DEFAULT_TEXTBOX_TOP_MARGIN_MM, profile)
+        except Exception as exc:
+            LOGGER.warning("Failed to render rotated QR block, continuing without QR: %s", exc)
+            has_qr = False
+            text_left = right_margin
+            text_width = max(1, logical_w - text_left - right_margin)
+            text_top = layout["top_margin_dots"]
     body_bottom = draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
     footer_bottom = None
     if footer_blocks:
