@@ -147,7 +147,7 @@ UI_STRINGS = {
         "intro_text": "Create label profiles in the add-on configuration. Fields are global and managed once here in the web UI for all label profiles.",
                 "profile_none": "(none)",
         "qr_value_label": "QR fields",
-        "qr_field_help": "Select one or more defined fields. The QR content is built automatically from their current values.",
+        "qr_field_help": "Use the QR code checkbox on each field card. The QR content is built automatically from the current values of the selected fields.",
         "qr_field_empty": "No QR field selected. No QR code will be generated.",
         "copies": "Copies",
         "configured_printer": "Configured printer",
@@ -259,7 +259,7 @@ UI_STRINGS = {
         "intro_text": "Lege die Etikettenprofile in der Add-on-Konfiguration an. Die Felder sind global und werden hier einmalig für alle Etikettenprofile verwaltet.",
                 "profile_none": "(keins)",
         "qr_value_label": "QR-Felder",
-        "qr_field_help": "Wähle ein oder mehrere definierte Felder. Der QR-Inhalt wird automatisch aus deren aktuellen Werten zusammengesetzt.",
+        "qr_field_help": "Verwende die QR-Code-Checkbox in jeder Feldkarte. Der QR-Inhalt wird automatisch aus den aktuellen Werten der ausgewählten Felder zusammengesetzt.",
         "qr_field_empty": "Kein QR-Feld ausgewählt. Es wird kein QR-Code erzeugt.",
         "copies": "Anzahl",
         "configured_printer": "Konfigurierter Drucker",
@@ -498,9 +498,17 @@ HTML = """
                     {% if field.number_only %}<span>{{ ui.numeric_only }}</span>{% endif %}
                     {% if field.supports_logos %}<span>{{ ui.logo_field_label }}</span>{% endif %}
                   </div>
-                  <div class="checkline">
-                    <input id="print_{{ field.id }}" name="print_{{ field.id }}" type="checkbox" value="1" data-field-id="{{ field.id }}" {% if field.print_enabled %}checked{% endif %}>
-                    <label for="print_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.print_field }}</label>
+                  <div class="row-compact" style="margin-bottom:12px;">
+                    <div class="checkline" style="margin-bottom:0;">
+                      <input id="print_{{ field.id }}" name="print_{{ field.id }}" type="checkbox" value="1" data-field-id="{{ field.id }}" {% if field.print_enabled %}checked{% endif %}>
+                      <label for="print_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.print_field }}</label>
+                    </div>
+                    {% if field.supports_text %}
+                    <div class="checkline" style="margin-bottom:0;">
+                      <input id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" data-field-id="{{ field.id }}" {% if field.id in qr_selected_ids %}checked{% endif %}>
+                      <label for="qr_field_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.always_use_for_qr_label }}</label>
+                    </div>
+                    {% endif %}
                   </div>
                   {% if field.supports_logos %}
                   <input type="hidden" name="field_{{ field.id }}__logos_present" value="1">
@@ -532,20 +540,6 @@ HTML = """
               </div>
             </div>
 
-            <label>{{ ui.qr_value_label }}</label>
-            <div class="selector-grid">
-              {% for field in qr_field_options %}
-              <label class="selector-option" for="qr_field_{{ field.id }}">
-                <input id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" data-field-id="{{ field.id }}" {% if field.selected %}checked{% endif %}>
-                <div class="selector-text">
-                  <strong>{{ field.name }}</strong>
-                  <span class="muted small">{{ field.value or ui.none }}</span>
-                </div>
-              </label>
-              {% else %}
-              <div class="field-card muted">{{ ui.no_fields_configured }}</div>
-              {% endfor %}
-            </div>
             <p class="muted small">{{ ui.qr_field_help }}</p>
             {% if not qr_selected_ids %}
             <p class="muted small">{{ ui.qr_field_empty }}</p>
@@ -2555,15 +2549,6 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
     ui = get_ui_strings(opts.get("ui_language"))
     qr_selected_ids = normalize_qr_field_ids(form.get("qr_field_ids", []))
     qr_preview = qr_payload_from_field_forms(field_forms, qr_selected_ids) or ui["none"]
-    qr_field_options = [
-        {
-            "id": field["id"],
-            "name": field["name"],
-            "value": normalize_qr_value(field.get("value", "")),
-            "selected": field["id"] in qr_selected_ids,
-        }
-        for field in field_forms if field_supports_text(field)
-    ]
     next_field_sort_order = max((field_sort_order_key(field, idx + 1) for idx, field in enumerate(opts.get("fields", []))), default=0) + 1
     editor_form = editor_form or {**blank_editor_form(), "sort_order": next_field_sort_order}
     preview_profiles = []
@@ -2606,7 +2591,6 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         ingress_base=ingress_base_path(),
         editor_form=editor_form,
         field_editor_json=field_store_map(opts.get("fields", [])),
-        qr_field_options=qr_field_options,
         qr_selected_ids=qr_selected_ids,
         alignments=sorted(ALIGNMENTS),
         font_families=sorted(FONT_FAMILIES),
