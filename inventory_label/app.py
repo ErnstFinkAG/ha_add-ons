@@ -1645,10 +1645,23 @@ def qr_payload_from_field_forms(field_forms: List[Dict], selected_field_ids: Lis
     for field in field_forms:
         if field.get("id") not in selected_lookup:
             continue
-        value = normalize_qr_value(field.get("value", ""))
+        if not field_supports_text(field):
+            continue
+        try:
+            value = normalize_qr_value(field.get("value", ""))
+        except Exception:
+            value = ""
         if value:
             parts.append(value)
     return " - ".join(parts)
+
+
+def safe_qr_payload_from_field_forms(field_forms: List[Dict], selected_field_ids: List[str]) -> str:
+    try:
+        return qr_payload_from_field_forms(field_forms, selected_field_ids)
+    except Exception as exc:
+        LOGGER.warning("Failed to build QR payload from selected fields: %s", exc)
+        return ""
 
 
 def format_printer_target(profile: Dict, language_or_options: object) -> str:
@@ -2547,7 +2560,7 @@ def update_global_field_setting(field_id: str, setting: str, value: bool) -> Dic
 def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], result: Dict | None = None, field_result: Dict | None = None, editor_form: Dict | None = None) -> str:
     ui = get_ui_strings(opts.get("ui_language"))
     qr_selected_ids = normalize_qr_field_ids(form.get("qr_field_ids", []))
-    qr_preview = qr_payload_from_field_forms(field_forms, qr_selected_ids) or ui["none"]
+    qr_preview = safe_qr_payload_from_field_forms(field_forms, qr_selected_ids) or ui["none"]
     next_field_sort_order = max((field_sort_order_key(field, idx + 1) for idx, field in enumerate(opts.get("fields", []))), default=0) + 1
     editor_form = editor_form or {**blank_editor_form(), "sort_order": next_field_sort_order}
     preview_profiles = []
@@ -2678,7 +2691,7 @@ def print_label():
     try:
         profile = require_requested_profile(opts)
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
-        qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
+        qr_value = safe_qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
         zpl = build_zpl(qr_value, bind_field_forms_to_profile(field_forms, profile), copies, profile)
         host, port = resolve_printer_target(profile, opts)
@@ -2829,7 +2842,7 @@ def preview():
     try:
         profile = require_requested_profile(opts)
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
-        qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
+        qr_value = safe_qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
         zpl = build_zpl(qr_value, bind_field_forms_to_profile(field_forms, profile), copies, profile)
         LOGGER.info("Generated ZPL preview for profile=%s copies=%s", profile.get("id"), copies)
@@ -2846,7 +2859,7 @@ def preview_png():
     try:
         profile = require_requested_profile(opts)
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
-        qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
+        qr_value = safe_qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("requested_profile_id"), qr_value)
         img = render_label_image(qr_value, bind_field_forms_to_profile(field_forms, profile), profile, preview=True)
         bio = BytesIO()
@@ -2867,7 +2880,7 @@ def api_print():
         profile = require_requested_profile(opts)
         field_forms = validate_field_forms(api_field_forms_from_payload(opts.get("fields", []), payload), opts["ui_language"])
         qr_field_ids = selected_qr_field_ids_from_source(opts.get("fields", []), payload)
-        qr_value = qr_payload_from_field_forms(field_forms, qr_field_ids) if qr_field_ids else normalize_qr_value(payload.get("qr_value", profile.get("qr_default_value", "")))
+        qr_value = safe_qr_payload_from_field_forms(field_forms, qr_field_ids) if qr_field_ids else normalize_qr_value(payload.get("qr_value", profile.get("qr_default_value", "")))
         copies = max(1, min(50, int(payload.get("copies", 1))))
         zpl = build_zpl(qr_value, bind_field_forms_to_profile(field_forms, profile), copies, profile)
         host, port = resolve_printer_target(profile, opts)
