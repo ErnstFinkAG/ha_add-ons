@@ -2130,8 +2130,8 @@ def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body
     img = Image.new("RGBA", (printable_w, canvas_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(img)
     has_qr = profile_qr_enabled(profile, qr_value)
-    text_left = layout["text_box_margin_left_dots"]
     text_right = layout["text_box_margin_right_dots"]
+    text_left = layout["text_box_margin_left_dots"] if has_qr else text_right
     text_width = max(1, printable_w - text_left - text_right)
     current_y = layout["top_margin_dots"]
     if has_qr:
@@ -2163,7 +2163,7 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
     has_qr = profile_qr_enabled(profile, qr_value)
     left_margin = layout["text_box_margin_left_dots"]
     right_margin = layout["text_box_margin_right_dots"]
-    text_left = left_margin
+    text_left = left_margin if has_qr else right_margin
     text_width = max(1, logical_w - text_left - right_margin)
     text_top = layout["top_margin_dots"]
     if has_qr:
