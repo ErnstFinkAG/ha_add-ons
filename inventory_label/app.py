@@ -486,25 +486,6 @@ HTML = """
             <p class="muted small">{{ ui.fields_available_after_profile }}</p>
             {% endif %}
 
-            <label>{{ ui.qr_value_label }}</label>
-            <div class="selector-grid">
-              {% for field in qr_field_options %}
-              <label class="selector-option" for="qr_field_{{ field.id }}">
-                <input id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" data-field-id="{{ field.id }}" {% if field.selected %}checked{% endif %}>
-                <div class="selector-text">
-                  <strong>{{ field.name }}</strong>
-                  <span class="muted small">{{ field.value or ui.none }}</span>
-                </div>
-              </label>
-              {% else %}
-              <div class="field-card muted">{{ ui.no_fields_configured }}</div>
-              {% endfor %}
-            </div>
-            <p class="muted small">{{ ui.qr_field_help }}</p>
-            {% if not qr_selected_ids %}
-            <p class="muted small">{{ ui.qr_field_empty }}</p>
-            {% endif %}
-
             <div class="fields-section">
               <h2>{{ ui.fields_heading }}</h2>
               <div class="value-field-grid">
@@ -550,6 +531,26 @@ HTML = """
                 {% endfor %}
               </div>
             </div>
+
+            <label>{{ ui.qr_value_label }}</label>
+            <div class="selector-grid">
+              {% for field in qr_field_options %}
+              <label class="selector-option" for="qr_field_{{ field.id }}">
+                <input id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" data-field-id="{{ field.id }}" {% if field.selected %}checked{% endif %}>
+                <div class="selector-text">
+                  <strong>{{ field.name }}</strong>
+                  <span class="muted small">{{ field.value or ui.none }}</span>
+                </div>
+              </label>
+              {% else %}
+              <div class="field-card muted">{{ ui.no_fields_configured }}</div>
+              {% endfor %}
+            </div>
+            <p class="muted small">{{ ui.qr_field_help }}</p>
+            {% if not qr_selected_ids %}
+            <p class="muted small">{{ ui.qr_field_empty }}</p>
+            {% endif %}
+
           </div>
 
           <div class="top-panel">

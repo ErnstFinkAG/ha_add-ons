@@ -2,8 +2,9 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.66
+## What changed in v0.1.67
 
+- configured fields section now appears above QR field selection in the main UI
 This version replaces the separate QR/text gap profile setting with configurable text box side margins.
 
 - each label profile now supports `text_box_margin_left_mm` and `text_box_margin_right_mm`
