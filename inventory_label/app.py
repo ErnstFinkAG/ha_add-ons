@@ -571,7 +571,6 @@ HTML = """
                     <img class="preview-image" src="{{ ingress_base }}/preview.png?{{ profile.preview_query }}" alt="{{ ui.preview_alt }}">
                   </button>
                 </div>
-                <div class="preview-meta">{{ ui.preview_meta.format(dpi=profile.printer_dpi) }}</div>
                 <div class="preview-meta">{{ ui.preview_image_print_hint }}</div>
                 <div class="preview-actions">
                   <button type="submit" formaction="{{ ingress_base }}/print?profile_id={{ profile.id }}">{{ ui.print_label_button }}</button>
