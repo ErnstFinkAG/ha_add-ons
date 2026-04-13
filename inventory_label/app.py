@@ -247,6 +247,7 @@ UI_STRINGS = {
         "language_label": "Language",
         "profile_settings_source": "Profiles are defined in add-on settings",
         "printer_dpi": "Printer DPI",
+        "print_in_progress": "Sending label to printer...",
         "text_box_margin_left_profile_label": "Text box left margin (mm)",
         "text_box_margin_right_profile_label": "Text box right margin (mm)",
         "no_profiles_configured": "No label profile configured yet. Create your first label profile in the add-on configuration and restart the add-on.",
@@ -359,6 +360,7 @@ UI_STRINGS = {
         "language_label": "Sprache",
         "profile_settings_source": "Profile werden in den Add-on-Einstellungen definiert",
         "printer_dpi": "Drucker-DPI",
+        "print_in_progress": "Etikett wird an den Drucker gesendet...",
         "text_box_margin_left_profile_label": "Linker Textblock-Rand (mm)",
         "text_box_margin_right_profile_label": "Rechter Textblock-Rand (mm)",
         "no_profiles_configured": "Es ist noch kein Etikettenprofil konfiguriert. Erstelle zuerst ein Etikettenprofil in der Add-on-Konfiguration und starte das Add-on danach neu.",
@@ -455,12 +457,14 @@ HTML = """
 <body>
   <div class="wrap">
     <div class="card">
+      <div id="print-result-container">
       {% if result %}
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
       {% endif %}
       {% if field_result %}
         <div class="flash {{ 'ok' if field_result.success else 'error' }}">{{ field_result.message }}</div>
       {% endif %}
+      </div>
       <form id="label-form" method="post">
         <div class="top-layout">
           <div class="top-panel">
@@ -567,13 +571,13 @@ HTML = """
                   </div>
                 </div>
                 <div class="preview-frame">
-                  <button type="submit" class="preview-image-button" formaction="{{ ingress_base }}/print?profile_id={{ profile.id }}" title="{{ ui.preview_image_print_hint }}">
+                  <button type="submit" class="preview-image-button js-print-trigger" data-profile-id="{{ profile.id }}" formaction="{{ ingress_base }}/print?profile_id={{ profile.id }}" title="{{ ui.preview_image_print_hint }}">
                     <img class="preview-image" src="{{ ingress_base }}/preview.png?{{ profile.preview_query }}" alt="{{ ui.preview_alt }}">
                   </button>
                 </div>
                 <div class="preview-meta">{{ ui.preview_image_print_hint }}</div>
                 <div class="preview-actions">
-                  <button type="submit" formaction="{{ ingress_base }}/print?profile_id={{ profile.id }}">{{ ui.print_label_button }}</button>
+                  <button type="submit" class="js-print-trigger" data-profile-id="{{ profile.id }}" formaction="{{ ingress_base }}/print?profile_id={{ profile.id }}">{{ ui.print_label_button }}</button>
                   <a class="button-link secondary preview-zpl-link" href="{{ ingress_base }}/preview?{{ profile.preview_query }}">{{ ui.preview_zpl }}</a>
                   <a class="button-link secondary preview-png-link" href="{{ ingress_base }}/preview.png?{{ profile.preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
                 </div>
@@ -1013,6 +1017,50 @@ HTML = """
           input.addEventListener("input", schedulePreviewUpdate);
           input.addEventListener("change", applyPreviewUpdate);
         }
+      });
+
+      const printResultContainer = document.getElementById("print-result-container");
+      const printButtons = Array.from(document.querySelectorAll(".js-print-trigger"));
+      const printInProgressText = {{ ui.print_in_progress|tojson }};
+
+      function setPrintButtonsDisabled(disabled) {
+        printButtons.forEach((button) => { button.disabled = !!disabled; });
+      }
+
+      function showPrintFlash(success, message) {
+        if (!printResultContainer) return;
+        printResultContainer.innerHTML = `<div class="flash ${success ? "ok" : "error"}">${message || ""}</div>`;
+      }
+
+      function printProfile(profileId) {
+        if (!profileId) return;
+        const body = buildQuery(profileId);
+        setPrintButtonsDisabled(true);
+        showPrintFlash(true, printInProgressText);
+        fetch(`${ingressBase}/print?profile_id=${encodeURIComponent(profileId)}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            "Accept": "application/json",
+            "X-Requested-With": "fetch",
+          },
+          body: body.toString(),
+        }).then(async (response) => {
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload) throw new Error((payload && payload.message) || `HTTP ${response.status}`);
+          showPrintFlash(!!payload.success, payload.message || "");
+        }).catch((error) => {
+          showPrintFlash(false, error && error.message ? error.message : "Print failed");
+        }).finally(() => {
+          setPrintButtonsDisabled(false);
+        });
+      }
+
+      printButtons.forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          printProfile(button.getAttribute("data-profile-id") || "");
+        });
       });
 
       const footerTextCheckbox = document.getElementById("editor_footer_text");
@@ -2571,6 +2619,12 @@ def update_global_field_setting(field_id: str, setting: str, value: bool) -> Dic
     raise ValueError(f"Unknown field: {field_id}")
 
 
+def wants_json_response() -> bool:
+    accept = (request.headers.get("Accept") or "").lower()
+    requested_with = (request.headers.get("X-Requested-With") or "").lower()
+    return "application/json" in accept or requested_with == "fetch"
+
+
 def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], result: Dict | None = None, field_result: Dict | None = None, editor_form: Dict | None = None) -> str:
     ui = get_ui_strings(opts.get("ui_language"))
     qr_selected_ids = normalize_qr_field_ids(form.get("qr_field_ids", []))
@@ -2715,6 +2769,8 @@ def print_label():
     except Exception as exc:
         LOGGER.exception("Print failed")
         result = {"success": False, "message": ui_text(opts, "print_failed_message", error=exc)}
+    if wants_json_response():
+        return jsonify(result), (200 if result.get("success") else 400)
     return render_page(form, opts, field_forms, result=result)
 
 
