@@ -2,7 +2,13 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.74
+## What changed in v0.1.75
+
+This version keeps required-field validation for print, but preview no longer fails when required printed fields are still empty.
+
+- preview and preview PNG now ignore required-field empties
+- print and API print remain strict
+
 
 This version speeds up printing from the web UI by sending print actions without reloading the full page.
 

@@ -1738,14 +1738,14 @@ def require_requested_profile(opts: Dict) -> Dict:
     return profile
 
 
-def validate_field_forms(field_forms: List[Dict], language: str) -> List[Dict]:
+def validate_field_forms(field_forms: List[Dict], language: str, strict_required: bool = True) -> List[Dict]:
     validated: List[Dict] = []
     for field in field_forms:
         value = str(field.get("value") or "").strip() if field_supports_text(field) else ""
         selected_logo_ids = normalize_multi_value_ids(field.get("selected_logo_ids", field.get("value", []))) if field_supports_logos(field) else []
         if field.get("number_only") and value and not value.isdigit():
             raise ValueError(ui_text(language, "field_numbers_only", field=field["name"]))
-        if field.get("required") and field.get("print_enabled") and not value and not selected_logo_ids:
+        if strict_required and field.get("required") and field.get("print_enabled") and not value and not selected_logo_ids:
             raise ValueError(ui_text(language, "field_required", field=field["name"]))
         validated.append({**field, "value": value, "selected_logo_ids": selected_logo_ids})
     return validated
@@ -2937,7 +2937,7 @@ def preview():
     form, field_forms = form_data_from_request(opts)
     try:
         profile = require_requested_profile(opts)
-        field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        field_forms = validate_field_forms(field_forms, opts["ui_language"], strict_required=False)
         qr_value = safe_qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
         zpl = build_zpl(qr_value, bind_field_forms_to_profile(field_forms, profile), copies, profile)
@@ -2954,7 +2954,7 @@ def preview_png():
     form, field_forms = form_data_from_request(opts)
     try:
         profile = require_requested_profile(opts)
-        field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        field_forms = validate_field_forms(field_forms, opts["ui_language"], strict_required=False)
         qr_value = safe_qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("requested_profile_id"), qr_value)
         img = render_label_image(qr_value, bind_field_forms_to_profile(field_forms, profile), profile, preview=True)
