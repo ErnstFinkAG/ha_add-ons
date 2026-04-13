@@ -256,6 +256,7 @@ UI_STRINGS = {
         "no_profiles_configured": "No label profile configured yet. Create your first label profile in the add-on configuration and restart the add-on.",
         "fields_available_after_profile": "Global fields become available after at least one label profile exists.",
         "preview_image_print_hint": "Click the preview image to print this label with the selected copy count.",
+        "admin_required_message": "Administrator rights are required to change global field settings.",
     },
     "de": {
         "lang": "de",
@@ -369,6 +370,7 @@ UI_STRINGS = {
         "no_profiles_configured": "Es ist noch kein Etikettenprofil konfiguriert. Erstelle zuerst ein Etikettenprofil in der Add-on-Konfiguration und starte das Add-on danach neu.",
         "fields_available_after_profile": "Globale Felder stehen erst zur Verfügung, wenn mindestens ein Etikettenprofil existiert.",
         "preview_image_print_hint": "Klicke auf das Vorschaubild, um dieses Etikett mit der gewählten Anzahl zu drucken.",
+        "admin_required_message": "Administratorrechte sind erforderlich, um globale Feldeinstellungen zu ändern.",
     },
 }
 
@@ -604,6 +606,7 @@ HTML = """
       </form>
     </div>
 
+    {% if is_admin %}
     <div class="card">
       <div class="headline-row">
         <div>
@@ -812,6 +815,7 @@ HTML = """
       <div class="field-card muted">{{ ui.fields_available_after_profile }}</div>
       {% endif %}
     </div>
+    {% endif %}
   </div>
 
   <script>
@@ -824,6 +828,7 @@ HTML = """
       const ingressBase = {{ ingress_base|tojson }};
       const noLogosUploadedText = {{ ui.no_logos_uploaded|tojson }};
       const defaultLogoLabelText = {{ ui.default_logo_label|tojson }};
+      const isAdmin = {{ is_admin|tojson }};
       const initialNextFieldSortOrder = {{ next_field_sort_order|tojson }};
       const logoOrderLabelText = {{ ui.logo_order_label|tojson }};
       const removeLogoLabelText = {{ ui.remove_logo_label|tojson }};
@@ -878,7 +883,7 @@ HTML = """
       }
 
       function persistFieldCheckbox(fieldId, settingKey, checked) {
-        if (!fieldId || !settingKey) return;
+        if (!isAdmin || !fieldId || !settingKey) return;
         const body = new URLSearchParams();
         body.set("field_id", fieldId);
         body.set("setting", settingKey);
@@ -2653,6 +2658,7 @@ def wants_json_response() -> bool:
 
 def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], result: Dict | None = None, field_result: Dict | None = None, editor_form: Dict | None = None) -> str:
     ui = get_ui_strings(opts.get("ui_language"))
+    is_admin = current_user_is_admin()
     qr_selected_ids = normalize_qr_field_ids(form.get("qr_field_ids", []))
     qr_preview = safe_qr_payload_from_field_forms(field_forms, qr_selected_ids) or ui["none"]
     next_field_sort_order = max((field_sort_order_key(field, idx + 1) for idx, field in enumerate(opts.get("fields", []))), default=0) + 1
@@ -2696,13 +2702,14 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         qr_preview=qr_preview,
         ingress_base=ingress_base_path(),
         editor_form=editor_form,
-        field_editor_json=field_store_map(opts.get("fields", [])),
+        field_editor_json=field_store_map(opts.get("fields", [])) if is_admin else {},
         qr_selected_ids=qr_selected_ids,
         alignments=sorted(ALIGNMENTS),
         font_families=sorted(FONT_FAMILIES),
         field_positions=["body", "footer"],
         has_profiles=bool(opts.get("label_profiles")),
         next_field_sort_order=next_field_sort_order,
+        is_admin=is_admin,
     )
 
 
@@ -2756,6 +2763,26 @@ def api_field_forms_from_payload(fields: List[Dict], payload: Dict) -> List[Dict
     return forms
 
 
+def request_is_ingress() -> bool:
+    return bool(request.headers.get("X-Ingress-Path"))
+
+
+def current_user_is_admin() -> bool:
+    admin_header = request.headers.get("X-Hass-Is-Admin")
+    if admin_header is not None:
+        return normalize_bool(admin_header, False)
+    if request_is_ingress():
+        return False
+    remote = request.remote_addr
+    return remote in LOCAL_ALLOWED_IPS or remote == INGRESS_ALLOWED_IP
+
+
+def require_admin_user(language_or_options: object) -> None:
+    if current_user_is_admin():
+        return
+    raise PermissionError(ui_text(language_or_options, "admin_required_message"))
+
+
 @APP.before_request
 def restrict_ingress():
     remote = request.remote_addr
@@ -2804,6 +2831,11 @@ def print_label():
 def save_field():
     opts = load_runtime_options()
     form, field_forms = form_data_from_request(opts)
+    try:
+        require_admin_user(opts)
+    except PermissionError as exc:
+        result = {"success": False, "message": str(exc)}
+        return render_page(form, opts, field_forms, field_result=result, editor_form=blank_editor_form()), 403
     if not opts.get("label_profiles"):
         result = {"success": False, "message": ui_text(opts, "no_profiles_configured")}
         return render_page(form, opts, field_forms, field_result=result, editor_form=blank_editor_form())
@@ -2865,6 +2897,11 @@ def save_field():
 def move_field():
     opts = load_runtime_options()
     form, field_forms = form_data_from_request(opts)
+    try:
+        require_admin_user(opts)
+    except PermissionError as exc:
+        result = {"success": False, "message": str(exc)}
+        return render_page(form, opts, field_forms, field_result=result), 403
     if not opts.get("label_profiles"):
         result = {"success": False, "message": ui_text(opts, "no_profiles_configured")}
         return render_page(form, opts, field_forms, field_result=result)
@@ -2885,6 +2922,11 @@ def move_field():
 def delete_field():
     opts = load_runtime_options()
     form, field_forms = form_data_from_request(opts)
+    try:
+        require_admin_user(opts)
+    except PermissionError as exc:
+        result = {"success": False, "message": str(exc)}
+        return render_page(form, opts, field_forms, field_result=result), 403
     if not opts.get("label_profiles"):
         result = {"success": False, "message": ui_text(opts, "no_profiles_configured")}
         return render_page(form, opts, field_forms, field_result=result)
@@ -2908,6 +2950,7 @@ def delete_field():
 def quick_update_field_setting():
     try:
         opts = load_runtime_options()
+        require_admin_user(opts)
         if not opts.get("label_profiles"):
             raise ValueError(ui_text(opts, "no_profiles_configured"))
         field_id = sanitize_id(str(request.form.get("field_id") or ""), "")

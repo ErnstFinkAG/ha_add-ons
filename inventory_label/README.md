@@ -2,7 +2,7 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.75
+## What changed in v0.1.81
 
 This version keeps required-field validation for print, but preview no longer fails when required printed fields are still empty.
 
@@ -34,6 +34,10 @@ It keeps the recent behavior changes:
 - `qr_size_mm: 0` disables QR generation completely for that label profile
 - there are no built-in default label profiles or fields anymore
 - clicking a preview image prints that exact profile using the selected copy count
+
+- the global field manager is now only visible to Home Assistant administrators
+- field save, move, delete, and quick default updates are now blocked for non-admin users
+- regular users can still fill in fields, preview labels, and print without changing global defaults
 
 ## Add-on config
 
