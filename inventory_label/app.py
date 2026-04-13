@@ -5,9 +5,7 @@ import logging
 import os
 import re
 import socket
-import time
 import zlib
-from threading import Lock
 from copy import deepcopy
 from datetime import datetime
 from functools import lru_cache
@@ -19,8 +17,7 @@ from zoneinfo import ZoneInfo
 
 import qrcode
 import yaml
-from flask import Flask, Response, jsonify, make_response, render_template_string, request, send_file
-from websocket import create_connection
+from flask import Flask, Response, jsonify, render_template_string, request, send_file
 from PIL import Image, ImageDraw, ImageFont
 
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
@@ -40,19 +37,10 @@ APP = Flask(__name__)
 APP.logger.handlers.clear()
 APP.logger.propagate = True
 
-HA_USER_ADMIN_CACHE = {"expires_at": 0.0, "users": {}}
-HA_USER_ADMIN_CACHE_LOCK = Lock()
-ADMIN_SESSION_CACHE = {"tokens": {}}
-ADMIN_SESSION_CACHE_LOCK = Lock()
-
 DEFAULT_PRINTER_DPI = 203
 PRINTER_MAX_WIDTH_MM = 168.0
 INGRESS_ALLOWED_IP = "172.30.32.2"
 LOCAL_ALLOWED_IPS = {"127.0.0.1", "::1", None}
-HOME_ASSISTANT_WS_URL = os.environ.get("HOME_ASSISTANT_WS_URL", "ws://supervisor/core/websocket")
-HOME_ASSISTANT_USER_CACHE_TTL_SECONDS = 60.0
-ADMIN_SESSION_TTL_SECONDS = 8 * 60 * 60
-ADMIN_SESSION_COOKIE_NAME = "inventory_label_admin"
 OPTIONS_PATH = "/data/options.json"
 FIELD_STORE_PATH = "/data/label_fields.json"
 ASSET_ROOT_PATH = "/data/field_assets"
@@ -76,6 +64,7 @@ ALLOWED_QUICK_FIELD_SETTINGS = {"print_by_default", "always_use_for_qr"}
 
 DEFAULT_OPTIONS = {
     "ui_language": "de",
+    "show_global_field_config": True,
     "label_profiles": [],
 }
 
@@ -160,6 +149,7 @@ UI_STRINGS = {
         "lang": "en",
         "page_title": "Inventory Label",
         "intro_text": "Create label profiles in the add-on configuration. Fields are global and managed once here in the web UI for all label profiles.",
+        "intro_text_fields_hidden": "Create label profiles in the add-on configuration. Global fields remain active, but their configuration is hidden in this web UI by the add-on settings.",
                 "profile_none": "(none)",
         "qr_value_label": "QR fields",
         "qr_field_help": "Use the QR code checkbox on each field card. The QR content is built automatically from the current values of the selected fields.",
@@ -268,12 +258,13 @@ UI_STRINGS = {
         "no_profiles_configured": "No label profile configured yet. Create your first label profile in the add-on configuration and restart the add-on.",
         "fields_available_after_profile": "Global fields become available after at least one label profile exists.",
         "preview_image_print_hint": "Click the preview image to print this label with the selected copy count.",
-        "admin_required_message": "Administrator rights are required to change global field settings.",
+        "field_manager_disabled_message": "Global field configuration is disabled in the add-on settings.",
     },
     "de": {
         "lang": "de",
         "page_title": "Inventory Label",
         "intro_text": "Lege die Etikettenprofile in der Add-on-Konfiguration an. Die Felder sind global und werden hier einmalig für alle Etikettenprofile verwaltet.",
+        "intro_text_fields_hidden": "Lege die Etikettenprofile in der Add-on-Konfiguration an. Die globalen Felder bleiben aktiv, ihre Konfiguration ist in dieser Weboberfläche aber per Add-on-Einstellung ausgeblendet.",
                 "profile_none": "(keins)",
         "qr_value_label": "QR-Felder",
         "qr_field_help": "Verwende die QR-Code-Checkbox in jeder Feldkarte. Der QR-Inhalt wird automatisch aus den aktuellen Werten der ausgewählten Felder zusammengesetzt.",
@@ -382,7 +373,7 @@ UI_STRINGS = {
         "no_profiles_configured": "Es ist noch kein Etikettenprofil konfiguriert. Erstelle zuerst ein Etikettenprofil in der Add-on-Konfiguration und starte das Add-on danach neu.",
         "fields_available_after_profile": "Globale Felder stehen erst zur Verfügung, wenn mindestens ein Etikettenprofil existiert.",
         "preview_image_print_hint": "Klicke auf das Vorschaubild, um dieses Etikett mit der gewählten Anzahl zu drucken.",
-        "admin_required_message": "Administratorrechte sind erforderlich, um globale Feldeinstellungen zu ändern.",
+        "field_manager_disabled_message": "Die globale Feldkonfiguration ist in den Add-on-Einstellungen deaktiviert.",
     },
 }
 
@@ -618,7 +609,7 @@ HTML = """
       </form>
     </div>
 
-    {% if is_admin %}
+    {% if show_global_field_config %}
     <div class="card">
       <div class="headline-row">
         <div>
@@ -840,7 +831,6 @@ HTML = """
       const ingressBase = {{ ingress_base|tojson }};
       const noLogosUploadedText = {{ ui.no_logos_uploaded|tojson }};
       const defaultLogoLabelText = {{ ui.default_logo_label|tojson }};
-      const isAdmin = {{ is_admin|tojson }};
       const initialNextFieldSortOrder = {{ next_field_sort_order|tojson }};
       const logoOrderLabelText = {{ ui.logo_order_label|tojson }};
       const removeLogoLabelText = {{ ui.remove_logo_label|tojson }};
@@ -848,46 +838,6 @@ HTML = """
 
       let refreshTimer = null;
       let previewNonce = Date.now();
-
-      function parentHassObject() {
-        try {
-          if (window.parent && window.parent !== window) {
-            const root = window.parent.document && window.parent.document.querySelector && window.parent.document.querySelector("home-assistant");
-            if (root && root.hass) return root.hass;
-          }
-        } catch (error) {
-          console.warn("Failed to access parent hass object", error);
-        }
-        return null;
-      }
-
-      function bootstrapAdminProbe() {
-        if (isAdmin) return;
-        const sessionKey = "inventory-label-admin-probe";
-        try {
-          if (window.sessionStorage && window.sessionStorage.getItem(sessionKey) === "done") return;
-        } catch (error) {}
-        const hass = parentHassObject();
-        const userId = hass && hass.user && hass.user.id ? String(hass.user.id) : "";
-        if (!userId) return;
-        fetch(`${ingressBase}/session/admin-probe`, {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({user_id: userId}),
-          credentials: "same-origin",
-        }).then(async (response) => {
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const payload = await response.json().catch(() => ({}));
-          if (payload && payload.ok && payload.is_admin) {
-            try {
-              if (window.sessionStorage) window.sessionStorage.setItem(sessionKey, "done");
-            } catch (error) {}
-            window.location.reload();
-          }
-        }).catch((error) => {
-          console.warn("Admin probe did not enable field manager", error);
-        });
-      }
 
       function sanitizeNumericInput(input) {
         if (!input || input.dataset.numberOnly !== "1") return;
@@ -935,7 +885,7 @@ HTML = """
       }
 
       function persistFieldCheckbox(fieldId, settingKey, checked) {
-        if (!isAdmin || !fieldId || !settingKey) return;
+        if (!fieldId || !settingKey) return;
         const body = new URLSearchParams();
         body.set("field_id", fieldId);
         body.set("setting", settingKey);
@@ -1150,7 +1100,6 @@ HTML = """
         });
       }
 
-      bootstrapAdminProbe();
       applyPreviewUpdate();
     })();
   </script>
@@ -1433,6 +1382,7 @@ def load_options() -> Tuple[Dict, Dict[str, List[Dict]], str | None]:
             LOGGER.warning("Failed to load %s: %s", OPTIONS_PATH, exc)
 
     options["ui_language"] = normalize_ui_language(raw.get("ui_language"), DEFAULT_OPTIONS["ui_language"])
+    options["show_global_field_config"] = normalize_bool(raw.get("show_global_field_config"), DEFAULT_OPTIONS["show_global_field_config"])
 
     legacy_field_store: Dict[str, List[Dict]] = {}
     if isinstance(raw.get("label_profiles"), list):
@@ -1794,6 +1744,11 @@ def require_requested_profile(opts: Dict) -> Dict:
     if not isinstance(profile, dict) or not profile.get("id"):
         raise ValueError(ui_text(opts, "no_profiles_configured"))
     return profile
+
+
+def ensure_field_manager_enabled(opts: Dict) -> None:
+    if not normalize_bool(opts.get("show_global_field_config"), True):
+        raise ValueError(ui_text(opts, "field_manager_disabled_message"))
 
 
 def validate_field_forms(field_forms: List[Dict], language: str, strict_required: bool = True) -> List[Dict]:
@@ -2711,7 +2666,7 @@ def wants_json_response() -> bool:
 
 def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], result: Dict | None = None, field_result: Dict | None = None, editor_form: Dict | None = None) -> str:
     ui = get_ui_strings(opts.get("ui_language"))
-    is_admin = current_user_is_admin()
+    ui["intro_text"] = ui["intro_text"] if normalize_bool(opts.get("show_global_field_config"), True) else ui.get("intro_text_fields_hidden", ui["intro_text"])
     qr_selected_ids = normalize_qr_field_ids(form.get("qr_field_ids", []))
     qr_preview = safe_qr_payload_from_field_forms(field_forms, qr_selected_ids) or ui["none"]
     next_field_sort_order = max((field_sort_order_key(field, idx + 1) for idx, field in enumerate(opts.get("fields", []))), default=0) + 1
@@ -2755,14 +2710,14 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         qr_preview=qr_preview,
         ingress_base=ingress_base_path(),
         editor_form=editor_form,
-        field_editor_json=field_store_map(opts.get("fields", [])) if is_admin else {},
+        field_editor_json=field_store_map(opts.get("fields", [])),
         qr_selected_ids=qr_selected_ids,
         alignments=sorted(ALIGNMENTS),
         font_families=sorted(FONT_FAMILIES),
         field_positions=["body", "footer"],
         has_profiles=bool(opts.get("label_profiles")),
+        show_global_field_config=normalize_bool(opts.get("show_global_field_config"), True),
         next_field_sort_order=next_field_sort_order,
-        is_admin=is_admin,
     )
 
 
@@ -2816,149 +2771,6 @@ def api_field_forms_from_payload(fields: List[Dict], payload: Dict) -> List[Dict
     return forms
 
 
-def request_is_ingress() -> bool:
-    return bool(request.headers.get("X-Ingress-Path"))
-
-
-def ingress_request_user_id() -> str:
-    for header_name in ("X-Remote-User-Id", "X-Hass-User-ID", "X-Hass-User-Id"):
-        value = normalize_string(request.headers.get(header_name), "")
-        if value:
-            return value
-    return ""
-
-
-def prune_admin_sessions(now: float | None = None) -> None:
-    current = time.monotonic() if now is None else float(now)
-    with ADMIN_SESSION_CACHE_LOCK:
-        tokens = ADMIN_SESSION_CACHE.get("tokens", {})
-        if not isinstance(tokens, dict):
-            ADMIN_SESSION_CACHE["tokens"] = {}
-            return
-        expired = [token for token, payload in tokens.items() if current >= float((payload or {}).get("expires_at", 0.0) or 0.0)]
-        for token in expired:
-            tokens.pop(token, None)
-
-
-def current_request_has_admin_session() -> bool:
-    token = normalize_string(request.cookies.get(ADMIN_SESSION_COOKIE_NAME), "")
-    if not token:
-        return False
-    now = time.monotonic()
-    prune_admin_sessions(now)
-    with ADMIN_SESSION_CACHE_LOCK:
-        payload = (ADMIN_SESSION_CACHE.get("tokens", {}) or {}).get(token)
-        if not isinstance(payload, dict):
-            return False
-        expected_user_id = normalize_string(payload.get("user_id"), "")
-    ingress_user_id = ingress_request_user_id()
-    if ingress_user_id and expected_user_id and ingress_user_id != expected_user_id:
-        return False
-    return True
-
-
-def grant_admin_session(user_id: str) -> str:
-    normalized_user_id = normalize_string(user_id, "")
-    if not normalized_user_id:
-        raise ValueError("Missing user ID")
-    prune_admin_sessions()
-    token = uuid4().hex
-    with ADMIN_SESSION_CACHE_LOCK:
-        tokens = ADMIN_SESSION_CACHE.setdefault("tokens", {})
-        tokens[token] = {
-            "user_id": normalized_user_id,
-            "expires_at": time.monotonic() + ADMIN_SESSION_TTL_SECONDS,
-        }
-    return token
-
-
-def fetch_home_assistant_user_admin_map() -> Dict[str, bool]:
-    token = normalize_string(os.environ.get("SUPERVISOR_TOKEN"), "")
-    if not token:
-        LOGGER.warning("SUPERVISOR_TOKEN is not available; cannot verify Home Assistant admin users")
-        return {}
-
-    ws = None
-    try:
-        ws = create_connection(HOME_ASSISTANT_WS_URL, timeout=5)
-        greeting = json.loads(ws.recv())
-        if greeting.get("type") != "auth_required":
-            raise RuntimeError(f"Unexpected websocket greeting: {greeting}")
-
-        ws.send(json.dumps({"type": "auth", "access_token": token}))
-        auth_result = json.loads(ws.recv())
-        if auth_result.get("type") != "auth_ok":
-            raise RuntimeError(f"Websocket authentication failed: {auth_result}")
-
-        message_id = 1
-        ws.send(json.dumps({"id": message_id, "type": "config/auth/list"}))
-        while True:
-            response = json.loads(ws.recv())
-            if response.get("id") != message_id:
-                continue
-            if not response.get("success"):
-                raise RuntimeError(str(response.get("error") or "config/auth/list failed"))
-            result = response.get("result") if isinstance(response.get("result"), list) else []
-            users: Dict[str, bool] = {}
-            for item in result:
-                if not isinstance(item, dict):
-                    continue
-                user_id = normalize_string(item.get("id"), "")
-                if not user_id:
-                    continue
-                users[user_id] = normalize_bool(item.get("is_owner"), False) or normalize_bool(item.get("is_admin"), False)
-            return users
-    except Exception as exc:
-        LOGGER.warning("Failed to query Home Assistant user admin map: %s", exc)
-        return {}
-    finally:
-        if ws is not None:
-            try:
-                ws.close()
-            except Exception:
-                pass
-
-
-def home_assistant_user_admin_map(force_refresh: bool = False) -> Dict[str, bool]:
-    now = time.monotonic()
-    with HA_USER_ADMIN_CACHE_LOCK:
-        expires_at = float(HA_USER_ADMIN_CACHE.get("expires_at", 0.0) or 0.0)
-        cached_users = HA_USER_ADMIN_CACHE.get("users", {})
-        if (not force_refresh) and isinstance(cached_users, dict) and now < expires_at:
-            return dict(cached_users)
-
-    users = fetch_home_assistant_user_admin_map()
-    with HA_USER_ADMIN_CACHE_LOCK:
-        HA_USER_ADMIN_CACHE["users"] = dict(users)
-        HA_USER_ADMIN_CACHE["expires_at"] = now + HOME_ASSISTANT_USER_CACHE_TTL_SECONDS
-        return dict(HA_USER_ADMIN_CACHE["users"])
-
-
-def current_user_is_admin() -> bool:
-    admin_header = request.headers.get("X-Hass-Is-Admin")
-    if admin_header is not None:
-        return normalize_bool(admin_header, False)
-    if current_request_has_admin_session():
-        return True
-    if request_is_ingress():
-        remote_user_id = ingress_request_user_id()
-        if not remote_user_id:
-            return False
-        users = home_assistant_user_admin_map()
-        if remote_user_id in users:
-            return bool(users[remote_user_id])
-        users = home_assistant_user_admin_map(force_refresh=True)
-        return bool(users.get(remote_user_id, False))
-    remote = request.remote_addr
-    return remote in LOCAL_ALLOWED_IPS or remote == INGRESS_ALLOWED_IP
-
-
-def require_admin_user(language_or_options: object) -> None:
-    if current_user_is_admin():
-        return
-    raise PermissionError(ui_text(language_or_options, "admin_required_message"))
-
-
 @APP.before_request
 def restrict_ingress():
     remote = request.remote_addr
@@ -3006,12 +2818,8 @@ def print_label():
 @APP.route("/fields/save", methods=["POST"])
 def save_field():
     opts = load_runtime_options()
+    ensure_field_manager_enabled(opts)
     form, field_forms = form_data_from_request(opts)
-    try:
-        require_admin_user(opts)
-    except PermissionError as exc:
-        result = {"success": False, "message": str(exc)}
-        return render_page(form, opts, field_forms, field_result=result, editor_form=blank_editor_form()), 403
     if not opts.get("label_profiles"):
         result = {"success": False, "message": ui_text(opts, "no_profiles_configured")}
         return render_page(form, opts, field_forms, field_result=result, editor_form=blank_editor_form())
@@ -3072,12 +2880,8 @@ def save_field():
 @APP.route("/fields/move", methods=["POST"])
 def move_field():
     opts = load_runtime_options()
+    ensure_field_manager_enabled(opts)
     form, field_forms = form_data_from_request(opts)
-    try:
-        require_admin_user(opts)
-    except PermissionError as exc:
-        result = {"success": False, "message": str(exc)}
-        return render_page(form, opts, field_forms, field_result=result), 403
     if not opts.get("label_profiles"):
         result = {"success": False, "message": ui_text(opts, "no_profiles_configured")}
         return render_page(form, opts, field_forms, field_result=result)
@@ -3097,12 +2901,8 @@ def move_field():
 @APP.route("/fields/delete", methods=["POST"])
 def delete_field():
     opts = load_runtime_options()
+    ensure_field_manager_enabled(opts)
     form, field_forms = form_data_from_request(opts)
-    try:
-        require_admin_user(opts)
-    except PermissionError as exc:
-        result = {"success": False, "message": str(exc)}
-        return render_page(form, opts, field_forms, field_result=result), 403
     if not opts.get("label_profiles"):
         result = {"success": False, "message": ui_text(opts, "no_profiles_configured")}
         return render_page(form, opts, field_forms, field_result=result)
@@ -3126,7 +2926,7 @@ def delete_field():
 def quick_update_field_setting():
     try:
         opts = load_runtime_options()
-        require_admin_user(opts)
+        ensure_field_manager_enabled(opts)
         if not opts.get("label_profiles"):
             raise ValueError(ui_text(opts, "no_profiles_configured"))
         field_id = sanitize_id(str(request.form.get("field_id") or ""), "")
@@ -3137,34 +2937,6 @@ def quick_update_field_setting():
     except Exception as exc:
         LOGGER.exception("Quick field update failed")
         return jsonify({"ok": False, "error": str(exc)}), 400
-
-
-@APP.route("/session/admin-probe", methods=["POST"])
-def admin_probe():
-    ingress_user_id = ingress_request_user_id()
-    if not ingress_user_id:
-        return jsonify({"ok": False, "error": "Missing ingress user"}), 400
-    payload = request.get_json(silent=True) or request.form or {}
-    requested_user_id = normalize_string((payload or {}).get("user_id"), "")
-    if not requested_user_id or requested_user_id != ingress_user_id:
-        return jsonify({"ok": False, "error": "User mismatch"}), 403
-    users = home_assistant_user_admin_map()
-    if requested_user_id not in users:
-        users = home_assistant_user_admin_map(force_refresh=True)
-    if not users.get(requested_user_id, False):
-        return jsonify({"ok": False, "is_admin": False}), 403
-    session_token = grant_admin_session(requested_user_id)
-    response = make_response(jsonify({"ok": True, "is_admin": True}))
-    response.set_cookie(
-        ADMIN_SESSION_COOKIE_NAME,
-        session_token,
-        max_age=ADMIN_SESSION_TTL_SECONDS,
-        httponly=True,
-        samesite="Lax",
-        secure=False,
-        path=ingress_base_path() or "/",
-    )
-    return response
 
 
 @APP.route("/assets/logos/<path:storage_name>", methods=["GET"])

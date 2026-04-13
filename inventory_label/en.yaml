@@ -2,6 +2,9 @@ configuration:
   ui_language:
     name: UI language
     description: Language used in the add-on web UI.
+  show_global_field_config:
+    name: Show global field configuration
+    description: Show or hide the global field manager in the web UI. Existing global fields remain active even when the editor is hidden.
   label_profiles:
     name: Label profiles
     description: Create at least one entry before first start. Global field definitions are managed once in the add-on web UI and apply to all label profiles.

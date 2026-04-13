@@ -2,6 +2,9 @@ configuration:
   ui_language:
     name: UI-Sprache
     description: Sprache der Add-on-Weboberfläche.
+  show_global_field_config:
+    name: Globale Feldkonfiguration anzeigen
+    description: Blendet die globale Feldverwaltung in der Weboberfläche ein oder aus. Die vorhandenen globalen Felder bleiben auch bei deaktivierter Anzeige weiter aktiv.
   label_profiles:
     name: Etikettenprofile
     description: Erstelle vor dem ersten Start mindestens ein Etikettenprofil. Die globalen Felddefinitionen werden einmalig in der Add-on-Weboberfläche verwaltet und gelten für alle Profile.

@@ -10,8 +10,7 @@ RUN apk add --no-cache \
     waitress==3.0.2 \
     qrcode==8.2 \
     pillow==11.1.0 \
-    pyyaml==6.0.2 \
-    websocket-client==1.8.0
+    pyyaml==6.0.2
 
 WORKDIR /app
 COPY app.py /app/app.py

@@ -1,17 +1,16 @@
 name: "Inventory Label"
-version: "0.1.83"
+version: "0.1.90"
 slug: "inventory_label"
 description: >-
   Print large QR-code labels to a networked Zebra ZT420/ZT421 with live PNG preview,
-  English/German UI, label profiles configured in the add-on settings, global field
-  management in the web UI, and multi-profile preview cards.
+  English/German UI, label profiles configured in the add-on settings, optional global
+  field management visibility in the web UI, and multi-profile preview cards.
 url: "https://github.com/ErnstFinkAG/ha_add-ons/tree/main/inventory_label"
 startup: services
 boot: auto
 init: false
 ingress: true
 ingress_port: 8099
-homeassistant_api: true
 panel_icon: "mdi:label"
 arch:
   - aarch64
@@ -27,9 +26,11 @@ build_from:
   i386: "ghcr.io/home-assistant/i386-base:3.21"
 options:
   ui_language: "de"
+  show_global_field_config: true
   label_profiles: []
 schema:
   ui_language: "list(de|en)"
+  show_global_field_config: bool
   label_profiles:
     - id: str
       name: str

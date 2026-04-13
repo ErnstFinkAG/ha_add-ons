@@ -2,7 +2,7 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.81
+## What changed in v0.1.90
 
 This version keeps required-field validation for print, but preview no longer fails when required printed fields are still empty.
 
@@ -35,9 +35,12 @@ It keeps the recent behavior changes:
 - there are no built-in default label profiles or fields anymore
 - clicking a preview image prints that exact profile using the selected copy count
 
-- the global field manager is now only visible to Home Assistant administrators
-- field save, move, delete, and quick default updates are now blocked for non-admin users
-- regular users can still fill in fields, preview labels, and print without changing global defaults
+This version adds an add-on setting to show or hide the global field configuration section in the web UI.
+
+- new `show_global_field_config` add-on option
+- when disabled, the global field manager card is hidden from the web UI
+- field edit endpoints are also blocked when the option is disabled
+- existing global fields still remain active for preview, print, and API usage
 
 ## Add-on config
 
@@ -47,6 +50,7 @@ Example:
 
 ```yaml
 ui_language: de
+show_global_field_config: true
 label_profiles:
   - id: standard
     name: Standard
@@ -89,6 +93,8 @@ label_profiles:
 
 The add-on now starts with an empty `label_profiles` list by default, so nothing is pre-created for you.
 
+`show_global_field_config` defaults to `true`. Set it to `false` when users should still print with the shared global fields but should not see or edit the field manager in the web UI.
+
 ## Field management in the web UI
 
 The web UI now manages **one global field set**.
@@ -129,8 +135,6 @@ Field settings supported in the UI:
 
 ## Web UI
 
-The global field manager is only shown to administrator users. Non-admin users can still fill values, preview, and print labels.
-
 In the add-on web UI you can:
 
 - enter the shared field values once
@@ -138,7 +142,7 @@ In the add-on web UI you can:
 - see multiple preview cards at the same time
 - print to the printer configured inside each visible profile
 - preview PNG and ZPL per visible profile
-- manage the global fields in one shared field section
+- manage the global fields in one shared field section when `show_global_field_config` is enabled
 - click a preview image to print that profile immediately
 
 ## API
