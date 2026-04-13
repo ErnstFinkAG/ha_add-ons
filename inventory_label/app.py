@@ -250,6 +250,7 @@ UI_STRINGS = {
         "language_label": "Language",
         "profile_settings_source": "Profiles are defined in add-on settings",
         "printer_dpi": "Printer DPI",
+        "admin_only_fields_message": "Global field configuration is only visible to Home Assistant administrators.",
         "print_in_progress": "Sending label to printer...",
         "text_box_margin_left_profile_label": "Text box left margin (mm)",
         "text_box_margin_right_profile_label": "Text box right margin (mm)",
@@ -363,6 +364,7 @@ UI_STRINGS = {
         "language_label": "Sprache",
         "profile_settings_source": "Profile werden in den Add-on-Einstellungen definiert",
         "printer_dpi": "Drucker-DPI",
+        "admin_only_fields_message": "Die globale Feldkonfiguration ist nur für Home-Assistant-Administratoren sichtbar.",
         "print_in_progress": "Etikett wird an den Drucker gesendet...",
         "text_box_margin_left_profile_label": "Linker Textblock-Rand (mm)",
         "text_box_margin_right_profile_label": "Rechter Textblock-Rand (mm)",
@@ -450,6 +452,7 @@ HTML = """
     .logo-manager { display: grid; gap: 10px; }
     .logo-manager-item { display: grid; grid-template-columns: 90px 1fr 120px auto; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #111827; }
     .logo-order-input { margin: 0; }
+    [hidden] { display: none !important; }
     code { word-break: break-word; }
     @media (max-width: 980px) {
       .top-layout, .value-field-grid { grid-template-columns: 1fr; }
@@ -604,7 +607,7 @@ HTML = """
       </form>
     </div>
 
-    <div class="card">
+    <div id="global-fields-card" class="card" hidden>
       <div class="headline-row">
         <div>
           <h2>{{ ui.field_manager_heading }}</h2>
@@ -812,6 +815,10 @@ HTML = """
       <div class="field-card muted">{{ ui.fields_available_after_profile }}</div>
       {% endif %}
     </div>
+
+    <div id="global-fields-admin-message" class="card" hidden>
+      <p class="muted">{{ ui.admin_only_fields_message }}</p>
+    </div>
   </div>
 
   <script>
@@ -822,6 +829,9 @@ HTML = """
       const fieldEditorForm = document.getElementById("field-editor-form");
       const fieldData = {{ field_editor_json|tojson }};
       const ingressBase = {{ ingress_base|tojson }};
+      const globalFieldsCard = document.getElementById("global-fields-card");
+      const globalFieldsAdminMessage = document.getElementById("global-fields-admin-message");
+      const isAdminUserFallback = {{ is_admin_user|tojson }};
       const noLogosUploadedText = {{ ui.no_logos_uploaded|tojson }};
       const defaultLogoLabelText = {{ ui.default_logo_label|tojson }};
       const initialNextFieldSortOrder = {{ next_field_sort_order|tojson }};
@@ -831,6 +841,33 @@ HTML = """
 
       let refreshTimer = null;
       let previewNonce = Date.now();
+
+      function resolveHaAdminFlag() {
+        const candidates = [];
+        try {
+          if (window.parent && window.parent !== window && window.parent.document) {
+            candidates.push(window.parent.document.querySelector("home-assistant"));
+            candidates.push(window.parent.document.querySelector("hc-main"));
+          }
+        } catch (error) {
+          console.warn("Unable to inspect parent Home Assistant UI", error);
+        }
+        candidates.push(document.querySelector("home-assistant"));
+        candidates.push(document.querySelector("hc-main"));
+        for (const candidate of candidates) {
+          const hass = candidate && (candidate.hass || (candidate.__data && candidate.__data.hass));
+          if (hass && hass.user && typeof hass.user.is_admin === "boolean") {
+            return hass.user.is_admin;
+          }
+        }
+        return !!isAdminUserFallback;
+      }
+
+      function applyAdminVisibility() {
+        const isAdminUser = resolveHaAdminFlag();
+        if (globalFieldsCard) globalFieldsCard.hidden = !isAdminUser;
+        if (globalFieldsAdminMessage) globalFieldsAdminMessage.hidden = isAdminUser;
+      }
 
       function sanitizeNumericInput(input) {
         if (!input || input.dataset.numberOnly !== "1") return;
@@ -1093,6 +1130,7 @@ HTML = """
         });
       }
 
+      applyAdminVisibility();
       applyPreviewUpdate();
     })();
   </script>
@@ -1457,6 +1495,17 @@ def select_profile(profiles: List[Dict], requested_profile_id: str | None = None
     return profiles[0] if profiles else None
 
 
+
+
+def current_ingress_user_id() -> str:
+    return normalize_string(request.headers.get("X-Remote-User-Id"), "")
+
+
+def is_admin_user_request() -> bool:
+    if not request.headers.get("X-Ingress-Path"):
+        return True
+    return False
+
 def load_runtime_options(profile_id: str | None = None) -> Dict:
     opts, legacy_seed, migration_notice = load_options()
     profiles = parse_label_profiles(opts.get("label_profiles"))
@@ -1471,6 +1520,8 @@ def load_runtime_options(profile_id: str | None = None) -> Dict:
     opts["requested_profile_id"] = requested_profile["id"] if requested_profile else ""
     opts["requested_profile_name"] = requested_profile["name"] if requested_profile else ""
     opts["migration_notice"] = migration_notice
+    opts["current_user_id"] = current_ingress_user_id()
+    opts["is_admin_user"] = is_admin_user_request()
     return opts
 
 
