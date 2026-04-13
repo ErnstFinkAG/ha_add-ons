@@ -129,6 +129,8 @@ Field settings supported in the UI:
 
 ## Web UI
 
+The global field manager is only shown to administrator users. Non-admin users can still fill values, preview, and print labels.
+
 In the add-on web UI you can:
 
 - enter the shared field values once

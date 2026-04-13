@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 import qrcode
 import yaml
-from flask import Flask, Response, jsonify, render_template_string, request, send_file
+from flask import Flask, Response, jsonify, make_response, render_template_string, request, send_file
 from websocket import create_connection
 from PIL import Image, ImageDraw, ImageFont
 
@@ -42,6 +42,8 @@ APP.logger.propagate = True
 
 HA_USER_ADMIN_CACHE = {"expires_at": 0.0, "users": {}}
 HA_USER_ADMIN_CACHE_LOCK = Lock()
+ADMIN_SESSION_CACHE = {"tokens": {}}
+ADMIN_SESSION_CACHE_LOCK = Lock()
 
 DEFAULT_PRINTER_DPI = 203
 PRINTER_MAX_WIDTH_MM = 168.0
@@ -49,6 +51,8 @@ INGRESS_ALLOWED_IP = "172.30.32.2"
 LOCAL_ALLOWED_IPS = {"127.0.0.1", "::1", None}
 HOME_ASSISTANT_WS_URL = os.environ.get("HOME_ASSISTANT_WS_URL", "ws://supervisor/core/websocket")
 HOME_ASSISTANT_USER_CACHE_TTL_SECONDS = 60.0
+ADMIN_SESSION_TTL_SECONDS = 8 * 60 * 60
+ADMIN_SESSION_COOKIE_NAME = "inventory_label_admin"
 OPTIONS_PATH = "/data/options.json"
 FIELD_STORE_PATH = "/data/label_fields.json"
 ASSET_ROOT_PATH = "/data/field_assets"
@@ -845,6 +849,46 @@ HTML = """
       let refreshTimer = null;
       let previewNonce = Date.now();
 
+      function parentHassObject() {
+        try {
+          if (window.parent && window.parent !== window) {
+            const root = window.parent.document && window.parent.document.querySelector && window.parent.document.querySelector("home-assistant");
+            if (root && root.hass) return root.hass;
+          }
+        } catch (error) {
+          console.warn("Failed to access parent hass object", error);
+        }
+        return null;
+      }
+
+      function bootstrapAdminProbe() {
+        if (isAdmin) return;
+        const sessionKey = "inventory-label-admin-probe";
+        try {
+          if (window.sessionStorage && window.sessionStorage.getItem(sessionKey) === "done") return;
+        } catch (error) {}
+        const hass = parentHassObject();
+        const userId = hass && hass.user && hass.user.id ? String(hass.user.id) : "";
+        if (!userId) return;
+        fetch(`${ingressBase}/session/admin-probe`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({user_id: userId}),
+          credentials: "same-origin",
+        }).then(async (response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const payload = await response.json().catch(() => ({}));
+          if (payload && payload.ok && payload.is_admin) {
+            try {
+              if (window.sessionStorage) window.sessionStorage.setItem(sessionKey, "done");
+            } catch (error) {}
+            window.location.reload();
+          }
+        }).catch((error) => {
+          console.warn("Admin probe did not enable field manager", error);
+        });
+      }
+
       function sanitizeNumericInput(input) {
         if (!input || input.dataset.numberOnly !== "1") return;
         const cleaned = (input.value || "").replace(/\\D+/g, "");
@@ -1106,6 +1150,7 @@ HTML = """
         });
       }
 
+      bootstrapAdminProbe();
       applyPreviewUpdate();
     })();
   </script>
@@ -2775,6 +2820,58 @@ def request_is_ingress() -> bool:
     return bool(request.headers.get("X-Ingress-Path"))
 
 
+def ingress_request_user_id() -> str:
+    for header_name in ("X-Remote-User-Id", "X-Hass-User-ID", "X-Hass-User-Id"):
+        value = normalize_string(request.headers.get(header_name), "")
+        if value:
+            return value
+    return ""
+
+
+def prune_admin_sessions(now: float | None = None) -> None:
+    current = time.monotonic() if now is None else float(now)
+    with ADMIN_SESSION_CACHE_LOCK:
+        tokens = ADMIN_SESSION_CACHE.get("tokens", {})
+        if not isinstance(tokens, dict):
+            ADMIN_SESSION_CACHE["tokens"] = {}
+            return
+        expired = [token for token, payload in tokens.items() if current >= float((payload or {}).get("expires_at", 0.0) or 0.0)]
+        for token in expired:
+            tokens.pop(token, None)
+
+
+def current_request_has_admin_session() -> bool:
+    token = normalize_string(request.cookies.get(ADMIN_SESSION_COOKIE_NAME), "")
+    if not token:
+        return False
+    now = time.monotonic()
+    prune_admin_sessions(now)
+    with ADMIN_SESSION_CACHE_LOCK:
+        payload = (ADMIN_SESSION_CACHE.get("tokens", {}) or {}).get(token)
+        if not isinstance(payload, dict):
+            return False
+        expected_user_id = normalize_string(payload.get("user_id"), "")
+    ingress_user_id = ingress_request_user_id()
+    if ingress_user_id and expected_user_id and ingress_user_id != expected_user_id:
+        return False
+    return True
+
+
+def grant_admin_session(user_id: str) -> str:
+    normalized_user_id = normalize_string(user_id, "")
+    if not normalized_user_id:
+        raise ValueError("Missing user ID")
+    prune_admin_sessions()
+    token = uuid4().hex
+    with ADMIN_SESSION_CACHE_LOCK:
+        tokens = ADMIN_SESSION_CACHE.setdefault("tokens", {})
+        tokens[token] = {
+            "user_id": normalized_user_id,
+            "expires_at": time.monotonic() + ADMIN_SESSION_TTL_SECONDS,
+        }
+    return token
+
+
 def fetch_home_assistant_user_admin_map() -> Dict[str, bool]:
     token = normalize_string(os.environ.get("SUPERVISOR_TOKEN"), "")
     if not token:
@@ -2841,8 +2938,10 @@ def current_user_is_admin() -> bool:
     admin_header = request.headers.get("X-Hass-Is-Admin")
     if admin_header is not None:
         return normalize_bool(admin_header, False)
+    if current_request_has_admin_session():
+        return True
     if request_is_ingress():
-        remote_user_id = normalize_string(request.headers.get("X-Remote-User-Id"), "")
+        remote_user_id = ingress_request_user_id()
         if not remote_user_id:
             return False
         users = home_assistant_user_admin_map()
@@ -3038,6 +3137,34 @@ def quick_update_field_setting():
     except Exception as exc:
         LOGGER.exception("Quick field update failed")
         return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@APP.route("/session/admin-probe", methods=["POST"])
+def admin_probe():
+    ingress_user_id = ingress_request_user_id()
+    if not ingress_user_id:
+        return jsonify({"ok": False, "error": "Missing ingress user"}), 400
+    payload = request.get_json(silent=True) or request.form or {}
+    requested_user_id = normalize_string((payload or {}).get("user_id"), "")
+    if not requested_user_id or requested_user_id != ingress_user_id:
+        return jsonify({"ok": False, "error": "User mismatch"}), 403
+    users = home_assistant_user_admin_map()
+    if requested_user_id not in users:
+        users = home_assistant_user_admin_map(force_refresh=True)
+    if not users.get(requested_user_id, False):
+        return jsonify({"ok": False, "is_admin": False}), 403
+    session_token = grant_admin_session(requested_user_id)
+    response = make_response(jsonify({"ok": True, "is_admin": True}))
+    response.set_cookie(
+        ADMIN_SESSION_COOKIE_NAME,
+        session_token,
+        max_age=ADMIN_SESSION_TTL_SECONDS,
+        httponly=True,
+        samesite="Lax",
+        secure=False,
+        path=ingress_base_path() or "/",
+    )
+    return response
 
 
 @APP.route("/assets/logos/<path:storage_name>", methods=["GET"])
