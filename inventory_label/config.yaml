@@ -1,5 +1,5 @@
 name: "Inventory Label"
-version: "0.1.76"
+version: "0.1.77"
 slug: "inventory_label"
 description: >-
   Print large QR-code labels to a networked Zebra ZT420/ZT421 with live PNG preview,
@@ -11,7 +11,6 @@ boot: auto
 init: false
 ingress: true
 ingress_port: 8099
-homeassistant_api: true
 panel_icon: "mdi:label"
 arch:
   - aarch64
@@ -21,7 +20,20 @@ arch:
   - i386
 options:
   ui_language: "de"
-  label_profiles: []
+  label_profiles:
+    - id: "standard"
+      name: "Standard"
+      printer_host: ""
+      printer_dpi: 203
+      label_width_mm: 170
+      label_height_mm: 305
+      qr_size_mm: 170
+      top_margin_mm: 0
+      footer_bottom_margin_mm: 0
+      print_rotation_degrees: 0
+      qr_quiet_zone_modules: 3
+      qr_error_correction: "M"
+      show_in_preview: true
 schema:
   ui_language: "list(de|en)"
   label_profiles:
@@ -34,11 +46,7 @@ schema:
       label_height_mm: float
       qr_size_mm: float
       top_margin_mm: float
-      text_box_margin_left_mm: float
-      text_box_margin_right_mm: float
       footer_bottom_margin_mm: float
-      print_shift_x_mm: float
-      print_shift_y_mm: float
       print_rotation_degrees: "list(0|90|270)"
       qr_quiet_zone_modules: int
       qr_error_correction: "list(L|M|Q|H)"

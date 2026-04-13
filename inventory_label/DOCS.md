@@ -2,42 +2,20 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.76
+## What changed in v0.1.55
 
-This version keeps required-field validation for print, but preview no longer fails when required printed fields are still empty.
+This version moves field definitions to one global shared field set and adds multi-profile preview support.
 
-- preview and preview PNG now ignore required-field empties
-- print and API print remain strict
-
-
-This version speeds up printing from the web UI by sending print actions without reloading the full page.
-
-
-This version mirrors the right text-box margin to the left side when no QR code is rendered, so the text block stays centered when left/right margins differ.
-
-- the QR-code selection is now integrated into each configured field card next to the print checkbox
-
-- configured fields section now appears above QR field selection in the main UI
-This version replaces the separate QR/text gap profile setting with configurable text box side margins.
-
-- each label profile now supports `text_box_margin_left_mm` and `text_box_margin_right_mm`
-- the previous `qr_text_gap_mm` profile setting was removed
-- text box side margins are used in both preview and print
-- on rotated labels with QR, the left text box margin also acts as the gap between the QR block and the text box
-- footer logo/text gap per field remains available in the field editor
-- print shift X/Y per profile remains available for print-only positioning
-
-It keeps the recent behavior changes:
-
-- fields can switch render order inside the body or footer text block
-- footer fields can render logos and text together, with text below the logos
-- `qr_size_mm: 0` disables QR generation completely for that label profile
-- there are no built-in default label profiles or fields anymore
-- clicking a preview image prints that exact profile using the selected copy count
+- fields are now global and apply to all label profiles
+- the label switch was removed from the web UI
+- each label profile now supports `show_in_preview`
+- the preview area renders one preview card per profile with `show_in_preview: true`
+- each preview card has its own print, ZPL preview, and PNG preview actions
+- older per-profile field storage is merged into one global field list automatically
 
 ## Add-on config
 
-Configure one or more label profiles in the add-on **Configuration** tab. On a fresh install, add your first profile there before you start using the web UI. Set `qr_size_mm: 0` on a profile when that label should not generate a QR code at all. Use `print_shift_x_mm` and `print_shift_y_mm` to move only the printed output in mm without changing preview. Use `text_box_margin_left_mm` and `text_box_margin_right_mm` to control the text box side margins. On rotated labels with QR, the left text box margin also acts as the gap between the QR block and the text box.
+Configure one or more label profiles in the add-on **Configuration** tab.
 
 Example:
 
@@ -52,11 +30,7 @@ label_profiles:
     label_height_mm: 305
     qr_size_mm: 170
     top_margin_mm: 0
-    text_box_margin_left_mm: 8
-    text_box_margin_right_mm: 8
     footer_bottom_margin_mm: 0
-    print_shift_x_mm: 0
-    print_shift_y_mm: 0
     print_rotation_degrees: 0
     qr_quiet_zone_modules: 3
     qr_error_correction: M
@@ -70,11 +44,7 @@ label_profiles:
     label_height_mm: 305
     qr_size_mm: 160
     top_margin_mm: 0
-    text_box_margin_left_mm: 8
-    text_box_margin_right_mm: 8
     footer_bottom_margin_mm: 0
-    print_shift_x_mm: 0
-    print_shift_y_mm: 0
     print_rotation_degrees: 90
     qr_quiet_zone_modules: 4
     qr_error_correction: M
@@ -82,8 +52,6 @@ label_profiles:
 ```
 
 `show_in_preview` defaults to `false` when omitted.
-
-The add-on now starts with an empty `label_profiles` list by default, so nothing is pre-created for you.
 
 ## Field management in the web UI
 
@@ -113,15 +81,12 @@ Field settings supported in the UI:
 - `position`: `body` or `footer`
 - `footer_text`
 - `footer_bottom_margin_mm`
-- `footer_logo_text_gap_mm`
 - `append_current_date`
 - `always_use_for_qr`
 - `value_options`
 - `logo_field`
-- footer fields may combine logo selection and text in the same field
 - `logo_height_mm`
 - `max_lines`
-- `sort_order`: render order inside the body or footer text block
 
 ## Web UI
 
@@ -133,7 +98,6 @@ In the add-on web UI you can:
 - print to the printer configured inside each visible profile
 - preview PNG and ZPL per visible profile
 - manage the global fields in one shared field section
-- click a preview image to print that profile immediately
 
 ## API
 
@@ -151,10 +115,8 @@ Example payload:
     "project_name": "EFH Huggentobbler Biel",
     "element": "DE1",
     "weight": "1",
-    "footer": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil"
-  },
-  "logo_field_values": {
-    "footer": ["fink_logo", "iso_logo"]
+    "footer": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
+    "brand_logos": ["fink_logo", "iso_logo"]
   },
   "print_fields": {
     "project_no": true,
@@ -165,8 +127,3 @@ Example payload:
   }
 }
 ```
-
-
-## Permissions
-
-The global field configuration section in the web UI is only shown to Home Assistant administrators.

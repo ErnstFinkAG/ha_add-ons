@@ -1,11 +1,8 @@
-import base64
-import binascii
 import json
 import logging
 import os
 import re
 import socket
-import zlib
 from copy import deepcopy
 from datetime import datetime
 from functools import lru_cache
@@ -45,26 +42,116 @@ OPTIONS_PATH = "/data/options.json"
 FIELD_STORE_PATH = "/data/label_fields.json"
 ASSET_ROOT_PATH = "/data/field_assets"
 LOGO_ASSET_PATH = os.path.join(ASSET_ROOT_PATH, "logos")
-DEFAULT_TEXTBOX_MARGIN_LEFT_MM = 8.0
-DEFAULT_TEXTBOX_MARGIN_RIGHT_MM = 8.0
-DEFAULT_TEXTBOX_TOP_MARGIN_MM = 8.0
+DEFAULT_TEXT_BLOCK_MARGIN_MM = 8.0
 DEFAULT_LOGO_HEIGHT_MM = 20.0
 DEFAULT_LOGO_GAP_MM = 4.0
 FIELD_GAP_MM = 4.0
 FOOTER_GAP_MM = 3.0
-GROUPED_FIELD_GAP_MM = 1.0
-DEFAULT_QR_TEXT_GAP_MM = 8.0
 SUPPORTED_UI_LANGUAGES = {"en", "de"}
 SUPPORTED_ROTATIONS = {0, 90, 270}
 ALIGNMENTS = {"left", "center", "right"}
 FONT_FAMILIES = {"sans", "serif", "mono"}
 FIELD_POSITIONS = {"body", "footer"}
 
-ALLOWED_QUICK_FIELD_SETTINGS = {"print_by_default", "always_use_for_qr"}
+DEFAULT_LABEL_PROFILES = [
+    {
+        "id": "standard",
+        "name": "Standard",
+        "printer_host": "",
+        "printer_port": None,
+        "label_width_mm": 170,
+        "label_height_mm": 305,
+        "qr_size_mm": 170,
+        "top_margin_mm": 0,
+        "footer_bottom_margin_mm": 0,
+        "print_rotation_degrees": 0,
+        "qr_quiet_zone_modules": 3,
+        "qr_error_correction": "M",
+        "printer_dpi": DEFAULT_PRINTER_DPI,
+        "show_in_preview": True,
+    }
+]
+
+DEFAULT_PROFILE_FIELDS = {
+    "standard": [
+        {
+            "id": "project_no",
+            "name": "Projektnummer",
+            "default_value": "250001",
+            "alignment": "center",
+            "font_family": "sans",
+            "font_size_mm": 18,
+            "bold": True,
+            "italic": False,
+            "underline": False,
+            "print_by_default": True,
+            "required": True,
+            "number_only": True,
+            "position": "body",
+        },
+        {
+            "id": "project_name",
+            "name": "Projektname",
+            "default_value": "EFH Huggentobbler Biel",
+            "alignment": "center",
+            "font_family": "sans",
+            "font_size_mm": 13,
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "print_by_default": True,
+            "position": "body",
+        },
+        {
+            "id": "element",
+            "name": "Element",
+            "default_value": "DE1",
+            "alignment": "center",
+            "font_family": "sans",
+            "font_size_mm": 18,
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "print_by_default": True,
+            "position": "body",
+        },
+        {
+            "id": "weight",
+            "name": "Gewicht",
+            "default_value": "",
+            "alignment": "center",
+            "font_family": "sans",
+            "font_size_mm": 7,
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "print_by_default": False,
+            "number_only": True,
+            "suffix": "kg",
+            "position": "body",
+        },
+        {
+            "id": "footer",
+            "name": "Footer",
+            "default_value": "Ernst Fink AG, Schorenweg 144, 4585 Biezwil",
+            "alignment": "center",
+            "font_family": "sans",
+            "font_size_mm": 5,
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "print_by_default": True,
+            "position": "footer",
+            "footer_text": True,
+            "footer_bottom_margin_mm": 0.0,
+            "append_current_date": True,
+        },
+    ]
+}
 
 DEFAULT_OPTIONS = {
     "ui_language": "de",
-    "label_profiles": [],
+    "label_profiles": deepcopy(DEFAULT_LABEL_PROFILES),
 }
 
 QR_ERROR_CORRECTION_MAP = {
@@ -150,7 +237,7 @@ UI_STRINGS = {
         "intro_text": "Create label profiles in the add-on configuration. Fields are global and managed once here in the web UI for all label profiles.",
                 "profile_none": "(none)",
         "qr_value_label": "QR fields",
-        "qr_field_help": "Use the QR code checkbox on each field card. The QR content is built automatically from the current values of the selected fields.",
+        "qr_field_help": "Select one or more defined fields. The QR content is built automatically from their current values.",
         "qr_field_empty": "No QR field selected. No QR code will be generated.",
         "copies": "Copies",
         "configured_printer": "Configured printer",
@@ -161,7 +248,7 @@ UI_STRINGS = {
         "open_png_preview": "Open PNG preview",
         "preview_heading": "Preview",
         "preview_alt": "Label preview",
-        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at {dpi} dpi. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. Red outlines show the QR footprint and the text box.",
+        "preview_meta": "PNG is rendered from the same layout coordinates used for print generation and exported at {dpi} dpi. Portrait preview tries to match the configured label size in mm. Horizontal preview keeps aspect ratio and fits to the available width. The red outline shows the full QR footprint including the configured quiet zone.",
         "fields_heading": "Configured fields",
         "print_field": "Print",
         "required": "Required",
@@ -169,8 +256,6 @@ UI_STRINGS = {
         "position": "Position",
         "position_body": "Body",
         "position_footer": "Footer",
-        "field_order_label": "Text block order",
-        "field_order_help": "Lower numbers are rendered first inside the body or footer text block.",
         "configured_label_mapping": "Current label setup",
                 "current_qr_payload": "Current QR payload",
         "requested_label": "Requested label",
@@ -192,8 +277,6 @@ UI_STRINGS = {
         "new_field_button": "New field",
         "delete_field_button": "Delete",
         "edit_field_button": "Edit",
-        "move_up_button": "Up",
-        "move_down_button": "Down",
         "no_fields_configured": "No fields configured for this label yet.",
         "field_saved_message": "Field '{field}' saved.",
         "field_deleted_message": "Field '{field}' deleted.",
@@ -216,8 +299,6 @@ UI_STRINGS = {
         "always_use_for_qr_label": "Always use for QR code",
         "footer_text_label": "Footer text (bottom anchored)",
         "footer_bottom_margin_label": "Footer bottom margin (mm)",
-        "footer_logo_text_gap_label": "Footer logo/text gap (mm)",
-        "footer_logo_text_gap_help": "Gap between footer logos and footer text when both are rendered from the same field.",
         "value_options_label": "Value list",
         "value_options_help": "Optional suggestions, one value per line. Users can still enter any text.",
         "value_options_summary": "Choices",
@@ -250,13 +331,6 @@ UI_STRINGS = {
         "language_label": "Language",
         "profile_settings_source": "Profiles are defined in add-on settings",
         "printer_dpi": "Printer DPI",
-        "admin_only_fields_message": "Global field configuration is only visible to Home Assistant administrators.",
-        "print_in_progress": "Sending label to printer...",
-        "text_box_margin_left_profile_label": "Text box left margin (mm)",
-        "text_box_margin_right_profile_label": "Text box right margin (mm)",
-        "no_profiles_configured": "No label profile configured yet. Create your first label profile in the add-on configuration and restart the add-on.",
-        "fields_available_after_profile": "Global fields become available after at least one label profile exists.",
-        "preview_image_print_hint": "Click the preview image to print this label with the selected copy count.",
     },
     "de": {
         "lang": "de",
@@ -264,7 +338,7 @@ UI_STRINGS = {
         "intro_text": "Lege die Etikettenprofile in der Add-on-Konfiguration an. Die Felder sind global und werden hier einmalig für alle Etikettenprofile verwaltet.",
                 "profile_none": "(keins)",
         "qr_value_label": "QR-Felder",
-        "qr_field_help": "Verwende die QR-Code-Checkbox in jeder Feldkarte. Der QR-Inhalt wird automatisch aus den aktuellen Werten der ausgewählten Felder zusammengesetzt.",
+        "qr_field_help": "Wähle ein oder mehrere definierte Felder. Der QR-Inhalt wird automatisch aus deren aktuellen Werten zusammengesetzt.",
         "qr_field_empty": "Kein QR-Feld ausgewählt. Es wird kein QR-Code erzeugt.",
         "copies": "Anzahl",
         "configured_printer": "Konfigurierter Drucker",
@@ -275,7 +349,7 @@ UI_STRINGS = {
         "open_png_preview": "PNG-Vorschau öffnen",
         "preview_heading": "Vorschau",
         "preview_alt": "Etikettenvorschau",
-        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit {dpi} dpi exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Rote Rahmen zeigen die QR-Fläche und den Textblock.",
+        "preview_meta": "Die PNG-Vorschau wird aus denselben Layout-Koordinaten wie der Druck erstellt und mit {dpi} dpi exportiert. Hochformat versucht die konfigurierte Labelgröße in mm abzubilden. Querformat behält das Seitenverhältnis bei und passt sich an die verfügbare Breite an. Der rote Rahmen zeigt die gesamte QR-Fläche inklusive Quiet Zone.",
         "fields_heading": "Konfigurierte Felder",
         "print_field": "Drucken",
         "required": "Pflichtfeld",
@@ -283,8 +357,6 @@ UI_STRINGS = {
         "position": "Position",
         "position_body": "Inhalt",
         "position_footer": "Footer",
-        "field_order_label": "Reihenfolge im Textblock",
-        "field_order_help": "Kleinere Zahlen werden innerhalb des Inhalts- oder Footer-Textblocks zuerst gerendert.",
         "configured_label_mapping": "Aktuelle Etikettenkonfiguration",
                 "current_qr_payload": "Aktueller QR-Inhalt",
         "requested_label": "Gewünschtes Label",
@@ -306,8 +378,6 @@ UI_STRINGS = {
         "new_field_button": "Neues Feld",
         "delete_field_button": "Löschen",
         "edit_field_button": "Bearbeiten",
-        "move_up_button": "Hoch",
-        "move_down_button": "Runter",
         "no_fields_configured": "Für dieses Label sind noch keine Felder konfiguriert.",
         "field_saved_message": "Feld '{field}' gespeichert.",
         "field_deleted_message": "Feld '{field}' gelöscht.",
@@ -330,8 +400,6 @@ UI_STRINGS = {
         "always_use_for_qr_label": "Immer für QR-Code verwenden",
         "footer_text_label": "Footer-Text (unten verankert)",
         "footer_bottom_margin_label": "Footer-Abstand unten (mm)",
-        "footer_logo_text_gap_label": "Abstand Logo/Text im Footer (mm)",
-        "footer_logo_text_gap_help": "Abstand zwischen Footer-Logos und Footer-Text, wenn beides aus demselben Feld gerendert wird.",
         "value_options_label": "Werteliste",
         "value_options_help": "Optionale Vorschläge, ein Wert pro Zeile. Freitext bleibt weiterhin möglich.",
         "value_options_summary": "Auswahlwerte",
@@ -364,13 +432,6 @@ UI_STRINGS = {
         "language_label": "Sprache",
         "profile_settings_source": "Profile werden in den Add-on-Einstellungen definiert",
         "printer_dpi": "Drucker-DPI",
-        "admin_only_fields_message": "Die globale Feldkonfiguration ist nur für Home-Assistant-Administratoren sichtbar.",
-        "print_in_progress": "Etikett wird an den Drucker gesendet...",
-        "text_box_margin_left_profile_label": "Linker Textblock-Rand (mm)",
-        "text_box_margin_right_profile_label": "Rechter Textblock-Rand (mm)",
-        "no_profiles_configured": "Es ist noch kein Etikettenprofil konfiguriert. Erstelle zuerst ein Etikettenprofil in der Add-on-Konfiguration und starte das Add-on danach neu.",
-        "fields_available_after_profile": "Globale Felder stehen erst zur Verfügung, wenn mindestens ein Etikettenprofil existiert.",
-        "preview_image_print_hint": "Klicke auf das Vorschaubild, um dieses Etikett mit der gewählten Anzahl zu drucken.",
     },
 }
 
@@ -434,7 +495,6 @@ HTML = """
     .preview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
     .preview-card { background: #111827; border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
     .preview-frame { width: 100%; min-height: 240px; background: var(--label-bg); border: 1px solid var(--label-edge); border-radius: 12px; overflow: hidden; }
-    .preview-image-button { display: block; width: 100%; padding: 0; border: none; background: transparent; cursor: pointer; }
     .preview-frame img { display: block; width: 100%; height: auto; background: white; }
     .preview-meta { margin-top: 12px; font-size: 0.95rem; color: var(--muted); }
     .preview-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
@@ -452,7 +512,6 @@ HTML = """
     .logo-manager { display: grid; gap: 10px; }
     .logo-manager-item { display: grid; grid-template-columns: 90px 1fr 120px auto; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: #111827; }
     .logo-order-input { margin: 0; }
-    [hidden] { display: none !important; }
     code { word-break: break-word; }
     @media (max-width: 980px) {
       .top-layout, .value-field-grid { grid-template-columns: 1fr; }
@@ -463,14 +522,12 @@ HTML = """
 <body>
   <div class="wrap">
     <div class="card">
-      <div id="print-result-container">
       {% if result %}
         <div class="flash {{ 'ok' if result.success else 'error' }}">{{ result.message }}</div>
       {% endif %}
       {% if field_result %}
         <div class="flash {{ 'ok' if field_result.success else 'error' }}">{{ field_result.message }}</div>
       {% endif %}
-      </div>
       <form id="label-form" method="post">
         <div class="top-layout">
           <div class="top-panel">
@@ -491,9 +548,24 @@ HTML = """
                 <input value="{{ preview_profile_names_text }}" disabled>
               </div>
             </div>
-            {% if not has_profiles %}
-            <div class="flash error">{{ ui.no_profiles_configured }}</div>
-            <p class="muted small">{{ ui.fields_available_after_profile }}</p>
+
+            <label>{{ ui.qr_value_label }}</label>
+            <div class="selector-grid">
+              {% for field in qr_field_options %}
+              <label class="selector-option" for="qr_field_{{ field.id }}">
+                <input id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" data-field-id="{{ field.id }}" {% if field.selected %}checked{% endif %}>
+                <div class="selector-text">
+                  <strong>{{ field.name }}</strong>
+                  <span class="muted small">{{ field.value or ui.none }}</span>
+                </div>
+              </label>
+              {% else %}
+              <div class="field-card muted">{{ ui.no_fields_configured }}</div>
+              {% endfor %}
+            </div>
+            <p class="muted small">{{ ui.qr_field_help }}</p>
+            {% if not qr_selected_ids %}
+            <p class="muted small">{{ ui.qr_field_empty }}</p>
             {% endif %}
 
             <div class="fields-section">
@@ -508,32 +580,23 @@ HTML = """
                     {% if field.number_only %}<span>{{ ui.numeric_only }}</span>{% endif %}
                     {% if field.supports_logos %}<span>{{ ui.logo_field_label }}</span>{% endif %}
                   </div>
-                  <div class="row-compact" style="margin-bottom:12px;">
-                    <div class="checkline" style="margin-bottom:0;">
-                      <input id="print_{{ field.id }}" name="print_{{ field.id }}" type="checkbox" value="1" data-field-id="{{ field.id }}" {% if field.print_enabled %}checked{% endif %}>
-                      <label for="print_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.print_field }}</label>
-                    </div>
-                    {% if field.supports_text %}
-                    <div class="checkline" style="margin-bottom:0;">
-                      <input id="qr_field_{{ field.id }}" name="qr_field_ids" type="checkbox" value="{{ field.id }}" data-field-id="{{ field.id }}" {% if field.id in qr_selected_ids %}checked{% endif %}>
-                      <label for="qr_field_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.always_use_for_qr_label }}</label>
-                    </div>
-                    {% endif %}
+                  <div class="checkline">
+                    <input id="print_{{ field.id }}" name="print_{{ field.id }}" type="checkbox" value="1" data-field-id="{{ field.id }}" {% if field.print_enabled %}checked{% endif %}>
+                    <label for="print_{{ field.id }}" style="margin:0; font-weight:500;">{{ ui.print_field }}</label>
                   </div>
                   {% if field.supports_logos %}
-                  <input type="hidden" name="field_{{ field.id }}__logos_present" value="1">
+                  <input type="hidden" name="field_{{ field.id }}__present" value="1">
                   <div class="logo-option-grid">
                     {% for option in field.logo_options %}
                     <label class="logo-option-card">
-                      <input type="checkbox" name="field_{{ field.id }}__logos" value="{{ option.id }}" {% if option.selected %}checked{% endif %}>
+                      <input type="checkbox" name="field_{{ field.id }}" value="{{ option.id }}" {% if option.selected %}checked{% endif %}>
                       <img src="{{ option.asset_url }}" alt="{{ option.name }}">
                     </label>
                     {% else %}
                     <div class="muted small">{{ ui.no_logos_uploaded }}</div>
                     {% endfor %}
                   </div>
-                  {% endif %}
-                  {% if field.supports_text %}
+                  {% else %}
                   <input id="field_{{ field.id }}" name="field_{{ field.id }}" type="text" value="{{ field.value }}" {% if field.value_options %}list="field_options_{{ field.id }}"{% endif %} {% if field.number_only %}inputmode="numeric" pattern="[0-9]*" data-number-only="1"{% endif %}>
                   {% if field.value_options %}
                   <datalist id="field_options_{{ field.id }}">
@@ -549,12 +612,6 @@ HTML = """
                 {% endfor %}
               </div>
             </div>
-
-            <p class="muted small">{{ ui.qr_field_help }}</p>
-            {% if not qr_selected_ids %}
-            <p class="muted small">{{ ui.qr_field_empty }}</p>
-            {% endif %}
-
           </div>
 
           <div class="top-panel">
@@ -571,19 +628,15 @@ HTML = """
                   <div class="tag-list">
                     <span class="tag">{{ profile.label_width_mm }} × {{ profile.label_height_mm }} mm</span>
                     <span class="tag">{{ ui.printer_dpi }}: {{ profile.printer_dpi }}</span>
-                    <span class="tag">{{ ui.text_box_margin_left_profile_label }}: {{ profile.text_box_margin_left_mm }} mm</span>
-                    <span class="tag">{{ ui.text_box_margin_right_profile_label }}: {{ profile.text_box_margin_right_mm }} mm</span>
                     <span class="tag">{{ ui.print_rotation }}: {{ profile.print_rotation_degrees }}°</span>
                   </div>
                 </div>
                 <div class="preview-frame">
-                  <button type="submit" class="preview-image-button js-print-trigger" data-profile-id="{{ profile.id }}" formaction="{{ ingress_base }}/print?profile_id={{ profile.id }}" title="{{ ui.preview_image_print_hint }}">
-                    <img class="preview-image" src="{{ ingress_base }}/preview.png?{{ profile.preview_query }}" alt="{{ ui.preview_alt }}">
-                  </button>
+                  <img class="preview-image" src="{{ ingress_base }}/preview.png?{{ profile.preview_query }}" alt="{{ ui.preview_alt }}">
                 </div>
-                <div class="preview-meta">{{ ui.preview_image_print_hint }}</div>
+                <div class="preview-meta">{{ ui.preview_meta.format(dpi=profile.printer_dpi) }}</div>
                 <div class="preview-actions">
-                  <button type="submit" class="js-print-trigger" data-profile-id="{{ profile.id }}" formaction="{{ ingress_base }}/print?profile_id={{ profile.id }}">{{ ui.print_label_button }}</button>
+                  <button type="submit" formaction="{{ ingress_base }}/print?profile_id={{ profile.id }}">{{ ui.print_label_button }}</button>
                   <a class="button-link secondary preview-zpl-link" href="{{ ingress_base }}/preview?{{ profile.preview_query }}">{{ ui.preview_zpl }}</a>
                   <a class="button-link secondary preview-png-link" href="{{ ingress_base }}/preview.png?{{ profile.preview_query }}" target="_blank" rel="noopener">{{ ui.open_png_preview }}</a>
                 </div>
@@ -607,7 +660,7 @@ HTML = """
       </form>
     </div>
 
-    <div id="global-fields-card" class="card" hidden>
+    <div class="card">
       <div class="headline-row">
         <div>
           <h2>{{ ui.field_manager_heading }}</h2>
@@ -616,7 +669,6 @@ HTML = """
         <span class="tag">{{ ui.global_fields_tag }}</span>
       </div>
 
-      {% if has_profiles %}
       <div class="field-grid">
         {% for field in configured_fields %}
         <div class="field-card">
@@ -635,7 +687,6 @@ HTML = """
             {% if field.always_use_for_qr %}<span class="tag">QR</span>{% endif %}
             {% if field.footer_text %}<span class="tag">{{ ui.footer_text_label }}</span>{% endif %}
             {% if field.footer_bottom_margin_mm %}<span class="tag">{{ ui.footer_bottom_margin_label }}: {{ field.footer_bottom_margin_mm }} mm</span>{% endif %}
-            {% if field.position == 'footer' and field.supports_logos and field.footer_text %}<span class="tag">{{ ui.footer_logo_text_gap_label }}: {{ field.footer_logo_text_gap_mm }} mm</span>{% endif %}
             {% if field.value_options %}<span class="tag">{{ ui.value_options_summary }}: {{ field.value_options|length }}</span>{% endif %}
             {% if field.supports_logos %}<span class="tag">{{ ui.logo_field_label }}</span>{% endif %}
             {% if field.logo_options %}<span class="tag">{{ ui.logo_options_summary }}: {{ field.logo_options|length }}</span>{% endif %}
@@ -651,16 +702,6 @@ HTML = """
           </div>
           {% endif %}
           <div class="field-actions">
-            <form method="post" action="{{ ingress_base }}/fields/move" style="margin:0;">
-              <input type="hidden" name="field_id" value="{{ field.id }}">
-              <input type="hidden" name="direction" value="up">
-              <button type="submit" class="secondary" {% if not field.can_move_up %}disabled{% endif %}>{{ ui.move_up_button }}</button>
-            </form>
-            <form method="post" action="{{ ingress_base }}/fields/move" style="margin:0;">
-              <input type="hidden" name="field_id" value="{{ field.id }}">
-              <input type="hidden" name="direction" value="down">
-              <button type="submit" class="secondary" {% if not field.can_move_down %}disabled{% endif %}>{{ ui.move_down_button }}</button>
-            </form>
             <button type="button" class="secondary edit-field-button" data-field-id="{{ field.id }}">{{ ui.edit_field_button }}</button>
             <form method="post" action="{{ ingress_base }}/fields/delete" style="margin:0;">
               <input type="hidden" name="field_id" value="{{ field.id }}">
@@ -778,7 +819,6 @@ HTML = """
                 {% endfor %}
               </select>
             </div>
-            <input id="editor_sort_order" name="sort_order" type="hidden" value="{{ editor_form.sort_order }}">
             <div>
               <label for="editor_max_lines">{{ ui.max_lines_label }}</label>
               <input id="editor_max_lines" name="max_lines" type="number" min="1" max="8" step="1" value="{{ editor_form.max_lines }}">
@@ -786,11 +826,6 @@ HTML = """
             <div>
               <label for="editor_footer_bottom_margin_mm">{{ ui.footer_bottom_margin_label }}</label>
               <input id="editor_footer_bottom_margin_mm" name="footer_bottom_margin_mm" type="number" min="0" max="100" step="0.5" value="{{ editor_form.footer_bottom_margin_mm }}">
-            </div>
-            <div>
-              <label for="editor_footer_logo_text_gap_mm">{{ ui.footer_logo_text_gap_label }}</label>
-              <input id="editor_footer_logo_text_gap_mm" name="footer_logo_text_gap_mm" type="number" min="0" max="50" step="0.5" value="{{ editor_form.footer_logo_text_gap_mm }}">
-              <p class="muted small">{{ ui.footer_logo_text_gap_help }}</p>
             </div>
           </div>
 
@@ -811,13 +846,6 @@ HTML = """
           </div>
         </form>
       </div>
-      {% else %}
-      <div class="field-card muted">{{ ui.fields_available_after_profile }}</div>
-      {% endif %}
-    </div>
-
-    <div id="global-fields-admin-message" class="card" hidden>
-      <p class="muted">{{ ui.admin_only_fields_message }}</p>
     </div>
   </div>
 
@@ -829,45 +857,14 @@ HTML = """
       const fieldEditorForm = document.getElementById("field-editor-form");
       const fieldData = {{ field_editor_json|tojson }};
       const ingressBase = {{ ingress_base|tojson }};
-      const globalFieldsCard = document.getElementById("global-fields-card");
-      const globalFieldsAdminMessage = document.getElementById("global-fields-admin-message");
-      const isAdminUserFallback = {{ is_admin_user|tojson }};
       const noLogosUploadedText = {{ ui.no_logos_uploaded|tojson }};
       const defaultLogoLabelText = {{ ui.default_logo_label|tojson }};
-      const initialNextFieldSortOrder = {{ next_field_sort_order|tojson }};
       const logoOrderLabelText = {{ ui.logo_order_label|tojson }};
       const removeLogoLabelText = {{ ui.remove_logo_label|tojson }};
       if (!form) return;
 
       let refreshTimer = null;
       let previewNonce = Date.now();
-
-      function resolveHaAdminFlag() {
-        const candidates = [];
-        try {
-          if (window.parent && window.parent !== window && window.parent.document) {
-            candidates.push(window.parent.document.querySelector("home-assistant"));
-            candidates.push(window.parent.document.querySelector("hc-main"));
-          }
-        } catch (error) {
-          console.warn("Unable to inspect parent Home Assistant UI", error);
-        }
-        candidates.push(document.querySelector("home-assistant"));
-        candidates.push(document.querySelector("hc-main"));
-        for (const candidate of candidates) {
-          const hass = candidate && (candidate.hass || (candidate.__data && candidate.__data.hass));
-          if (hass && hass.user && typeof hass.user.is_admin === "boolean") {
-            return hass.user.is_admin;
-          }
-        }
-        return !!isAdminUserFallback;
-      }
-
-      function applyAdminVisibility() {
-        const isAdminUser = resolveHaAdminFlag();
-        if (globalFieldsCard) globalFieldsCard.hidden = !isAdminUser;
-        if (globalFieldsAdminMessage) globalFieldsAdminMessage.hidden = isAdminUser;
-      }
 
       function sanitizeNumericInput(input) {
         if (!input || input.dataset.numberOnly !== "1") return;
@@ -966,15 +963,6 @@ HTML = """
         `).join("");
       }
 
-      function nextFieldSortOrder() {
-        const values = Object.values(fieldData || {}).map((item) => {
-          const parsed = parseInt(item && item.sort_order != null ? item.sort_order : "", 10);
-          return Number.isNaN(parsed) ? 0 : parsed;
-        });
-        const currentMax = values.length ? Math.max(...values) : 0;
-        return Math.max(initialNextFieldSortOrder || 1, currentMax + 1);
-      }
-
       function resetFieldEditor() {
         if (!fieldEditorForm) return;
         setValue("original_field_id", "");
@@ -986,10 +974,8 @@ HTML = """
         setValue("editor_font_family", "sans");
         setValue("editor_font_size_mm", "7.0");
         setValue("editor_position", "body");
-        setValue("editor_sort_order", String(nextFieldSortOrder()));
         setValue("editor_max_lines", "3");
         setValue("editor_footer_bottom_margin_mm", "0.0");
-        setValue("editor_footer_logo_text_gap_mm", "1.0");
         setValue("editor_value_options_text", "");
         setValue("editor_logo_height_mm", "20.0");
         setCheckbox("editor_bold", false);
@@ -1019,10 +1005,8 @@ HTML = """
         setValue("editor_font_family", data.font_family || "sans");
         setValue("editor_font_size_mm", data.font_size_mm || "7.0");
         setValue("editor_position", data.position || "body");
-        setValue("editor_sort_order", data.sort_order || nextFieldSortOrder());
         setValue("editor_max_lines", data.max_lines || "3");
         setValue("editor_footer_bottom_margin_mm", data.footer_bottom_margin_mm ?? "0.0");
-        setValue("editor_footer_logo_text_gap_mm", data.footer_logo_text_gap_mm ?? "1.0");
         setValue("editor_value_options_text", data.value_options_text || "");
         setValue("editor_logo_height_mm", data.logo_height_mm || "20.0");
         setCheckbox("editor_bold", data.bold);
@@ -1059,50 +1043,6 @@ HTML = """
         }
       });
 
-      const printResultContainer = document.getElementById("print-result-container");
-      const printButtons = Array.from(document.querySelectorAll(".js-print-trigger"));
-      const printInProgressText = {{ ui.print_in_progress|tojson }};
-
-      function setPrintButtonsDisabled(disabled) {
-        printButtons.forEach((button) => { button.disabled = !!disabled; });
-      }
-
-      function showPrintFlash(success, message) {
-        if (!printResultContainer) return;
-        printResultContainer.innerHTML = `<div class="flash ${success ? "ok" : "error"}">${message || ""}</div>`;
-      }
-
-      function printProfile(profileId) {
-        if (!profileId) return;
-        const body = buildQuery(profileId);
-        setPrintButtonsDisabled(true);
-        showPrintFlash(true, printInProgressText);
-        fetch(`${ingressBase}/print?profile_id=${encodeURIComponent(profileId)}`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-            "Accept": "application/json",
-            "X-Requested-With": "fetch",
-          },
-          body: body.toString(),
-        }).then(async (response) => {
-          const payload = await response.json().catch(() => ({}));
-          if (!response.ok || !payload) throw new Error((payload && payload.message) || `HTTP ${response.status}`);
-          showPrintFlash(!!payload.success, payload.message || "");
-        }).catch((error) => {
-          showPrintFlash(false, error && error.message ? error.message : "Print failed");
-        }).finally(() => {
-          setPrintButtonsDisabled(false);
-        });
-      }
-
-      printButtons.forEach((button) => {
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          printProfile(button.getAttribute("data-profile-id") || "");
-        });
-      });
-
       const footerTextCheckbox = document.getElementById("editor_footer_text");
       const editorPositionSelect = document.getElementById("editor_position");
       if (footerTextCheckbox && editorPositionSelect) {
@@ -1130,7 +1070,6 @@ HTML = """
         });
       }
 
-      applyAdminVisibility();
       applyPreviewUpdate();
     })();
   </script>
@@ -1231,18 +1170,6 @@ def sanitize_id(value: str, fallback: str) -> str:
     return normalized or fallback
 
 
-def field_sort_order_key(field: object, default: int = 9999) -> int:
-    if isinstance(field, dict):
-        return normalize_int(field.get("sort_order"), default, 1, 9999)
-    return default
-
-
-def sort_fields_by_order(fields: List[Dict]) -> List[Dict]:
-    enumerated = list(enumerate(fields))
-    enumerated.sort(key=lambda item: (field_sort_order_key(item[1], item[0] + 1), item[0], str(item[1].get("name") or "").lower(), str(item[1].get("id") or "")))
-    return [dict(item[1]) for item in enumerated]
-
-
 def ensure_asset_directories() -> None:
     os.makedirs(LOGO_ASSET_PATH, exist_ok=True)
 
@@ -1291,17 +1218,11 @@ def normalize_profile_field(raw: object, idx: int) -> Dict:
     logo_field = normalize_bool(data.get("logo_field"), False)
     if footer_text:
         position = "footer"
-    raw_default_value = data.get("default_value", "")
-    raw_default_logo_ids = data.get("default_logo_ids")
-    if logo_field and raw_default_logo_ids is None and isinstance(raw_default_value, (list, tuple, set)):
-        raw_default_logo_ids = raw_default_value
-        raw_default_value = ""
-    default_value = raw_default_value if raw_default_value is not None else ""
+    default_value = normalize_multi_value_ids(data.get("default_value", [])) if logo_field else data.get("default_value", "")
     return {
         "id": field_id,
         "name": name,
-        "default_value": str(default_value),
-        "default_logo_ids": normalize_multi_value_ids(raw_default_logo_ids or []),
+        "default_value": default_value,
         "alignment": normalize_alignment(data.get("alignment"), "center"),
         "font_family": normalize_font_family(data.get("font_family"), "sans"),
         "font_size_mm": normalize_float(data.get("font_size_mm"), 7.0, 2.0, 30.0),
@@ -1313,10 +1234,8 @@ def normalize_profile_field(raw: object, idx: int) -> Dict:
         "number_only": normalize_bool(data.get("number_only"), False),
         "suffix": str(data.get("suffix") or "").strip(),
         "position": position,
-        "sort_order": normalize_int(data.get("sort_order", data.get("field_order", idx)), idx, 1, 9999),
         "footer_text": footer_text,
         "footer_bottom_margin_mm": normalize_float(data.get("footer_bottom_margin_mm"), 0.0, 0.0, 100.0),
-        "footer_logo_text_gap_mm": normalize_float(data.get("footer_logo_text_gap_mm"), GROUPED_FIELD_GAP_MM, 0.0, 50.0),
         "append_current_date": normalize_bool(data.get("append_current_date"), False),
         "always_use_for_qr": normalize_bool(data.get("always_use_for_qr"), False),
         "value_options": normalize_value_options(data.get("value_options")),
@@ -1339,13 +1258,9 @@ def normalize_profile(raw: object, idx: int) -> Dict:
         "printer_dpi": normalize_int(data.get("printer_dpi"), DEFAULT_PRINTER_DPI, 100, 1200),
         "label_width_mm": normalize_float(data.get("label_width_mm"), 170.0, 50.0, 500.0),
         "label_height_mm": normalize_float(data.get("label_height_mm"), 305.0, 50.0, 1000.0),
-        "qr_size_mm": normalize_float(data.get("qr_size_mm"), 170.0, 0.0, 300.0),
+        "qr_size_mm": normalize_float(data.get("qr_size_mm"), 170.0, 10.0, 300.0),
         "top_margin_mm": normalize_float(data.get("top_margin_mm"), 0.0, 0.0, 100.0),
-        "text_box_margin_left_mm": normalize_float(data.get("text_box_margin_left_mm"), DEFAULT_TEXTBOX_MARGIN_LEFT_MM, 0.0, 100.0),
-        "text_box_margin_right_mm": normalize_float(data.get("text_box_margin_right_mm"), DEFAULT_TEXTBOX_MARGIN_RIGHT_MM, 0.0, 100.0),
         "footer_bottom_margin_mm": normalize_float(data.get("footer_bottom_margin_mm"), 0.0, 0.0, 50.0),
-        "print_shift_x_mm": normalize_float(data.get("print_shift_x_mm"), 0.0, -100.0, 100.0),
-        "print_shift_y_mm": normalize_float(data.get("print_shift_y_mm"), 0.0, -100.0, 100.0),
         "print_rotation_degrees": normalize_rotation_degrees(data.get("print_rotation_degrees"), 0),
         "qr_default_value": "" if data.get("qr_default_value") is None else str(data.get("qr_default_value")),
         "qr_quiet_zone_modules": normalize_int(data.get("qr_quiet_zone_modules"), 3, 0, 20),
@@ -1426,8 +1341,16 @@ def load_options() -> Tuple[Dict, Dict[str, List[Dict]], str | None]:
             profiles = legacy_profiles
             migrated_notice = "legacy_migrated"
 
+    if not profiles:
+        profiles = parse_label_profiles(DEFAULT_OPTIONS["label_profiles"])
+
     options["label_profiles"] = profiles
     return options, legacy_field_store, migrated_notice
+
+
+def default_global_fields() -> List[Dict]:
+    defaults = DEFAULT_PROFILE_FIELDS.get("standard", [])
+    return [normalize_profile_field(field, idx) for idx, field in enumerate(defaults, start=1)]
 
 
 def merge_field_lists(*field_lists: object) -> List[Dict]:
@@ -1452,7 +1375,7 @@ def merge_field_lists(*field_lists: object) -> List[Dict]:
                 continue
             seen.add(field_id)
             merged.append(field)
-    return sort_fields_by_order(merged)
+    return merged
 
 
 def load_field_store(profiles: List[Dict], legacy_seed: Dict[str, List[Dict]] | None = None) -> List[Dict]:
@@ -1471,14 +1394,17 @@ def load_field_store(profiles: List[Dict], legacy_seed: Dict[str, List[Dict]] | 
         store = merge_field_lists(legacy_seed)
         wrote_file = True
 
-    if profiles and (wrote_file or not os.path.exists(FIELD_STORE_PATH)):
+    if not store:
+        store = default_global_fields()
+        wrote_file = True
+
+    if wrote_file or not os.path.exists(FIELD_STORE_PATH):
         save_field_store(store)
     return store
 
 
 def save_field_store(store: List[Dict]) -> None:
-    ordered = sort_fields_by_order([normalize_profile_field(field, idx) for idx, field in enumerate(store, start=1)])
-    serializable = [normalize_profile_field(field, idx) for idx, field in enumerate(ordered, start=1)]
+    serializable = [normalize_profile_field(field, idx) for idx, field in enumerate(store, start=1)]
     with open(FIELD_STORE_PATH, "w", encoding="utf-8") as handle:
         json.dump(serializable, handle, ensure_ascii=False, indent=2)
 
@@ -1495,20 +1421,11 @@ def select_profile(profiles: List[Dict], requested_profile_id: str | None = None
     return profiles[0] if profiles else None
 
 
-
-
-def current_ingress_user_id() -> str:
-    return normalize_string(request.headers.get("X-Remote-User-Id"), "")
-
-
-def is_admin_user_request() -> bool:
-    if not request.headers.get("X-Ingress-Path"):
-        return True
-    return False
-
 def load_runtime_options(profile_id: str | None = None) -> Dict:
     opts, legacy_seed, migration_notice = load_options()
     profiles = parse_label_profiles(opts.get("label_profiles"))
+    if not profiles:
+        profiles = parse_label_profiles(DEFAULT_OPTIONS["label_profiles"])
     global_fields = load_field_store(profiles, legacy_seed)
     preview_profiles = [dict(profile) for profile in profiles if profile.get("show_in_preview")]
     requested_profile = select_profile(profiles, profile_id)
@@ -1520,21 +1437,11 @@ def load_runtime_options(profile_id: str | None = None) -> Dict:
     opts["requested_profile_id"] = requested_profile["id"] if requested_profile else ""
     opts["requested_profile_name"] = requested_profile["name"] if requested_profile else ""
     opts["migration_notice"] = migration_notice
-    opts["current_user_id"] = current_ingress_user_id()
-    opts["is_admin_user"] = is_admin_user_request()
     return opts
 
 
 def field_value_name(field_id: str) -> str:
     return f"field_{field_id}"
-
-
-def field_logo_value_name(field_id: str) -> str:
-    return f"field_{field_id}__logos"
-
-
-def field_logo_present_name(field_id: str) -> str:
-    return f"field_{field_id}__logos_present"
 
 
 def field_print_name(field_id: str) -> str:
@@ -1545,51 +1452,31 @@ def field_supports_logos(field: Dict) -> bool:
     return normalize_bool(field.get("logo_field"), False) or bool(normalize_logo_options(field.get("logo_options", [])))
 
 
-def field_supports_text(field: Dict) -> bool:
-    return (not field_supports_logos(field)) or normalize_position(field.get("position"), "body") == "footer"
-
-
 def build_field_forms(fields: List[Dict], source: Dict | None = None) -> List[Dict]:
     source = source or {}
     forms: List[Dict] = []
-    for field in sort_fields_by_order(fields):
+    for field in fields:
         value_key = field_value_name(field["id"])
-        logo_value_key = field_logo_value_name(field["id"])
-        logo_present_key = field_logo_present_name(field["id"])
         print_key = field_print_name(field["id"])
-        supports_logos = field_supports_logos(field)
-        supports_text = field_supports_text(field)
         print_raw = source.get(print_key)
         print_enabled = field["print_by_default"] if print_raw is None else normalize_bool(print_raw, field["print_by_default"])
 
-        value = ""
-        if supports_text:
-            value = source.get(value_key)
-            if value is None:
-                value = field.get("default_value", "")
-            value = str(value)
-
-        selected_values: List[str] = []
-        logo_options = [{**option, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))]
-        if supports_logos:
+        if field_supports_logos(field):
             if hasattr(source, "getlist"):
-                has_submission = source.get(logo_present_key) is not None or logo_value_key in source
-                selected_values = normalize_multi_value_ids(source.getlist(logo_value_key)) if has_submission else normalize_multi_value_ids(field.get("default_logo_ids", []))
+                has_submission = source.get(f"{value_key}__present") is not None or value_key in source
+                selected_values = normalize_multi_value_ids(source.getlist(value_key)) if has_submission else normalize_multi_value_ids(field.get("default_value", []))
             else:
-                has_submission = isinstance(source, dict) and (logo_present_key in source or logo_value_key in source)
-                selected_values = normalize_multi_value_ids(source.get(logo_value_key, [])) if has_submission else normalize_multi_value_ids(field.get("default_logo_ids", []))
+                has_submission = isinstance(source, dict) and (f"{value_key}__present" in source or value_key in source)
+                selected_values = normalize_multi_value_ids(source.get(value_key, [])) if has_submission else normalize_multi_value_ids(field.get("default_value", []))
             selected_lookup = set(selected_values)
-            logo_options = [{**option, "selected": option.get("id") in selected_lookup, "asset_url": option.get("asset_url") or logo_asset_url(option.get("storage_name"))} for option in logo_options]
+            logo_options = [{**option, "selected": option.get("id") in selected_lookup, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))]
+            forms.append({**field, "supports_logos": True, "value": selected_values, "selected_logo_ids": selected_values, "logo_options": logo_options, "print_enabled": print_enabled})
+            continue
 
-        forms.append({
-            **field,
-            "supports_logos": supports_logos,
-            "supports_text": supports_text,
-            "value": value,
-            "selected_logo_ids": selected_values,
-            "logo_options": logo_options,
-            "print_enabled": print_enabled,
-        })
+        value = source.get(value_key)
+        if value is None:
+            value = field["default_value"]
+        forms.append({**field, "supports_logos": False, "value": str(value), "print_enabled": print_enabled})
     return forms
 
 
@@ -1599,10 +1486,7 @@ def default_form_from_fields(fields: List[Dict]) -> Dict[str, object]:
         "copies": "1",
     }
     for field in fields:
-        if field_supports_text(field):
-            form[field_value_name(field["id"])] = field.get("default_value", "")
-        if field_supports_logos(field):
-            form[field_logo_value_name(field["id"])] = normalize_multi_value_ids(field.get("default_logo_ids", []))
+        form[field_value_name(field["id"])] = field["default_value"]
         if field["print_by_default"]:
             form[field_print_name(field["id"])] = "1"
     return form
@@ -1618,10 +1502,7 @@ def form_data_from_request(opts: Dict) -> Tuple[Dict[str, object], List[Dict]]:
     }
     field_forms = build_field_forms(fields, request.values)
     for field in field_forms:
-        if field.get("supports_text"):
-            form[field_value_name(field["id"])] = field["value"]
-        if field.get("supports_logos"):
-            form[field_logo_value_name(field["id"])] = normalize_multi_value_ids(field.get("selected_logo_ids", []))
+        form[field_value_name(field["id"])] = field["value"]
         if field["print_enabled"]:
             form[field_print_name(field["id"])] = "1"
     return form, field_forms
@@ -1735,7 +1616,7 @@ def selected_qr_field_ids_from_source(fields: List[Dict], source: object) -> Lis
     selected = normalize_qr_field_ids(values)
     if not selected:
         selected = [field.get("id") for field in fields if normalize_bool(field.get("always_use_for_qr"), False)]
-    valid_ids = {field.get("id") for field in fields if field_supports_text(field)}
+    valid_ids = {field.get("id") for field in fields if not field_supports_logos(field)}
     return [field_id for field_id in selected if field_id in valid_ids]
 
 
@@ -1747,23 +1628,10 @@ def qr_payload_from_field_forms(field_forms: List[Dict], selected_field_ids: Lis
     for field in field_forms:
         if field.get("id") not in selected_lookup:
             continue
-        if not field_supports_text(field):
-            continue
-        try:
-            value = normalize_qr_value(field.get("value", ""))
-        except Exception:
-            value = ""
+        value = normalize_qr_value(field.get("value", ""))
         if value:
             parts.append(value)
     return " - ".join(parts)
-
-
-def safe_qr_payload_from_field_forms(field_forms: List[Dict], selected_field_ids: List[str]) -> str:
-    try:
-        return qr_payload_from_field_forms(field_forms, selected_field_ids)
-    except Exception as exc:
-        LOGGER.warning("Failed to build QR payload from selected fields: %s", exc)
-        return ""
 
 
 def format_printer_target(profile: Dict, language_or_options: object) -> str:
@@ -1782,23 +1650,21 @@ def resolve_printer_target(profile: Dict, language_or_options: object) -> Tuple[
     return host, port
 
 
-def require_requested_profile(opts: Dict) -> Dict:
-    profile = opts.get("requested_profile")
-    if not isinstance(profile, dict) or not profile.get("id"):
-        raise ValueError(ui_text(opts, "no_profiles_configured"))
-    return profile
-
-
-def validate_field_forms(field_forms: List[Dict], language: str, strict_required: bool = True) -> List[Dict]:
+def validate_field_forms(field_forms: List[Dict], language: str) -> List[Dict]:
     validated: List[Dict] = []
     for field in field_forms:
-        value = str(field.get("value") or "").strip() if field_supports_text(field) else ""
-        selected_logo_ids = normalize_multi_value_ids(field.get("selected_logo_ids", field.get("value", []))) if field_supports_logos(field) else []
+        if field_supports_logos(field):
+            value = normalize_multi_value_ids(field.get("value", []))
+            if field.get("required") and field.get("print_enabled") and not value:
+                raise ValueError(ui_text(language, "field_required", field=field["name"]))
+            validated.append({**field, "value": value, "selected_logo_ids": value})
+            continue
+        value = str(field.get("value") or "").strip()
         if field.get("number_only") and value and not value.isdigit():
             raise ValueError(ui_text(language, "field_numbers_only", field=field["name"]))
-        if strict_required and field.get("required") and field.get("print_enabled") and not value and not selected_logo_ids:
-            raise ValueError(ui_text(language, "field_required", field=field["name"]))
-        validated.append({**field, "value": value, "selected_logo_ids": selected_logo_ids})
+        if field.get("required") and field.get("print_enabled"):
+            value = validate_required_text(value, field["name"], language)
+        validated.append({**field, "value": value})
     return validated
 
 
@@ -1829,49 +1695,50 @@ def apply_field_text_transform(field: Dict) -> str:
 
 def fields_to_blocks(field_forms: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     body: List[Dict] = []
-    footer: List[Dict] = []
+    footer_logo_rows: List[Dict] = []
+    footer_texts: List[Dict] = []
     for field in field_forms:
         if not field.get("print_enabled"):
             continue
-        is_footer = field.get("position") == "footer"
-        target = footer if is_footer else body
-        default_gap_mm = FOOTER_GAP_MM if is_footer else FIELD_GAP_MM
-        source_field_id = field.get("id") or ""
-        field_blocks: List[Dict] = []
         if field_supports_logos(field):
-            selected_lookup = set(normalize_multi_value_ids(field.get("selected_logo_ids", [])))
+            selected_lookup = set(normalize_multi_value_ids(field.get("value", [])))
             selected_options = [option for option in normalize_logo_options(field.get("logo_options", [])) if option.get("id") in selected_lookup]
-            if selected_options:
-                field_blocks.append({
-                    "type": "logo_row",
-                    "alignment": field["alignment"],
-                    "logos": selected_options,
-                    "logo_height_mm": field.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
-                    "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
-                    "profile": field.get("profile"),
-                    "source_field_id": source_field_id,
-                })
-        text = apply_field_text_transform(field) if field_supports_text(field) else ""
-        if text:
-            field_blocks.append({
-                "type": "text",
-                "value": text,
+            if not selected_options:
+                continue
+            block = {
+                "type": "logo_row",
                 "alignment": field["alignment"],
-                "font_family": field["font_family"],
-                "font_size_mm": field["font_size_mm"],
-                "bold": field["bold"],
-                "italic": field["italic"],
-                "underline": field["underline"],
-                "max_lines": field["max_lines"],
+                "logos": selected_options,
+                "logo_height_mm": field.get("logo_height_mm", DEFAULT_LOGO_HEIGHT_MM),
                 "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
-                "profile": field.get("profile"),
-                "source_field_id": source_field_id,
-            })
-        grouped_gap_mm = float(field.get("footer_logo_text_gap_mm", GROUPED_FIELD_GAP_MM) or 0.0) if is_footer else GROUPED_FIELD_GAP_MM
-        for index, block in enumerate(field_blocks):
-            block["gap_before_mm"] = grouped_gap_mm if index > 0 else (default_gap_mm if target else 0.0)
-            target.append(block)
-    return body, footer
+            "profile": field.get("profile"),
+            }
+            if field.get("position") == "footer":
+                footer_logo_rows.append(block)
+            else:
+                body.append(block)
+            continue
+        text = apply_field_text_transform(field)
+        if not text:
+            continue
+        block = {
+            "type": "text",
+            "value": text,
+            "alignment": field["alignment"],
+            "font_family": field["font_family"],
+            "font_size_mm": field["font_size_mm"],
+            "bold": field["bold"],
+            "italic": field["italic"],
+            "underline": field["underline"],
+            "max_lines": field["max_lines"],
+            "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
+            "profile": field.get("profile"),
+        }
+        if field.get("position") == "footer":
+            footer_texts.append(block)
+        else:
+            body.append(block)
+    return body, (footer_logo_rows + footer_texts)
 
 
 def printer_dpi(profile: Dict | int | float | None = None) -> int:
@@ -1890,10 +1757,6 @@ def mm_to_dots(mm_value: float, profile: Dict | int | float | None = None) -> in
     return max(1, int(round(float(mm_value) * dots_per_mm(profile))))
 
 
-def mm_to_signed_dots(mm_value: float, profile: Dict | int | float | None = None) -> int:
-    return int(round(float(mm_value) * dots_per_mm(profile)))
-
-
 def dots_to_mm(dots: int, profile: Dict | int | float | None = None) -> float:
     return round(dots / dots_per_mm(profile), 1)
 
@@ -1902,23 +1765,11 @@ def printer_max_width_dots(profile: Dict | int | float | None = None) -> int:
     return mm_to_dots(PRINTER_MAX_WIDTH_MM, profile)
 
 
-def profile_qr_enabled(profile: Dict, qr_value: object = None) -> bool:
-    qr_size_mm = normalize_float(profile.get("qr_size_mm"), 170.0, 0.0, 300.0)
-    if qr_size_mm <= 0:
-        return False
-    if qr_value is None:
-        return True
-    return bool(normalize_qr_value(qr_value))
-
-
 def effective_layout(profile: Dict) -> Dict:
     requested_width_dots = mm_to_dots(profile["label_width_mm"], profile)
     requested_height_dots = mm_to_dots(profile["label_height_mm"], profile)
-    qr_size_mm = normalize_float(profile.get("qr_size_mm"), 170.0, 0.0, 300.0)
-    qr_size_dots = mm_to_dots(qr_size_mm, profile) if qr_size_mm > 0 else 0
+    qr_size_dots = mm_to_dots(profile["qr_size_mm"], profile)
     top_margin_dots = mm_to_dots(profile["top_margin_mm"], profile)
-    text_box_margin_left_dots = mm_to_dots(normalize_float(profile.get("text_box_margin_left_mm"), DEFAULT_TEXTBOX_MARGIN_LEFT_MM, 0.0, 100.0), profile)
-    text_box_margin_right_dots = mm_to_dots(normalize_float(profile.get("text_box_margin_right_mm"), DEFAULT_TEXTBOX_MARGIN_RIGHT_MM, 0.0, 100.0), profile)
     footer_bottom_margin_dots = mm_to_dots(profile.get("footer_bottom_margin_mm", 0.0), profile)
     max_width_dots = printer_max_width_dots(profile)
     effective_width_dots = min(requested_width_dots, max_width_dots)
@@ -1927,8 +1778,6 @@ def effective_layout(profile: Dict) -> Dict:
         "requested_height_dots": requested_height_dots,
         "qr_size_dots": qr_size_dots,
         "top_margin_dots": top_margin_dots,
-        "text_box_margin_left_dots": text_box_margin_left_dots,
-        "text_box_margin_right_dots": text_box_margin_right_dots,
         "footer_bottom_margin_dots": footer_bottom_margin_dots,
         "effective_width_dots": effective_width_dots,
         "width_warning": requested_width_dots > max_width_dots,
@@ -1969,15 +1818,16 @@ def build_qr_image(data: str, size_dots: int, profile: Dict) -> Image.Image:
     return img.resize((size_dots, size_dots), Image.Resampling.NEAREST)
 
 
-def image_to_graphic_bytes(img: Image.Image) -> Tuple[int, int, bytes]:
+def image_to_gfa(img: Image.Image) -> Tuple[int, int, str]:
     if img.mode != "1":
         img = img.convert("1")
     width, height = img.size
     bytes_per_row = (width + 7) // 8
     total_bytes = bytes_per_row * height
     pixels = img.load()
-    payload = bytearray()
+    rows: List[str] = []
     for y in range(height):
+        row_bytes: List[int] = []
         for byte_idx in range(bytes_per_row):
             value = 0
             for bit in range(8):
@@ -1985,21 +1835,9 @@ def image_to_graphic_bytes(img: Image.Image) -> Tuple[int, int, bytes]:
                 value <<= 1
                 if x < width and pixels[x, y] == 0:
                     value |= 1
-            payload.append(value)
-    return total_bytes, bytes_per_row, bytes(payload)
-
-
-def image_to_gfa(img: Image.Image) -> Tuple[int, int, str]:
-    total_bytes, bytes_per_row, payload = image_to_graphic_bytes(img)
-    return total_bytes, bytes_per_row, payload.hex().upper()
-
-
-def image_to_z64_gfa(img: Image.Image) -> Tuple[int, int, str]:
-    total_bytes, bytes_per_row, payload = image_to_graphic_bytes(img)
-    compressed = zlib.compress(payload, level=9)
-    encoded = base64.b64encode(compressed).decode("ascii")
-    crc = binascii.crc_hqx(encoded.encode("ascii"), 0)
-    return total_bytes, bytes_per_row, f":Z64:{encoded}:{crc:04X}"
+            row_bytes.append(value)
+        rows.append("".join(f"{item:02X}" for item in row_bytes))
+    return total_bytes, bytes_per_row, "".join(rows)
 
 
 def text_line_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
@@ -2177,9 +2015,6 @@ def draw_aligned_logo_row(img: Image.Image, logos: List[Image.Image], y: int, bo
 def draw_body_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, start_y: int, box_left: int, box_width: int, body_blocks: List[Dict], profile: Dict) -> int:
     current_y = start_y
     for block in body_blocks:
-        gap_before_mm = float(block.get("gap_before_mm", FIELD_GAP_MM if current_y > start_y else 0.0) or 0.0)
-        if gap_before_mm > 0:
-            current_y += mm_to_dots(gap_before_mm, profile)
         if block.get("type") == "logo_row":
             logos = fit_logo_row_images(block, box_width)
             current_y = draw_aligned_logo_row(img, logos, current_y, box_left, box_width, block["alignment"], profile)
@@ -2190,6 +2025,7 @@ def draw_body_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, start_y: int, 
             font, lines, resolved = fit_block_lines(draw, block["value"], block, box_width)
             spacing = max(4, resolved // 7)
             current_y = draw_aligned_lines(draw, lines, current_y, box_left, box_width, font, block["alignment"], block["underline"], spacing)
+        current_y += mm_to_dots(FIELD_GAP_MM, profile)
     return current_y
 
 
@@ -2219,8 +2055,7 @@ def draw_footer_blocks(img: Image.Image, draw: ImageDraw.ImageDraw, bottom_y: in
             draw_aligned_logo(img, payload, top_y, box_left, box_width, block["alignment"])
         else:
             draw_aligned_lines(draw, lines, top_y, box_left, box_width, payload, block["alignment"], block["underline"], spacing)
-        gap_before_mm = float(block.get("gap_before_mm", FOOTER_GAP_MM if top_y < bottom_y else 0.0) or 0.0)
-        current_bottom = top_y - mm_to_dots(gap_before_mm, profile)
+        current_bottom = top_y - mm_to_dots(FOOTER_GAP_MM, profile)
     return current_bottom
 
 
@@ -2236,54 +2071,30 @@ def draw_background_for_preview(img: Image.Image, requested_w: int, requested_h:
     draw.rectangle((0, 0, requested_w - 1, requested_h - 1), outline=(205, 205, 205), width=2)
 
 
-def draw_preview_outline(draw: ImageDraw.ImageDraw, left: int, top: int, width: int, bottom: int, profile: Dict) -> None:
-    if width <= 0 or bottom <= top:
-        return
-    border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
-    draw.rectangle((left, top, left + width - 1, bottom - 1), outline=(220, 38, 38), width=border_width)
-
-
-def text_box_bottom_for_preview(text_top: int, body_bottom: int, footer_bottom: int | None, canvas_h: int, profile: Dict) -> int:
-    gap = mm_to_dots(FIELD_GAP_MM, profile)
-    if footer_bottom is not None:
-        return max(text_top + 1, footer_bottom)
-    content_bottom = body_bottom - gap if body_bottom > text_top else body_bottom
-    return max(text_top + 1, min(canvas_h, content_bottom))
-
-
 def render_portrait_content(printable_w: int, canvas_h: int, qr_value: str, body_blocks: List[Dict], footer_blocks: List[Dict], profile: Dict, preview: bool) -> Image.Image:
     layout = effective_layout(profile)
     img = Image.new("RGBA", (printable_w, canvas_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(img)
-    has_qr = profile_qr_enabled(profile, qr_value)
-    text_right = layout["text_box_margin_right_dots"]
-    text_left = layout["text_box_margin_left_dots"] if has_qr else text_right
-    text_width = max(1, printable_w - text_left - text_right)
+    has_qr = bool(normalize_qr_value(qr_value))
+    margin_x = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    text_width = max(1, printable_w - (margin_x * 2))
     current_y = layout["top_margin_dots"]
     if has_qr:
         qr_size = min(layout["qr_size_dots"], printable_w)
         qr_left = max((printable_w - qr_size) // 2, 0)
         qr_top = layout["top_margin_dots"]
-        try:
-            qr_img = build_qr_image(normalize_qr_value(qr_value), qr_size, profile).convert("RGB")
-            img.paste(qr_img, (qr_left, qr_top))
-            if preview:
-                draw_preview_outline(draw, qr_left, qr_top, qr_size, qr_top + qr_size, profile)
-            current_y = qr_top + qr_size + mm_to_dots(DEFAULT_QR_TEXT_GAP_MM, profile)
-        except Exception as exc:
-            LOGGER.warning("Failed to render portrait QR block, continuing without QR: %s", exc)
-            has_qr = False
-            text_left = text_right
-            text_width = max(1, printable_w - text_left - text_right)
-            current_y = layout["top_margin_dots"]
-    text_top = current_y
-    body_bottom = draw_body_blocks(img, draw, current_y, text_left, text_width, body_blocks, profile)
-    footer_bottom = None
+        qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
+        img.paste(qr_img, (qr_left, qr_top))
+        if preview:
+            preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
+            draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
+        margin_x = max((printable_w - qr_size) // 2, mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile))
+        text_width = max(1, printable_w - (margin_x * 2))
+        current_y = qr_top + qr_size + mm_to_dots(8, profile)
+    draw_body_blocks(img, draw, current_y, margin_x, text_width, body_blocks, profile)
     if footer_blocks:
         footer_bottom = canvas_h - layout["footer_bottom_margin_dots"]
-        draw_footer_blocks(img, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
-    if preview and (body_blocks or footer_blocks):
-        draw_preview_outline(draw, text_left, text_top, text_width, text_box_bottom_for_preview(text_top, body_bottom, footer_bottom, canvas_h, profile), profile)
+        draw_footer_blocks(img, draw, footer_bottom, margin_x, text_width, footer_blocks, profile)
     return img
 
 
@@ -2293,38 +2104,29 @@ def render_rotated_content(printable_w: int, canvas_h: int, qr_value: str, body_
     logical_h = printable_w
     landscape = Image.new("RGBA", (logical_w, logical_h), color=(255, 255, 255, 255))
     draw = ImageDraw.Draw(landscape)
-    has_qr = profile_qr_enabled(profile, qr_value)
-    left_margin = layout["text_box_margin_left_dots"]
-    right_margin = layout["text_box_margin_right_dots"]
-    text_left = left_margin if has_qr else right_margin
+    has_qr = bool(normalize_qr_value(qr_value))
+    left_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    right_margin = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    text_left = left_margin
     text_width = max(1, logical_w - text_left - right_margin)
     text_top = layout["top_margin_dots"]
     if has_qr:
         qr_size = min(layout["qr_size_dots"], logical_h)
         qr_left = min(max(layout["top_margin_dots"], 0), max(0, logical_w - qr_size))
         qr_top = max((logical_h - qr_size) // 2, 0)
-        try:
-            qr_img = build_qr_image(normalize_qr_value(qr_value), qr_size, profile).convert("RGB")
-            landscape.paste(qr_img, (qr_left, qr_top))
-            if preview:
-                draw_preview_outline(draw, qr_left, qr_top, qr_size, qr_top + qr_size, profile)
-            inter_block_gap = left_margin
-            text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
-            text_width = max(1, logical_w - text_left - right_margin)
-            text_top = mm_to_dots(DEFAULT_TEXTBOX_TOP_MARGIN_MM, profile)
-        except Exception as exc:
-            LOGGER.warning("Failed to render rotated QR block, continuing without QR: %s", exc)
-            has_qr = False
-            text_left = right_margin
-            text_width = max(1, logical_w - text_left - right_margin)
-            text_top = layout["top_margin_dots"]
-    body_bottom = draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
-    footer_bottom = None
+        qr_img = build_qr_image(qr_value, qr_size, profile).convert("RGB")
+        landscape.paste(qr_img, (qr_left, qr_top))
+        if preview:
+            preview_border_width = max(2, int(round(dots_per_mm(profile) * 0.5)))
+            draw.rectangle((qr_left, qr_top, qr_left + qr_size - 1, qr_top + qr_size - 1), outline=(220, 38, 38), width=preview_border_width)
+        inter_block_gap = mm_to_dots(8, profile)
+        text_left = min(logical_w, qr_left + qr_size + inter_block_gap)
+        text_width = max(1, logical_w - text_left - right_margin)
+        text_top = mm_to_dots(DEFAULT_TEXT_BLOCK_MARGIN_MM, profile)
+    draw_body_blocks(landscape, draw, text_top, text_left, text_width, body_blocks, profile)
     if footer_blocks:
         footer_bottom = logical_h - layout["footer_bottom_margin_dots"]
         draw_footer_blocks(landscape, draw, footer_bottom, text_left, text_width, footer_blocks, profile)
-    if preview and (body_blocks or footer_blocks):
-        draw_preview_outline(draw, text_left, text_top, text_width, text_box_bottom_for_preview(text_top, body_bottom, footer_bottom, logical_h, profile), profile)
     if rotation_degrees == 90:
         return landscape.transpose(Image.Transpose.ROTATE_270)
     return landscape.transpose(Image.Transpose.ROTATE_90)
@@ -2357,32 +2159,18 @@ def render_label_image(qr_value: str, field_forms: List[Dict], profile: Dict, pr
     return orient_preview_for_display(canvas, rotation_degrees)
 
 
-def apply_print_shift(printable_image: Image.Image, profile: Dict) -> Image.Image:
-    shift_x_dots = mm_to_signed_dots(profile.get("print_shift_x_mm", 0.0), profile) if profile.get("print_shift_x_mm") else 0
-    shift_y_dots = mm_to_signed_dots(profile.get("print_shift_y_mm", 0.0), profile) if profile.get("print_shift_y_mm") else 0
-    if shift_x_dots == 0 and shift_y_dots == 0:
-        return printable_image
-    shifted = Image.new("RGBA", printable_image.size, color=(255, 255, 255, 255))
-    shifted.alpha_composite(printable_image, (shift_x_dots, shift_y_dots))
-    return shifted
-
-
 def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict) -> str:
     layout = effective_layout(profile)
     pw = layout["effective_width_dots"]
     ll = layout["requested_height_dots"]
-    label_img = apply_print_shift(render_label_image(qr_value, field_forms, profile, preview=False), profile).convert("1")
-    try:
-        total_bytes, bytes_per_row, graphic_data = image_to_z64_gfa(label_img)
-    except Exception:
-        LOGGER.exception("Falling back to ASCII hex graphic encoding")
-        total_bytes, bytes_per_row, graphic_data = image_to_gfa(label_img)
+    label_img = render_label_image(qr_value, field_forms, profile, preview=False).convert("1")
+    total_bytes, bytes_per_row, graphic_hex = image_to_gfa(label_img)
     return f"""^XA
 ^CI28
 ^PW{pw}
 ^LL{ll}
 ^LH0,0
-^FO0,0^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_data}^FS
+^FO0,0^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_hex}^FS
 ^PQ{copies},0,1,N
 ^XZ"""
 
@@ -2391,15 +2179,7 @@ def send_to_printer(host: str, port: int, payload: str) -> None:
     data = payload.encode("utf-8")
     LOGGER.info("Sending %s bytes to printer %s:%s", len(data), host, port)
     with socket.create_connection((host, int(port)), timeout=10) as sock:
-        try:
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        except Exception:
-            pass
         sock.sendall(data)
-        try:
-            sock.shutdown(socket.SHUT_WR)
-        except Exception:
-            pass
     LOGGER.info("Finished sending label payload to printer %s:%s", host, port)
 
 
@@ -2411,14 +2191,12 @@ def preview_query_from_form(form: Dict[str, object], field_forms: List[Dict], pr
         params.append(("qr_field_ids", field_id))
     for field in field_forms:
         value_key = field_value_name(field["id"])
-        logo_value_key = field_logo_value_name(field["id"])
-        logo_present_key = field_logo_present_name(field["id"])
-        if field.get("supports_text"):
+        if field_supports_logos(field):
+            params.append((f"{value_key}__present", "1"))
+            for logo_id in normalize_multi_value_ids(field.get("value", [])):
+                params.append((value_key, logo_id))
+        else:
             params.append((value_key, str(field.get("value", ""))))
-        if field.get("supports_logos"):
-            params.append((logo_present_key, "1"))
-            for logo_id in normalize_multi_value_ids(field.get("selected_logo_ids", [])):
-                params.append((logo_value_key, logo_id))
         if field.get("print_enabled"):
             params.append((field_print_name(field["id"]), "1"))
     return urlencode(params, doseq=True)
@@ -2441,10 +2219,8 @@ def blank_editor_form() -> Dict:
         "number_only": False,
         "suffix": "",
         "position": "body",
-        "sort_order": 1,
         "footer_text": False,
         "footer_bottom_margin_mm": 0.0,
-        "footer_logo_text_gap_mm": GROUPED_FIELD_GAP_MM,
         "append_current_date": False,
         "always_use_for_qr": False,
         "value_options": [],
@@ -2461,12 +2237,12 @@ def editor_form_from_field(field: Dict | None) -> Dict:
     if not field:
         return blank_editor_form()
     supports_logos = field_supports_logos(field)
-    default_logo_ids = normalize_multi_value_ids(field.get("default_logo_ids", [])) if supports_logos else []
+    default_logo_ids = normalize_multi_value_ids(field.get("default_value", [])) if supports_logos else []
     return {
         "original_field_id": field.get("id", ""),
         "id": field.get("id", ""),
         "name": field.get("name", ""),
-        "default_value": field.get("default_value", ""),
+        "default_value": "" if supports_logos else field.get("default_value", ""),
         "alignment": field.get("alignment", "center"),
         "font_family": field.get("font_family", "sans"),
         "font_size_mm": field.get("font_size_mm", 7.0),
@@ -2478,7 +2254,6 @@ def editor_form_from_field(field: Dict | None) -> Dict:
         "number_only": field.get("number_only", False),
         "suffix": field.get("suffix", ""),
         "position": field.get("position", "body"),
-        "sort_order": normalize_int(field.get("sort_order"), 1, 1, 9999),
         "footer_text": normalize_bool(field.get("footer_text"), field.get("position") == "footer"),
         "footer_bottom_margin_mm": field.get("footer_bottom_margin_mm", 0.0),
         "append_current_date": field.get("append_current_date", False),
@@ -2508,8 +2283,7 @@ def validate_and_normalize_editor_payload(source: Dict, language: str) -> Tuple[
         {
             "id": source.get("id") or raw_name,
             "name": raw_name,
-            "default_value": source.get("default_value", ""),
-            "default_logo_ids": source.get("default_logo_ids", []),
+            "default_value": source.get("default_logo_ids", []) if logo_field else source.get("default_value", ""),
             "alignment": source.get("alignment", "center"),
             "font_family": source.get("font_family", "sans"),
             "font_size_mm": source.get("font_size_mm", 7.0),
@@ -2521,10 +2295,8 @@ def validate_and_normalize_editor_payload(source: Dict, language: str) -> Tuple[
             "number_only": source.get("number_only"),
             "suffix": source.get("suffix", ""),
             "position": source.get("position", "body"),
-            "sort_order": source.get("sort_order", 1),
             "footer_text": source.get("footer_text"),
             "footer_bottom_margin_mm": source.get("footer_bottom_margin_mm", 0.0),
-            "footer_logo_text_gap_mm": source.get("footer_logo_text_gap_mm", GROUPED_FIELD_GAP_MM),
             "append_current_date": source.get("append_current_date"),
             "always_use_for_qr": source.get("always_use_for_qr"),
             "value_options": normalize_value_options(source.get("value_options_text", source.get("value_options", []))),
@@ -2643,42 +2415,6 @@ def delete_global_field(field_id: str) -> bool:
     return changed
 
 
-def move_global_field(field_id: str, direction: str) -> Dict | None:
-    opts, _, _ = load_options()
-    profiles = parse_label_profiles(opts.get("label_profiles"))
-    fields = list(load_field_store(profiles))
-    ordered = sort_fields_by_order(fields)
-    selected = next((field for field in ordered if field.get("id") == field_id), None)
-    if selected is None:
-        return None
-    position = normalize_position(selected.get("position"), "body")
-    group = [field for field in ordered if normalize_position(field.get("position"), "body") == position]
-    ids = [field.get("id") for field in group]
-    try:
-        current_index = ids.index(field_id)
-    except ValueError:
-        return None
-    if direction == "up":
-        target_index = current_index - 1
-    elif direction == "down":
-        target_index = current_index + 1
-    else:
-        raise ValueError(f"Unsupported move direction: {direction}")
-    if target_index < 0 or target_index >= len(group):
-        return selected
-    group[current_index], group[target_index] = group[target_index], group[current_index]
-    new_sort_orders = {field.get("id"): idx for idx, field in enumerate(group, start=1)}
-    rewritten = []
-    for index, field in enumerate(ordered, start=1):
-        updated = dict(field)
-        if normalize_position(updated.get("position"), "body") == position:
-            updated["sort_order"] = new_sort_orders.get(updated.get("id"), field_sort_order_key(updated, index))
-        rewritten.append(updated)
-    save_field_store(rewritten)
-    LOGGER.info("Moved global field %s %s", field_id, direction)
-    return next((field for field in rewritten if field.get("id") == field_id), selected)
-
-
 def update_global_field_setting(field_id: str, setting: str, value: bool) -> Dict:
     if setting not in ALLOWED_QUICK_FIELD_SETTINGS:
         raise ValueError(f"Unsupported field setting: {setting}")
@@ -2696,18 +2432,20 @@ def update_global_field_setting(field_id: str, setting: str, value: bool) -> Dic
     raise ValueError(f"Unknown field: {field_id}")
 
 
-def wants_json_response() -> bool:
-    accept = (request.headers.get("Accept") or "").lower()
-    requested_with = (request.headers.get("X-Requested-With") or "").lower()
-    return "application/json" in accept or requested_with == "fetch"
-
-
 def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], result: Dict | None = None, field_result: Dict | None = None, editor_form: Dict | None = None) -> str:
     ui = get_ui_strings(opts.get("ui_language"))
     qr_selected_ids = normalize_qr_field_ids(form.get("qr_field_ids", []))
-    qr_preview = safe_qr_payload_from_field_forms(field_forms, qr_selected_ids) or ui["none"]
-    next_field_sort_order = max((field_sort_order_key(field, idx + 1) for idx, field in enumerate(opts.get("fields", []))), default=0) + 1
-    editor_form = editor_form or {**blank_editor_form(), "sort_order": next_field_sort_order}
+    qr_preview = qr_payload_from_field_forms(field_forms, qr_selected_ids) or ui["none"]
+    qr_field_options = [
+        {
+            "id": field["id"],
+            "name": field["name"],
+            "value": normalize_qr_value(field.get("value", "")),
+            "selected": field["id"] in qr_selected_ids,
+        }
+        for field in field_forms if not field_supports_logos(field)
+    ]
+    editor_form = editor_form or blank_editor_form()
     preview_profiles = []
     for profile in opts.get("preview_profiles", []):
         preview_profiles.append({
@@ -2716,23 +2454,13 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
             "preview_query": preview_query_from_form(form, field_forms, profile.get("id")),
         })
     preview_profile_names_text = ", ".join(profile.get("name", "") for profile in preview_profiles) or ui["none"]
-    ordered_configured_fields = sort_fields_by_order(opts.get("fields", []))
-    move_flags: Dict[str, Dict[str, bool]] = {}
-    for position in ("body", "footer"):
-        group = [field for field in ordered_configured_fields if normalize_position(field.get("position"), "body") == position]
-        for index, field in enumerate(group):
-            move_flags[field.get("id", "")] = {
-                "can_move_up": index > 0,
-                "can_move_down": index < (len(group) - 1),
-            }
     configured_fields = [
         {
             **field,
             "supports_logos": field_supports_logos(field),
             "logo_options": [{**option, "asset_url": logo_asset_url(option.get("storage_name"))} for option in normalize_logo_options(field.get("logo_options", []))],
-            **move_flags.get(field.get("id", ""), {"can_move_up": False, "can_move_down": False}),
         }
-        for field in ordered_configured_fields
+        for field in opts.get("fields", [])
     ]
     return render_template_string(
         HTML,
@@ -2748,12 +2476,11 @@ def render_page(form: Dict[str, object], opts: Dict, field_forms: List[Dict], re
         ingress_base=ingress_base_path(),
         editor_form=editor_form,
         field_editor_json=field_store_map(opts.get("fields", [])),
+        qr_field_options=qr_field_options,
         qr_selected_ids=qr_selected_ids,
         alignments=sorted(ALIGNMENTS),
         font_families=sorted(FONT_FAMILIES),
         field_positions=["body", "footer"],
-        has_profiles=bool(opts.get("label_profiles")),
-        next_field_sort_order=next_field_sort_order,
     )
 
 
@@ -2770,33 +2497,22 @@ def api_field_forms_from_payload(fields: List[Dict], payload: Dict) -> List[Dict
     forms: List[Dict] = []
     for field in fields:
         current = dict(field)
-        supports_logos = field_supports_logos(field)
-        supports_text = field_supports_text(field)
-        if supports_text:
-            if field["id"] in values and not isinstance(values[field["id"]], (list, tuple, set, dict)):
+        if field_supports_logos(field):
+            if field["id"] in values:
+                current["value"] = normalize_multi_value_ids(values[field["id"]])
+            elif field["id"] in lookup:
+                current["value"] = normalize_multi_value_ids(lookup[field["id"]].get("value") or lookup[field["id"]].get("values") or [])
+            else:
+                current["value"] = normalize_multi_value_ids(field.get("default_value", []))
+            selected_lookup = set(current["value"])
+            current["logo_options"] = [{**option, "selected": option.get("id") in selected_lookup} for option in normalize_logo_options(field.get("logo_options", []))]
+        else:
+            if field["id"] in values:
                 current["value"] = str(values[field["id"]])
             elif field["id"] in lookup:
                 current["value"] = str(lookup[field["id"]].get("value") or "")
             else:
-                current["value"] = str(field.get("default_value", ""))
-        else:
-            current["value"] = ""
-        if supports_logos:
-            logo_values = payload.get("logo_field_values") if isinstance(payload.get("logo_field_values"), dict) else {}
-            if field["id"] in logo_values:
-                current["selected_logo_ids"] = normalize_multi_value_ids(logo_values[field["id"]])
-            elif field["id"] in lookup:
-                current["selected_logo_ids"] = normalize_multi_value_ids(lookup[field["id"]].get("logos") or lookup[field["id"]].get("logo_ids") or lookup[field["id"]].get("values") or [])
-            elif field["id"] in values and isinstance(values[field["id"]], (list, tuple, set)):
-                current["selected_logo_ids"] = normalize_multi_value_ids(values[field["id"]])
-            else:
-                current["selected_logo_ids"] = normalize_multi_value_ids(field.get("default_logo_ids", []))
-            selected_lookup = set(current["selected_logo_ids"])
-            current["logo_options"] = [{**option, "selected": option.get("id") in selected_lookup} for option in normalize_logo_options(field.get("logo_options", []))]
-        else:
-            current["selected_logo_ids"] = []
-        current["supports_logos"] = supports_logos
-        current["supports_text"] = supports_text
+                current["value"] = field["default_value"]
         if field["id"] in print_values:
             current["print_enabled"] = normalize_bool(print_values[field["id"]], field["print_by_default"])
         elif field["id"] in lookup and "print" in lookup[field["id"]]:
@@ -2831,12 +2547,12 @@ def index():
 @APP.route("/print", methods=["POST"])
 def print_label():
     opts = load_runtime_options(request.values.get("profile_id") or request.args.get("profile_id") or None)
+    profile = opts.get("requested_profile") or {}
     form, field_forms = form_data_from_request(opts)
     result = {"success": False, "message": ui_text(opts, "unknown_error")}
     try:
-        profile = require_requested_profile(opts)
         field_forms = validate_field_forms(field_forms, opts["ui_language"])
-        qr_value = safe_qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
+        qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
         zpl = build_zpl(qr_value, bind_field_forms_to_profile(field_forms, profile), copies, profile)
         host, port = resolve_printer_target(profile, opts)
@@ -2846,8 +2562,6 @@ def print_label():
     except Exception as exc:
         LOGGER.exception("Print failed")
         result = {"success": False, "message": ui_text(opts, "print_failed_message", error=exc)}
-    if wants_json_response():
-        return jsonify(result), (200 if result.get("success") else 400)
     return render_page(form, opts, field_forms, result=result)
 
 
@@ -2855,9 +2569,6 @@ def print_label():
 def save_field():
     opts = load_runtime_options()
     form, field_forms = form_data_from_request(opts)
-    if not opts.get("label_profiles"):
-        result = {"success": False, "message": ui_text(opts, "no_profiles_configured")}
-        return render_page(form, opts, field_forms, field_result=result, editor_form=blank_editor_form())
     editor_form = blank_editor_form()
     result = None
     original_field_id = sanitize_id(str(request.form.get("original_field_id") or ""), "")
@@ -2882,8 +2593,7 @@ def save_field():
         editor_form = editor_form_from_field({
             "id": request.form.get("id", ""),
             "name": request.form.get("name", ""),
-            "default_value": request.form.get("default_value", ""),
-            "default_logo_ids": request.form.getlist("default_logo_ids"),
+            "default_value": request.form.getlist("default_logo_ids") if normalize_bool(request.form.get("logo_field"), False) else request.form.get("default_value", ""),
             "alignment": request.form.get("alignment", "center"),
             "font_family": request.form.get("font_family", "sans"),
             "font_size_mm": request.form.get("font_size_mm", 7.0),
@@ -2895,10 +2605,8 @@ def save_field():
             "number_only": normalize_bool(request.form.get("number_only"), False),
             "suffix": request.form.get("suffix", ""),
             "position": request.form.get("position", "body"),
-            "sort_order": request.form.get("sort_order", 1),
             "footer_text": normalize_bool(request.form.get("footer_text"), False),
             "footer_bottom_margin_mm": request.form.get("footer_bottom_margin_mm", 0.0),
-            "footer_logo_text_gap_mm": request.form.get("footer_logo_text_gap_mm", GROUPED_FIELD_GAP_MM),
             "append_current_date": normalize_bool(request.form.get("append_current_date"), False),
             "always_use_for_qr": normalize_bool(request.form.get("always_use_for_qr"), False),
             "value_options": normalize_value_options(request.form.get("value_options_text", "")),
@@ -2912,33 +2620,10 @@ def save_field():
     return render_page(form, opts, field_forms, field_result=result, editor_form=editor_form)
 
 
-@APP.route("/fields/move", methods=["POST"])
-def move_field():
-    opts = load_runtime_options()
-    form, field_forms = form_data_from_request(opts)
-    if not opts.get("label_profiles"):
-        result = {"success": False, "message": ui_text(opts, "no_profiles_configured")}
-        return render_page(form, opts, field_forms, field_result=result)
-    try:
-        field_id = sanitize_id(str(request.form.get("field_id") or ""), "")
-        direction = normalize_string(request.form.get("direction"), "")
-        moved = move_global_field(field_id, direction)
-        opts = load_runtime_options()
-        form, field_forms = form_data_from_request(opts)
-        result = {"success": moved is not None, "message": ui_text(opts, "field_saved_message", field=(moved or {}).get("name", field_id)) if moved else ui_text(opts, "field_save_failed", error=field_id or ui_text(opts, "unknown_error"))}
-    except Exception as exc:
-        LOGGER.exception("Field move failed")
-        result = {"success": False, "message": ui_text(opts, "field_save_failed", error=exc)}
-    return render_page(form, opts, field_forms, field_result=result)
-
-
 @APP.route("/fields/delete", methods=["POST"])
 def delete_field():
     opts = load_runtime_options()
     form, field_forms = form_data_from_request(opts)
-    if not opts.get("label_profiles"):
-        result = {"success": False, "message": ui_text(opts, "no_profiles_configured")}
-        return render_page(form, opts, field_forms, field_result=result)
     result = None
     try:
         field_id = sanitize_id(str(request.form.get("field_id") or ""), "")
@@ -2958,9 +2643,6 @@ def delete_field():
 @APP.route("/fields/quick-update", methods=["POST"])
 def quick_update_field_setting():
     try:
-        opts = load_runtime_options()
-        if not opts.get("label_profiles"):
-            raise ValueError(ui_text(opts, "no_profiles_configured"))
         field_id = sanitize_id(str(request.form.get("field_id") or ""), "")
         setting = normalize_string(request.form.get("setting"), "")
         value = normalize_bool(request.form.get("value"), False)
@@ -2985,11 +2667,11 @@ def serve_logo_asset(storage_name: str):
 @APP.route("/preview", methods=["GET"])
 def preview():
     opts = load_runtime_options(request.values.get("profile_id") or request.args.get("profile_id") or None)
+    profile = opts.get("requested_profile") or {}
     form, field_forms = form_data_from_request(opts)
     try:
-        profile = require_requested_profile(opts)
-        field_forms = validate_field_forms(field_forms, opts["ui_language"], strict_required=False)
-        qr_value = safe_qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
+        field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
         zpl = build_zpl(qr_value, bind_field_forms_to_profile(field_forms, profile), copies, profile)
         LOGGER.info("Generated ZPL preview for profile=%s copies=%s", profile.get("id"), copies)
@@ -3002,11 +2684,11 @@ def preview():
 @APP.route("/preview.png", methods=["GET"])
 def preview_png():
     opts = load_runtime_options(request.values.get("profile_id") or request.args.get("profile_id") or None)
+    profile = opts.get("requested_profile") or {}
     form, field_forms = form_data_from_request(opts)
     try:
-        profile = require_requested_profile(opts)
-        field_forms = validate_field_forms(field_forms, opts["ui_language"], strict_required=False)
-        qr_value = safe_qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
+        field_forms = validate_field_forms(field_forms, opts["ui_language"])
+        qr_value = qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("requested_profile_id"), qr_value)
         img = render_label_image(qr_value, bind_field_forms_to_profile(field_forms, profile), profile, preview=True)
         bio = BytesIO()
@@ -3023,11 +2705,11 @@ def preview_png():
 def api_print():
     payload = request.get_json(force=True, silent=False) or {}
     opts = load_runtime_options(str(payload.get("profile_id") or "") or None)
+    profile = opts.get("requested_profile") or {}
     try:
-        profile = require_requested_profile(opts)
         field_forms = validate_field_forms(api_field_forms_from_payload(opts.get("fields", []), payload), opts["ui_language"])
         qr_field_ids = selected_qr_field_ids_from_source(opts.get("fields", []), payload)
-        qr_value = safe_qr_payload_from_field_forms(field_forms, qr_field_ids) if qr_field_ids else normalize_qr_value(payload.get("qr_value", profile.get("qr_default_value", "")))
+        qr_value = qr_payload_from_field_forms(field_forms, qr_field_ids) if qr_field_ids else normalize_qr_value(payload.get("qr_value", profile.get("qr_default_value", "")))
         copies = max(1, min(50, int(payload.get("copies", 1))))
         zpl = build_zpl(qr_value, bind_field_forms_to_profile(field_forms, profile), copies, profile)
         host, port = resolve_printer_target(profile, opts)

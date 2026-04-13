@@ -4,7 +4,7 @@ configuration:
     description: Language used in the add-on web UI.
   label_profiles:
     name: Label profiles
-    description: Create at least one entry before first start. Global field definitions are managed once in the add-on web UI and apply to all label profiles.
+    description: Create one entry per label profile. Global field definitions are managed once in the add-on web UI and apply to all label profiles.
     fields:
       id:
         name: Profile ID
@@ -29,25 +29,13 @@ configuration:
         description: Physical height of the label.
       qr_size_mm:
         name: QR size (mm)
-        description: Printed QR size. Set to 0 to disable QR generation for this label profile.
+        description: Printed QR size.
       top_margin_mm:
         name: Top margin (mm)
         description: Top offset before placing the QR code.
-      text_box_margin_left_mm:
-        name: Text box left margin (mm)
-        description: Left margin of the text box. On rotated labels with QR, this also acts as the gap between the QR block and the text box.
-      text_box_margin_right_mm:
-        name: Text box right margin (mm)
-        description: Right margin of the text box.
       footer_bottom_margin_mm:
         name: Footer bottom margin (mm)
         description: Bottom offset for footer text.
-      print_shift_x_mm:
-        name: Print shift X (mm)
-        description: Moves the full printed label content left or right in mm. Positive moves right, negative moves left. Preview is not affected.
-      print_shift_y_mm:
-        name: Print shift Y (mm)
-        description: Moves the full printed label content up or down in mm. Positive moves down, negative moves up. Preview is not affected.
       print_rotation_degrees:
         name: Print rotation
         description: Rotation of the rendered label.
