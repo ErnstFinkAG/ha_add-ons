@@ -5,7 +5,9 @@ import logging
 import os
 import re
 import socket
+import time
 import zlib
+from threading import Lock
 from copy import deepcopy
 from datetime import datetime
 from functools import lru_cache
@@ -18,6 +20,7 @@ from zoneinfo import ZoneInfo
 import qrcode
 import yaml
 from flask import Flask, Response, jsonify, render_template_string, request, send_file
+from websocket import create_connection
 from PIL import Image, ImageDraw, ImageFont
 
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
@@ -37,10 +40,15 @@ APP = Flask(__name__)
 APP.logger.handlers.clear()
 APP.logger.propagate = True
 
+HA_USER_ADMIN_CACHE = {"expires_at": 0.0, "users": {}}
+HA_USER_ADMIN_CACHE_LOCK = Lock()
+
 DEFAULT_PRINTER_DPI = 203
 PRINTER_MAX_WIDTH_MM = 168.0
 INGRESS_ALLOWED_IP = "172.30.32.2"
 LOCAL_ALLOWED_IPS = {"127.0.0.1", "::1", None}
+HOME_ASSISTANT_WS_URL = os.environ.get("HOME_ASSISTANT_WS_URL", "ws://supervisor/core/websocket")
+HOME_ASSISTANT_USER_CACHE_TTL_SECONDS = 60.0
 OPTIONS_PATH = "/data/options.json"
 FIELD_STORE_PATH = "/data/label_fields.json"
 ASSET_ROOT_PATH = "/data/field_assets"
@@ -2767,12 +2775,81 @@ def request_is_ingress() -> bool:
     return bool(request.headers.get("X-Ingress-Path"))
 
 
+def fetch_home_assistant_user_admin_map() -> Dict[str, bool]:
+    token = normalize_string(os.environ.get("SUPERVISOR_TOKEN"), "")
+    if not token:
+        LOGGER.warning("SUPERVISOR_TOKEN is not available; cannot verify Home Assistant admin users")
+        return {}
+
+    ws = None
+    try:
+        ws = create_connection(HOME_ASSISTANT_WS_URL, timeout=5)
+        greeting = json.loads(ws.recv())
+        if greeting.get("type") != "auth_required":
+            raise RuntimeError(f"Unexpected websocket greeting: {greeting}")
+
+        ws.send(json.dumps({"type": "auth", "access_token": token}))
+        auth_result = json.loads(ws.recv())
+        if auth_result.get("type") != "auth_ok":
+            raise RuntimeError(f"Websocket authentication failed: {auth_result}")
+
+        message_id = 1
+        ws.send(json.dumps({"id": message_id, "type": "config/auth/list"}))
+        while True:
+            response = json.loads(ws.recv())
+            if response.get("id") != message_id:
+                continue
+            if not response.get("success"):
+                raise RuntimeError(str(response.get("error") or "config/auth/list failed"))
+            result = response.get("result") if isinstance(response.get("result"), list) else []
+            users: Dict[str, bool] = {}
+            for item in result:
+                if not isinstance(item, dict):
+                    continue
+                user_id = normalize_string(item.get("id"), "")
+                if not user_id:
+                    continue
+                users[user_id] = normalize_bool(item.get("is_owner"), False) or normalize_bool(item.get("is_admin"), False)
+            return users
+    except Exception as exc:
+        LOGGER.warning("Failed to query Home Assistant user admin map: %s", exc)
+        return {}
+    finally:
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+
+def home_assistant_user_admin_map(force_refresh: bool = False) -> Dict[str, bool]:
+    now = time.monotonic()
+    with HA_USER_ADMIN_CACHE_LOCK:
+        expires_at = float(HA_USER_ADMIN_CACHE.get("expires_at", 0.0) or 0.0)
+        cached_users = HA_USER_ADMIN_CACHE.get("users", {})
+        if (not force_refresh) and isinstance(cached_users, dict) and now < expires_at:
+            return dict(cached_users)
+
+    users = fetch_home_assistant_user_admin_map()
+    with HA_USER_ADMIN_CACHE_LOCK:
+        HA_USER_ADMIN_CACHE["users"] = dict(users)
+        HA_USER_ADMIN_CACHE["expires_at"] = now + HOME_ASSISTANT_USER_CACHE_TTL_SECONDS
+        return dict(HA_USER_ADMIN_CACHE["users"])
+
+
 def current_user_is_admin() -> bool:
     admin_header = request.headers.get("X-Hass-Is-Admin")
     if admin_header is not None:
         return normalize_bool(admin_header, False)
     if request_is_ingress():
-        return False
+        remote_user_id = normalize_string(request.headers.get("X-Remote-User-Id"), "")
+        if not remote_user_id:
+            return False
+        users = home_assistant_user_admin_map()
+        if remote_user_id in users:
+            return bool(users[remote_user_id])
+        users = home_assistant_user_admin_map(force_refresh=True)
+        return bool(users.get(remote_user_id, False))
     remote = request.remote_addr
     return remote in LOCAL_ALLOWED_IPS or remote == INGRESS_ALLOWED_IP
 
