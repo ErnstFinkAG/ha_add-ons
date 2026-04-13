@@ -1,8 +1,11 @@
+import base64
+import binascii
 import json
 import logging
 import os
 import re
 import socket
+import zlib
 from copy import deepcopy
 from datetime import datetime
 from functools import lru_cache
@@ -1915,16 +1918,15 @@ def build_qr_image(data: str, size_dots: int, profile: Dict) -> Image.Image:
     return img.resize((size_dots, size_dots), Image.Resampling.NEAREST)
 
 
-def image_to_gfa(img: Image.Image) -> Tuple[int, int, str]:
+def image_to_graphic_bytes(img: Image.Image) -> Tuple[int, int, bytes]:
     if img.mode != "1":
         img = img.convert("1")
     width, height = img.size
     bytes_per_row = (width + 7) // 8
     total_bytes = bytes_per_row * height
     pixels = img.load()
-    rows: List[str] = []
+    payload = bytearray()
     for y in range(height):
-        row_bytes: List[int] = []
         for byte_idx in range(bytes_per_row):
             value = 0
             for bit in range(8):
@@ -1932,9 +1934,21 @@ def image_to_gfa(img: Image.Image) -> Tuple[int, int, str]:
                 value <<= 1
                 if x < width and pixels[x, y] == 0:
                     value |= 1
-            row_bytes.append(value)
-        rows.append("".join(f"{item:02X}" for item in row_bytes))
-    return total_bytes, bytes_per_row, "".join(rows)
+            payload.append(value)
+    return total_bytes, bytes_per_row, bytes(payload)
+
+
+def image_to_gfa(img: Image.Image) -> Tuple[int, int, str]:
+    total_bytes, bytes_per_row, payload = image_to_graphic_bytes(img)
+    return total_bytes, bytes_per_row, payload.hex().upper()
+
+
+def image_to_z64_gfa(img: Image.Image) -> Tuple[int, int, str]:
+    total_bytes, bytes_per_row, payload = image_to_graphic_bytes(img)
+    compressed = zlib.compress(payload, level=9)
+    encoded = base64.b64encode(compressed).decode("ascii")
+    crc = binascii.crc_hqx(encoded.encode("ascii"), 0)
+    return total_bytes, bytes_per_row, f":Z64:{encoded}:{crc:04X}"
 
 
 def text_line_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
@@ -2307,13 +2321,17 @@ def build_zpl(qr_value: str, field_forms: List[Dict], copies: int, profile: Dict
     pw = layout["effective_width_dots"]
     ll = layout["requested_height_dots"]
     label_img = apply_print_shift(render_label_image(qr_value, field_forms, profile, preview=False), profile).convert("1")
-    total_bytes, bytes_per_row, graphic_hex = image_to_gfa(label_img)
+    try:
+        total_bytes, bytes_per_row, graphic_data = image_to_z64_gfa(label_img)
+    except Exception:
+        LOGGER.exception("Falling back to ASCII hex graphic encoding")
+        total_bytes, bytes_per_row, graphic_data = image_to_gfa(label_img)
     return f"""^XA
 ^CI28
 ^PW{pw}
 ^LL{ll}
 ^LH0,0
-^FO0,0^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_hex}^FS
+^FO0,0^GFA,{total_bytes},{total_bytes},{bytes_per_row},{graphic_data}^FS
 ^PQ{copies},0,1,N
 ^XZ"""
 
@@ -2322,7 +2340,15 @@ def send_to_printer(host: str, port: int, payload: str) -> None:
     data = payload.encode("utf-8")
     LOGGER.info("Sending %s bytes to printer %s:%s", len(data), host, port)
     with socket.create_connection((host, int(port)), timeout=10) as sock:
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
         sock.sendall(data)
+        try:
+            sock.shutdown(socket.SHUT_WR)
+        except Exception:
+            pass
     LOGGER.info("Finished sending label payload to printer %s:%s", host, port)
 
 
