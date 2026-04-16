@@ -55,7 +55,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
-APP_VERSION = '0.6.9.0'
+APP_VERSION = '0.6.10.0'
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -405,10 +405,33 @@ def _slugify_token(value: str, default: str = "item", lower: bool = False) -> st
     return s or str(default or "item")
 
 
+def _strip_camera_prefix_from_zone(cam_name: str, zone_name: str) -> str:
+    cam = str(cam_name or "").strip()
+    zone = str(zone_name or "").strip()
+    if not zone:
+        return "zone"
+    if not cam:
+        return zone
+
+    zone_norm = zone.lower()
+    cam_norm = cam.lower()
+    prefixes = (
+        f"{cam_norm}_",
+        f"{cam_norm} ",
+        f"{cam_norm}-",
+    )
+    for prefix in prefixes:
+        if zone_norm.startswith(prefix):
+            trimmed = zone[len(prefix):].strip(" _-")
+            return trimmed or zone
+    return zone
+
+
 def _mqtt_sensor_name(cam_name: str, zone_name: str) -> str:
     cam = str(cam_name or "").strip() or "camera"
-    zone = str(zone_name or "").strip() or "zone"
-    return f"{cam}_{zone}"
+    zone = _strip_camera_prefix_from_zone(cam, zone_name)
+    zone = re.sub(r"[_\s]+", " ", str(zone or "zone")).strip() or "zone"
+    return f"{cam} {zone}".strip()
 
 
 def _natural_sort_key(value: str):

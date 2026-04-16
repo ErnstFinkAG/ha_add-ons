@@ -79,7 +79,7 @@ overlay_margin_px: 10
 
 Jede definierte Zone wird als Sensor veröffentlicht.
 
-- Sensorname: `cameraname_zonename`
+- Sensorname: `CameraName ZoneName` (doppelter Kamera-Präfix im Zonennamen wird für den sichtbaren Sensornamen entfernt, z. B. `DE` + `DE_E1` → `DE E1`)
 - kein QR → `none`
 - erkannt, aber nicht dekodierbar → `detected_no_value`
 - ein QR → Payload
@@ -178,8 +178,9 @@ entity: sensor.qr_inventory_detected_list
 print_base_url: http://YOUR_ADDON_HOST:8099
 ```
 
-## Version 0.6.9.0
+## Version 0.6.10.0
 
+- MQTT sensor display names now avoid repeating the camera name when the zone already starts with that prefix, so `DE` + `DE_E1` becomes `DE E1`
 - inventory persistence switched from `payload -> single location` to `payload -> [locations]`
 - inventory snapshots are now rebuilt from propagated per-zone states, so the same payload can stay active in multiple zones at the same time
 - removed single-zone conflict collapsing for identical payloads seen in multiple inventory spaces
