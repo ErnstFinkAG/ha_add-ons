@@ -55,7 +55,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
-APP_VERSION = '0.6.11.1'
+APP_VERSION = '0.6.12.0'
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -373,6 +373,92 @@ _overlay_name = os.path.basename(_opt_str('overlay_png_name', 'overlay.png').str
 if not _overlay_name.lower().endswith('.png'):
     _overlay_name += ".png"
 OVERLAY_PNG_NAME = _overlay_name
+
+
+
+def _normalize_zones_dict(zones_raw):
+    out = {}
+    if not isinstance(zones_raw, dict):
+        return out
+    for zone_name, zone_shape in zones_raw.items():
+        zname = str(zone_name or '').strip()
+        if not zname:
+            continue
+        pts = _normalize_zone_shape(zone_shape)
+        if pts is None:
+            continue
+        out[zname] = pts
+    return out
+
+
+def _load_options_from_disk():
+    try:
+        if os.path.exists(opts_path):
+            with open(opts_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+    except Exception:
+        logger.exception('Failed reading %s', opts_path)
+    return {}
+
+
+def _write_options_to_disk(data: dict):
+    try:
+        tmp = opts_path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data or {}, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, opts_path)
+        return True
+    except Exception:
+        logger.exception('Failed writing %s', opts_path)
+        return False
+
+
+def _update_camera_zones_in_options(cam_id: str, zones_dict: dict):
+    global opts
+    cam_id = str(cam_id or '').strip()
+    zones_dict = _normalize_zones_dict(zones_dict)
+    if not cam_id:
+        return False, 'camera id missing'
+
+    data = _load_options_from_disk() or copy.deepcopy(opts)
+    cameras = data.get('cameras')
+    compact = json.dumps(zones_dict, ensure_ascii=False, separators=(',', ':'))
+    updated = False
+
+    if isinstance(cameras, dict):
+        conf = cameras.get(cam_id)
+        if not isinstance(conf, dict):
+            return False, f'camera not found: {cam_id}'
+        existing_zones = conf.get('zones')
+        conf['zones'] = zones_dict if isinstance(existing_zones, (dict, list)) else compact
+        updated = True
+    elif isinstance(cameras, list):
+        for conf in cameras:
+            if not isinstance(conf, dict):
+                continue
+            if str(conf.get('id') or '').strip() != cam_id:
+                continue
+            existing_zones = conf.get('zones')
+            conf['zones'] = zones_dict if isinstance(existing_zones, (dict, list)) else compact
+            updated = True
+            break
+        if not updated:
+            return False, f'camera not found: {cam_id}'
+    else:
+        return False, 'cameras configuration missing in options.json'
+
+    if not _write_options_to_disk(data):
+        return False, 'failed writing options.json'
+
+    opts = data
+    return True, compact
+
+
+def _get_camera_zones_for_helper(cam_id: str):
+    cam_id = str(cam_id or '').strip()
+    cam = CAMERAS.get(cam_id) or {}
+    return _normalize_zones_dict((cam or {}).get('zones') or {})
 
 # ------------------------------------------------------------
 # MQTT settings
@@ -705,27 +791,30 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
     doc = f"""<!doctype html>
 <html>
 <head>
-  <meta charset=\"utf-8\">
+  <meta charset="utf-8">
   <title>QR Inventory Zone Helper</title>
   <style>
     :root {{ color-scheme: light dark; }}
     * {{ box-sizing: border-box; }}
     body {{ font-family: Arial, Helvetica, sans-serif; margin: 20px; color: #111; background: #fff; }}
     h1 {{ margin: 0 0 8px 0; }}
-    p.note {{ color: #555; margin: 0 0 16px 0; }}
+    p.note {{ color: #555; margin: 0 0 16px 0; max-width: 1100px; }}
     .toolbar {{ display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 14px; }}
     .field {{ display: grid; gap: 6px; min-width: 180px; }}
     label {{ font-size: 0.9rem; color: #444; }}
-    select, input[type=\"text\"], textarea, button {{ font: inherit; }}
-    select, input[type=\"text\"], textarea {{ width: 100%; padding: 9px 10px; border: 1px solid #cfcfcf; border-radius: 8px; }}
+    select, input[type="text"], textarea, button {{ font: inherit; }}
+    select, input[type="text"], textarea {{ width: 100%; padding: 9px 10px; border: 1px solid #cfcfcf; border-radius: 8px; }}
     button {{ padding: 10px 12px; border: 1px solid #cfcfcf; border-radius: 8px; background: #f6f6f6; cursor: pointer; }}
     button:hover {{ background: #ececec; }}
-    .layout {{ display: grid; grid-template-columns: minmax(320px, 1.7fr) minmax(280px, 1fr); gap: 18px; align-items: start; }}
+    button.primary {{ background: #1368ce; color: #fff; border-color: #0f5ab4; }}
+    button.primary:hover {{ background: #0f5ab4; }}
+    button.danger {{ background: #fff4f4; border-color: #d7a5a5; }}
+    .layout {{ display: grid; grid-template-columns: minmax(360px, 1.8fr) minmax(340px, 1fr); gap: 18px; align-items: start; }}
     .card {{ border: 1px solid #ddd; border-radius: 12px; padding: 14px; background: #fff; }}
     .viewer-wrap {{ position: relative; width: 100%; background: #f3f3f3; border-radius: 10px; overflow: hidden; }}
     #frameImg {{ display: block; width: 100%; height: auto; user-select: none; -webkit-user-drag: none; }}
     #overlayCanvas {{ position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: auto; touch-action: none; cursor: crosshair; }}
-    .status {{ margin-top: 10px; color: #444; font-size: 0.95rem; }}
+    .status {{ margin-top: 10px; color: #444; font-size: 0.95rem; min-height: 1.4em; }}
     .hint {{ margin-top: 8px; color: #666; font-size: 0.88rem; }}
     .coords {{ margin-top: 10px; padding-left: 18px; }}
     .coords li {{ margin-bottom: 4px; }}
@@ -733,74 +822,97 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
     textarea {{ min-height: 110px; resize: vertical; }}
     .small {{ font-size: 0.85rem; color: #666; }}
     .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
-    @media (max-width: 980px) {{ .layout {{ grid-template-columns: 1fr; }} }}
+    .zone-list {{ display: grid; gap: 8px; margin-top: 10px; max-height: 240px; overflow: auto; }}
+    .zone-row {{ display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; border: 1px solid #ddd; border-radius: 10px; padding: 8px 10px; }}
+    .zone-row.active {{ border-color: #1368ce; box-shadow: 0 0 0 1px #1368ce inset; }}
+    .zone-row button {{ padding: 6px 10px; }}
+    .zone-title {{ font-weight: 600; }}
+    .split {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }}
+    .link-row {{ display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }}
+    @media (max-width: 1080px) {{ .layout {{ grid-template-columns: 1fr; }} .split {{ grid-template-columns: 1fr; }} }}
   </style>
 </head>
 <body>
   <h1>Zone Helper</h1>
-  <p class=\"note\">Pick a camera, click four corners on the frame, then drag existing points to fine-tune them. Coordinates are saved in the original frame pixel space, not the scaled preview.</p>
+  <p class="note">Create and edit multiple zones per camera. Click four corners for the active zone, drag points to fine-tune them, save the zone, then either copy the full camera <span class="mono">zones</span> JSON or write it straight into the selected camera configuration.</p>
 
-  <div class=\"toolbar\">
-    <div class=\"field\">
-      <label for=\"cameraSelect\">Camera</label>
-      <select id=\"cameraSelect\">{cam_options_html}</select>
+  <div class="toolbar">
+    <div class="field">
+      <label for="cameraSelect">Camera</label>
+      <select id="cameraSelect">{cam_options_html}</select>
     </div>
-    <div class=\"field\" style=\"min-width:220px\">
-      <label for=\"zoneName\">Zone name</label>
-      <input id=\"zoneName\" type=\"text\" placeholder=\"E1\" value=\"\">
+    <div class="field" style="min-width:220px">
+      <label for="zoneName">Active zone name</label>
+      <input id="zoneName" type="text" placeholder="E1" value="">
     </div>
-    <div class=\"field\">
-      <label for=\"imageMode\">Image</label>
-      <select id=\"imageMode\">
-        <option value=\"frame\" selected>Frame</option>
-        <option value=\"overlay\">Overlay</option>
+    <div class="field">
+      <label for="imageMode">Image</label>
+      <select id="imageMode">
+        <option value="frame" selected>Frame</option>
+        <option value="overlay">Overlay</option>
       </select>
     </div>
-    <div class=\"actions\">
-      <button id=\"refreshBtn\" type=\"button\">Refresh image</button>
-      <button id=\"undoBtn\" type=\"button\">Undo last point</button>
-      <button id=\"resetBtn\" type=\"button\">Reset points</button>
+    <div class="actions">
+      <button id="refreshBtn" type="button">Refresh image</button>
+      <button id="undoBtn" type="button">Undo last point</button>
+      <button id="resetBtn" type="button">Reset points</button>
+      <button id="saveZoneBtn" type="button" class="primary">Save zone</button>
+      <button id="newZoneBtn" type="button">New zone</button>
+      <button id="deleteZoneBtn" type="button" class="danger">Delete zone</button>
     </div>
   </div>
 
-  <div class=\"layout\">
-    <div class=\"card\">
-      <div class=\"viewer-wrap\">
-        <img id=\"frameImg\" src=\"{html.escape(initial_frame)}?ts={int(time.time())}\" alt=\"Camera frame\">
-        <canvas id=\"overlayCanvas\"></canvas>
+  <div class="layout">
+    <div class="card">
+      <div class="viewer-wrap">
+        <img id="frameImg" src="{html.escape(initial_frame)}?ts={int(time.time())}" alt="Camera frame">
+        <canvas id="overlayCanvas"></canvas>
       </div>
-      <div class=\"status\" id=\"statusText\">Click 4 corners on the image.</div>
-      <div class=\"hint\">Tip: click roughly clockwise around the zone. The output is normalized automatically to start near the top-left corner.</div>
-      <ol class=\"coords mono\" id=\"coordList\"></ol>
+      <div class="status" id="statusText">Loading camera zones…</div>
+      <div class="hint">Saved zones are drawn in blue. The active zone is drawn in red and can be edited by dragging its handles.</div>
+      <ol class="coords mono" id="coordList"></ol>
     </div>
 
-    <div class=\"card\">
-      <div class=\"field\">
-        <label for=\"zonePoints\">Ordered points</label>
-        <textarea id=\"zonePoints\" class=\"mono\" readonly></textarea>
-      </div>
-      <div class=\"actions\">
-        <button id=\"copyPointsBtn\" type=\"button\">Copy points</button>
+    <div class="card">
+      <div class="field">
+        <label>Saved zones for this camera</label>
+        <div id="zoneList" class="zone-list"></div>
       </div>
 
-      <div class=\"field\" style=\"margin-top:14px\">
-        <label for=\"zoneFragment\">Zone JSON fragment</label>
-        <textarea id=\"zoneFragment\" class=\"mono\" readonly></textarea>
+      <div class="split" style="margin-top:14px">
+        <div class="field">
+          <label for="zonePoints">Active zone points</label>
+          <textarea id="zonePoints" class="mono" readonly></textarea>
+        </div>
+        <div class="field">
+          <label for="zoneObject">Active zone object</label>
+          <textarea id="zoneObject" class="mono" readonly></textarea>
+        </div>
       </div>
-      <div class=\"actions\">
-        <button id=\"copyFragmentBtn\" type=\"button\">Copy fragment</button>
+      <div class="actions">
+        <button id="copyPointsBtn" type="button">Copy points</button>
+        <button id="copyObjectBtn" type="button">Copy active zone</button>
       </div>
 
-      <div class=\"field\" style=\"margin-top:14px\">
-        <label for=\"zoneObject\">Single-zone object</label>
-        <textarea id=\"zoneObject\" class=\"mono\" readonly></textarea>
+      <div class="field" style="margin-top:14px">
+        <label for="cameraZonesJson">Full camera zones JSON</label>
+        <textarea id="cameraZonesJson" class="mono" readonly></textarea>
       </div>
-      <div class=\"actions\">
-        <button id=\"copyObjectBtn\" type=\"button\">Copy object</button>
+      <div class="actions">
+        <button id="copyCameraJsonBtn" type="button">Copy camera zones JSON</button>
       </div>
 
-      <p class=\"small\" style=\"margin-top:14px\">Use the fragment when merging into an existing camera <span class=\"mono\">zones</span> JSON string. Use the single-zone object if this camera currently has only one zone.</p>
-      <p class=\"small\"><a href=\"/\">Back to index</a> · <a href=\"{html.escape(initial_overlay)}\" target=\"_blank\" rel=\"noreferrer\">Open current overlay</a></p>
+      <div class="field" style="margin-top:14px">
+        <label for="cameraConfigSnippet">Camera config snippet</label>
+        <textarea id="cameraConfigSnippet" class="mono" readonly></textarea>
+      </div>
+      <div class="actions">
+        <button id="copySnippetBtn" type="button">Copy config snippet</button>
+        <button id="applyBtn" type="button" class="primary">Write zones into camera config</button>
+      </div>
+
+      <p class="small" style="margin-top:14px">Writing updates <span class="mono">/data/options.json</span> for the selected camera and also updates the running worker in memory, so the next scan cycle uses the new zones.</p>
+      <div class="link-row small"><a href="/">Back to index</a> · <a href="{html.escape(initial_overlay)}" target="_blank" rel="noreferrer">Open current overlay</a> · <a id="openCurrentImageLink" href="{html.escape(initial_frame)}" target="_blank" rel="noreferrer">Open current image</a></div>
     </div>
   </div>
 
@@ -808,7 +920,14 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
 (() => {{
   const HANDLE_RADIUS = 8;
   const HANDLE_HIT_RADIUS = 14;
-  const state = {{ points: [], dragIndex: -1, dragging: false }};
+  const state = {{
+    zones: {{}},
+    currentZone: '',
+    points: [],
+    dragIndex: -1,
+    dragging: false,
+  }};
+
   const cameraSelect = document.getElementById('cameraSelect');
   const zoneNameInput = document.getElementById('zoneName');
   const imageMode = document.getElementById('imageMode');
@@ -816,9 +935,12 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
   const overlayCanvas = document.getElementById('overlayCanvas');
   const statusText = document.getElementById('statusText');
   const coordList = document.getElementById('coordList');
+  const zoneList = document.getElementById('zoneList');
   const zonePoints = document.getElementById('zonePoints');
-  const zoneFragment = document.getElementById('zoneFragment');
   const zoneObject = document.getElementById('zoneObject');
+  const cameraZonesJson = document.getElementById('cameraZonesJson');
+  const cameraConfigSnippet = document.getElementById('cameraConfigSnippet');
+  const openCurrentImageLink = document.getElementById('openCurrentImageLink');
 
   function cameraPath(kind) {{
     const cam = (cameraSelect.value || '').trim();
@@ -828,7 +950,9 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
 
   function refreshImage() {{
     const kind = imageMode.value === 'overlay' ? 'overlay' : 'frame';
-    frameImg.src = `${{cameraPath(kind)}}?ts=${{Date.now()}}`;
+    const src = `${{cameraPath(kind)}}?ts=${{Date.now()}}`;
+    frameImg.src = src;
+    openCurrentImageLink.href = src;
   }}
 
   function resizeCanvas() {{
@@ -842,12 +966,13 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   }}
 
-  function orderedPoints() {{
-    if (state.points.length !== 4) return state.points.slice();
-    const cx = state.points.reduce((acc, p) => acc + p[0], 0) / 4;
-    const cy = state.points.reduce((acc, p) => acc + p[1], 0) / 4;
-    const pts = state.points
-      .map((p) => ({{ x: p[0], y: p[1], a: Math.atan2(p[1] - cy, p[0] - cx) }}))
+  function orderedPoints(points) {{
+    const src = Array.isArray(points) ? points.slice() : [];
+    if (src.length !== 4) return src.map((p) => [Math.round(p[0]), Math.round(p[1])]);
+    const cx = src.reduce((acc, p) => acc + p[0], 0) / 4;
+    const cy = src.reduce((acc, p) => acc + p[1], 0) / 4;
+    const pts = src
+      .map((p) => ({{ x: Number(p[0]), y: Number(p[1]), a: Math.atan2(Number(p[1]) - cy, Number(p[0]) - cx) }}))
       .sort((a, b) => a.a - b.a);
     let start = 0;
     let best = Number.POSITIVE_INFINITY;
@@ -862,36 +987,124 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
     return rolled.map((p) => [Math.round(p.x), Math.round(p.y)]);
   }}
 
-  function zoneName() {{
-    return (zoneNameInput.value || '').trim() || 'ZONE_NAME';
+  function cleanZoneName(raw) {{
+    return (raw || '').trim();
+  }}
+
+  function activeZoneName() {{
+    return cleanZoneName(zoneNameInput.value) || state.currentZone || 'ZONE_NAME';
+  }}
+
+  function currentPoints() {{
+    return orderedPoints(state.points);
   }}
 
   function jsonString(v) {{
     return JSON.stringify(v, null, 2);
   }}
 
+  function compactJson(v) {{
+    return JSON.stringify(v);
+  }}
+
   function clamp(value, lo, hi) {{
     return Math.max(lo, Math.min(hi, value));
   }}
 
+  function setStatus(text) {{
+    statusText.textContent = text;
+  }}
+
+  function pointsEqual(a, b) {{
+    return JSON.stringify(orderedPoints(a || [])) === JSON.stringify(orderedPoints(b || []));
+  }}
+
+  function exportConfigSnippet() {{
+    const compact = compactJson(state.zones);
+    const safe = compact.replace(/'/g, "''");
+    return `zones: '${{safe}}'`;
+  }}
+
+  function sortedZoneEntries() {{
+    return Object.entries(state.zones).sort((a, b) => a[0].localeCompare(b[0], undefined, {{ numeric: true, sensitivity: 'base' }}));
+  }}
+
+  function renderZoneList() {{
+    const rows = sortedZoneEntries();
+    if (!rows.length) {{
+      zoneList.innerHTML = '<div class="small">No saved zones for this camera yet.</div>';
+      return;
+    }}
+    zoneList.innerHTML = rows.map(([name, pts]) => {{
+      const active = name === state.currentZone ? ' active' : '';
+      return `
+        <div class="zone-row${{active}}">
+          <div>
+            <div class="zone-title mono">${{escapeHtml(name)}}</div>
+            <div class="small">${{Array.isArray(pts) ? pts.length : 0}} points</div>
+          </div>
+          <button type="button" data-load-zone="${{escapeHtml(name)}}">Load</button>
+          <button type="button" data-delete-zone="${{escapeHtml(name)}}" class="danger">Delete</button>
+        </div>`;
+    }}).join('');
+
+    zoneList.querySelectorAll('[data-load-zone]').forEach((el) => {{
+      el.addEventListener('click', () => loadZone(el.getAttribute('data-load-zone') || ''));
+    }});
+    zoneList.querySelectorAll('[data-delete-zone]').forEach((el) => {{
+      el.addEventListener('click', () => deleteZone(el.getAttribute('data-delete-zone') || ''));
+    }});
+  }}
+
   function renderOutputs() {{
-    const pts = orderedPoints();
+    const pts = currentPoints();
     coordList.innerHTML = pts.map((p, idx) => `<li>${{idx + 1}}: [${{p[0]}}, ${{p[1]}}]</li>`).join('');
     zonePoints.value = pts.length ? jsonString(pts) : '';
     if (pts.length === 4) {{
-      const fragment = `"${{zoneName()}}": ${{jsonString(pts)}}`;
-      const obj = {{ [zoneName()]: pts }};
-      zoneFragment.value = fragment;
-      zoneObject.value = jsonString(obj);
-      statusText.textContent = state.dragging
-        ? 'Dragging point… release to keep the updated coordinates.'
-        : '4 points captured. Drag points to fine-tune, or copy the fragment/object below.';
+      zoneObject.value = jsonString({{ [activeZoneName()]: pts }});
     }} else {{
-      zoneFragment.value = '';
       zoneObject.value = '';
-      statusText.textContent = state.points.length === 0
-        ? 'Click 4 corners on the image.'
-        : `Captured ${{state.points.length}} / 4 points. Drag an existing point to adjust it.`;
+    }}
+    cameraZonesJson.value = Object.keys(state.zones).length ? jsonString(state.zones) : '';
+    cameraConfigSnippet.value = Object.keys(state.zones).length ? exportConfigSnippet() : '';
+
+    const name = cleanZoneName(zoneNameInput.value);
+    if (!name) {{
+      setStatus(state.points.length ? 'Enter a zone name, then save the 4 points into this camera.' : 'Pick or create a zone, then click 4 corners on the image.');
+      return;
+    }}
+    if (state.points.length === 4) {{
+      if (state.currentZone && state.zones[state.currentZone] && pointsEqual(state.zones[state.currentZone], state.points)) {{
+        setStatus(`Zone ${{state.currentZone}} is loaded. Drag points or copy/export it.`);
+      }} else {{
+        setStatus(`Zone ${{name}} has 4 points ready. Click Save zone to store it for this camera.`);
+      }}
+    }} else {{
+      setStatus(`Zone ${{name}}: captured ${{state.points.length}} / 4 points.`);
+    }}
+  }}
+
+  function drawZonePolygon(ctx, rect, pts, color, label, closePath = true) {{
+    if (!Array.isArray(pts) || !pts.length || !frameImg.naturalWidth || !frameImg.naturalHeight) return;
+    const sx = rect.width / frameImg.naturalWidth;
+    const sy = rect.height / frameImg.naturalHeight;
+    ctx.beginPath();
+    pts.forEach((p, idx) => {{
+      const x = Number(p[0]) * sx;
+      const y = Number(p[1]) * sy;
+      if (idx === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }});
+    if (closePath && pts.length >= 3) ctx.closePath();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+    if (label && pts[0]) {{
+      const x = Number(pts[0][0]) * sx;
+      const y = Number(pts[0][1]) * sy;
+      ctx.font = 'bold 14px Arial, sans-serif';
+      ctx.fillStyle = color;
+      ctx.fillText(label, x + 8, y - 8);
     }}
   }}
 
@@ -903,42 +1116,38 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
     const dh = rect.height || 1;
     ctx.clearRect(0, 0, dw, dh);
     if (!frameImg.naturalWidth || !frameImg.naturalHeight) {{
+      renderZoneList();
       renderOutputs();
       return;
     }}
-    const sx = dw / frameImg.naturalWidth;
-    const sy = dh / frameImg.naturalHeight;
-    const pts = orderedPoints();
 
-    if (pts.length >= 2) {{
-      ctx.beginPath();
+    sortedZoneEntries().forEach(([name, pts]) => {{
+      if (name === state.currentZone) return;
+      drawZonePolygon(ctx, rect, orderedPoints(pts), '#2080ff', name, true);
+    }});
+
+    const pts = currentPoints();
+    if (pts.length) {{
+      drawZonePolygon(ctx, rect, pts, '#ff3300', activeZoneName(), pts.length === 4);
+      const sx = rect.width / frameImg.naturalWidth;
+      const sy = rect.height / frameImg.naturalHeight;
       pts.forEach((p, idx) => {{
         const x = p[0] * sx;
         const y = p[1] * sy;
-        if (idx === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+        ctx.beginPath();
+        ctx.arc(x, y, HANDLE_RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff3300';
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.fillStyle = '#111';
+        ctx.font = 'bold 14px Arial, sans-serif';
+        ctx.fillText(String(idx + 1), x + 10, y - 10);
       }});
-      if (pts.length === 4) ctx.closePath();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#ff3300';
-      ctx.stroke();
     }}
 
-    pts.forEach((p, idx) => {{
-      const x = p[0] * sx;
-      const y = p[1] * sy;
-      ctx.beginPath();
-      ctx.arc(x, y, HANDLE_RADIUS, 0, Math.PI * 2);
-      ctx.fillStyle = '#ff3300';
-      ctx.fill();
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.fillStyle = '#111';
-      ctx.font = 'bold 14px Arial, sans-serif';
-      ctx.fillText(String(idx + 1), x + 10, y - 10);
-    }});
-
+    renderZoneList();
     renderOutputs();
   }}
 
@@ -986,6 +1195,131 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
     overlayCanvas.style.cursor = idx >= 0 ? 'grab' : 'crosshair';
   }}
 
+  function loadZone(name) {{
+    const clean = cleanZoneName(name);
+    if (!clean || !state.zones[clean]) return;
+    state.currentZone = clean;
+    zoneNameInput.value = clean;
+    state.points = orderedPoints(state.zones[clean]).map((p) => [p[0], p[1]]);
+    state.dragging = false;
+    state.dragIndex = -1;
+    draw();
+  }}
+
+  function newZone() {{
+    state.currentZone = '';
+    zoneNameInput.value = '';
+    state.points = [];
+    state.dragging = false;
+    state.dragIndex = -1;
+    draw();
+  }}
+
+  function saveCurrentZone() {{
+    const name = cleanZoneName(zoneNameInput.value);
+    if (!name) {{
+      setStatus('Enter a zone name before saving.');
+      zoneNameInput.focus();
+      return;
+    }}
+    if (state.points.length !== 4) {{
+      setStatus('A zone needs exactly 4 points before it can be saved.');
+      return;
+    }}
+    state.zones[name] = currentPoints();
+    state.currentZone = name;
+    draw();
+    setStatus(`Saved zone ${{name}} for camera ${{cameraSelect.value}}.`);
+  }}
+
+  function deleteZone(name) {{
+    const clean = cleanZoneName(name || state.currentZone || zoneNameInput.value);
+    if (!clean || !state.zones[clean]) {{
+      setStatus('Select a saved zone to delete.');
+      return;
+    }}
+    delete state.zones[clean];
+    if (state.currentZone === clean) {{
+      state.currentZone = '';
+      zoneNameInput.value = '';
+      state.points = [];
+    }}
+    draw();
+    setStatus(`Deleted zone ${{clean}} from this camera editor.`);
+  }}
+
+  async function loadCameraConfig() {{
+    const cam = (cameraSelect.value || '').trim();
+    state.zones = {{}};
+    state.currentZone = '';
+    state.points = [];
+    state.dragging = false;
+    state.dragIndex = -1;
+    draw();
+    refreshImage();
+    if (!cam) {{
+      setStatus('No camera selected.');
+      return;
+    }}
+    setStatus(`Loading zones for ${{cam}}…`);
+    try {{
+      const resp = await fetch(`/zone-helper/config.json?camera=${{encodeURIComponent(cam)}}`, {{ cache: 'no-store' }});
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || `HTTP ${{resp.status}}`);
+      state.zones = data.zones || {{}};
+      const names = Object.keys(state.zones).sort((a, b) => a.localeCompare(b, undefined, {{ numeric: true, sensitivity: 'base' }}));
+      if (names.length) {{
+        loadZone(names[0]);
+      }} else {{
+        draw();
+      }}
+      setStatus(names.length ? `Loaded ${{names.length}} saved zones for ${{cam}}.` : `No saved zones found for ${{cam}} yet.`);
+    }} catch (err) {{
+      draw();
+      setStatus(`Failed to load camera config: ${{err.message || err}}`);
+    }}
+  }}
+
+  async function copyText(text, label) {{
+    const txt = (text || '').trim();
+    if (!txt) return;
+    try {{
+      await navigator.clipboard.writeText(txt);
+      setStatus(`Copied ${{label}} to clipboard.`);
+    }} catch (err) {{
+      setStatus(`Copy failed for ${{label}}. Copy it manually from the text box.`);
+    }}
+  }}
+
+  async function applyZonesToCamera() {{
+    const cam = (cameraSelect.value || '').trim();
+    if (!cam) {{
+      setStatus('Choose a camera first.');
+      return;
+    }}
+    try {{
+      const resp = await fetch('/zone-helper/apply', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify({{ camera: cam, zones: state.zones }}),
+      }});
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || `HTTP ${{resp.status}}`);
+      setStatus(`Wrote ${{Object.keys(state.zones).length}} zones into camera ${{cam}} and updated the running worker.`);
+    }} catch (err) {{
+      setStatus(`Failed to apply zones: ${{err.message || err}}`);
+    }}
+  }}
+
+  function escapeHtml(value) {{
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }}
+
   overlayCanvas.addEventListener('pointerdown', (ev) => {{
     if (!frameImg.naturalWidth || !frameImg.naturalHeight) return;
     const idx = findPointIndexAtEvent(ev);
@@ -994,11 +1328,11 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
       state.dragging = true;
       overlayCanvas.setPointerCapture(ev.pointerId);
       overlayCanvas.style.cursor = 'grabbing';
-      statusText.textContent = `Dragging point ${{idx + 1}}…`;
+      setStatus(`Dragging point ${{idx + 1}}…`);
       return;
     }}
     if (state.points.length >= 4) {{
-      statusText.textContent = 'Already have 4 points. Drag a point, or use Undo/Reset.';
+      setStatus('Already have 4 points for the active zone. Drag a point, save it, or reset it.');
       return;
     }}
     const pt = eventToImagePoint(ev);
@@ -1044,9 +1378,9 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
 
   frameImg.addEventListener('load', draw);
   window.addEventListener('resize', draw);
-  cameraSelect.addEventListener('change', refreshImage);
+  cameraSelect.addEventListener('change', loadCameraConfig);
   imageMode.addEventListener('change', refreshImage);
-  zoneNameInput.addEventListener('input', renderOutputs);
+  zoneNameInput.addEventListener('input', draw);
   document.getElementById('refreshBtn').addEventListener('click', refreshImage);
   document.getElementById('undoBtn').addEventListener('click', () => {{
     if (state.dragging) {{
@@ -1062,31 +1396,22 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
     state.dragIndex = -1;
     draw();
   }});
+  document.getElementById('saveZoneBtn').addEventListener('click', saveCurrentZone);
+  document.getElementById('newZoneBtn').addEventListener('click', newZone);
+  document.getElementById('deleteZoneBtn').addEventListener('click', () => deleteZone());
+  document.getElementById('copyPointsBtn').addEventListener('click', () => copyText(zonePoints.value, 'points'));
+  document.getElementById('copyObjectBtn').addEventListener('click', () => copyText(zoneObject.value, 'active zone'));
+  document.getElementById('copyCameraJsonBtn').addEventListener('click', () => copyText(cameraZonesJson.value, 'camera zones JSON'));
+  document.getElementById('copySnippetBtn').addEventListener('click', () => copyText(cameraConfigSnippet.value, 'camera config snippet'));
+  document.getElementById('applyBtn').addEventListener('click', applyZonesToCamera);
 
-  async function copyFrom(id) {{
-    const el = document.getElementById(id);
-    const txt = (el.value || '').trim();
-    if (!txt) return;
-    try {{
-      await navigator.clipboard.writeText(txt);
-      statusText.textContent = `Copied ${{id}} to clipboard.`;
-    }} catch (err) {{
-      el.focus();
-      el.select();
-      statusText.textContent = `Copy failed for ${{id}}. Select and copy manually.`;
-    }}
-  }}
-
-  document.getElementById('copyPointsBtn').addEventListener('click', () => copyFrom('zonePoints'));
-  document.getElementById('copyFragmentBtn').addEventListener('click', () => copyFrom('zoneFragment'));
-  document.getElementById('copyObjectBtn').addEventListener('click', () => copyFrom('zoneObject'));
-
-  draw();
+  loadCameraConfig();
 }})();
 </script>
 </body>
 </html>"""
     return doc.encode('utf-8')
+
 
 def _is_number(v):
     return isinstance(v, (int, float, np.integer, np.floating))
@@ -3824,6 +4149,45 @@ class MQTTManager:
             self._publish_sensor(cam_id, cam_name, zone_name, payload, force_discovery=True, force_state=True)
         self._publish_detected_list_sensor(detected_list_cache, force_discovery=True, force_state=True)
 
+    def update_camera_zones(self, cam_id: str, cam_name: str, zones_dict: dict):
+        cam_id = str(cam_id or '').strip()
+        cam_name = str(cam_name or cam_id)
+        zone_names = {str(z) for z in ((zones_dict or {}).keys() if isinstance(zones_dict, dict) else [])}
+        removed = []
+        added = []
+        with self.lock:
+            existing_keys = [key for key in self.zone_cache.keys() if key.startswith(f"{cam_id}::")]
+            existing_zone_names = {key.split('::', 1)[1] for key in existing_keys}
+            removed = sorted(existing_zone_names - zone_names)
+            added = sorted(zone_names - existing_zone_names)
+            for zone_name in removed:
+                key = self._sensor_key(cam_id, zone_name)
+                self.zone_cache.pop(key, None)
+                self.discovery_payloads.pop(key, None)
+                self.published_zone_payloads.pop(key, None)
+                self.discovery_published.discard(key)
+            for zone_name in zone_names:
+                key = self._sensor_key(cam_id, zone_name)
+                if key not in self.zone_cache:
+                    payload = _zone_status_to_mqtt_payload(cam_id, cam_name, zone_name, {"kind": "none", "det": None, "dets": []})
+                    self.zone_cache[key] = payload
+                self.discovery_payloads[key] = self._discovery_payload(cam_id, cam_name, zone_name)
+
+        if self.client is not None and self.connected:
+            for zone_name in removed:
+                try:
+                    self.client.publish(
+                        self._discovery_topic(cam_name, zone_name),
+                        payload='',
+                        qos=MQTT_QOS,
+                        retain=True,
+                    )
+                except Exception:
+                    logger.exception('MQTT discovery purge failed for camera=%s zone=%s', cam_id, zone_name)
+            for zone_name in added:
+                payload = _zone_status_to_mqtt_payload(cam_id, cam_name, zone_name, {"kind": "none", "det": None, "dets": []})
+                self._publish_sensor(cam_id, cam_name, zone_name, payload, force_discovery=True, force_state=True)
+
     def publish_camera_zone_states(self, cam_id: str, cam_name: str, zones_dict: dict, zone_status: dict):
         if not self.enabled or not isinstance(zones_dict, dict):
             return
@@ -3954,6 +4318,21 @@ class OverlayHandler(BaseHTTPRequestHandler):
                     gk = gk[:-5]
                 return self._send(200, 'text/html; charset=utf-8', _build_detected_list_print_group(summary, gk, auto_print=auto_print))
 
+        if path == '/zone-helper/config.json':
+            parsed = urlparse(self.path)
+            q = parse_qs(parsed.query or '')
+            cam_id = str((q.get('camera') or [''])[0]).strip()
+            if not cam_id:
+                cam_id = PRIMARY_CAMERA_ID or (CAMERA_IDS[0] if CAMERA_IDS else '')
+            if cam_id not in CAMERAS:
+                return _send_json(self, {"ok": False, "error": f"camera not found: {cam_id}"}, code=404)
+            cam = CAMERAS.get(cam_id) or {}
+            return _send_json(self, {
+                "ok": True,
+                "camera": {"id": cam_id, "name": str(cam.get('name') or cam_id)},
+                "zones": _get_camera_zones_for_helper(cam_id),
+            })
+
         # Legacy single-camera endpoints
         if PRIMARY_CAMERA_ID:
             if path in ("/overlay.png", f"/{OVERLAY_PNG_NAME}"):
@@ -4056,6 +4435,47 @@ class OverlayHandler(BaseHTTPRequestHandler):
 
         return self._send(404, "text/plain; charset=utf-8", b"not found")
 
+    def do_POST(self):
+        path = unquote(urlparse(self.path).path or "/")
+        if path == "/zone-helper/apply":
+            try:
+                length = int(self.headers.get('Content-Length') or '0')
+            except Exception:
+                length = 0
+            try:
+                raw = self.rfile.read(max(0, length)) if length > 0 else b''
+            except Exception:
+                raw = b''
+            try:
+                payload = json.loads(raw.decode('utf-8', errors='ignore') or '{}')
+            except Exception:
+                return _send_json(self, {"ok": False, "error": "invalid json body"}, code=400)
+
+            cam_id = str((payload or {}).get('camera') or '').strip()
+            zones = _normalize_zones_dict((payload or {}).get('zones') or {})
+            if not cam_id:
+                return _send_json(self, {"ok": False, "error": "camera is required"}, code=400)
+            if cam_id not in CAMERAS:
+                return _send_json(self, {"ok": False, "error": f"camera not found: {cam_id}"}, code=404)
+
+            ok_opts, msg_opts = _update_camera_zones_in_options(cam_id, zones)
+            if not ok_opts:
+                return _send_json(self, {"ok": False, "error": msg_opts}, code=500)
+
+            ok_runtime, msg_runtime = _apply_camera_zones_runtime(cam_id, zones)
+            if not ok_runtime:
+                return _send_json(self, {"ok": False, "error": msg_runtime}, code=500)
+
+            return _send_json(self, {
+                "ok": True,
+                "camera": cam_id,
+                "zone_count": len(zones),
+                "zones": zones,
+                "message": "camera zones updated",
+            })
+
+        return _send_json(self, {"ok": False, "error": "not found"}, code=404)
+
     def log_message(self, fmt, *args):
         logger.debug("HTTP: " + fmt, *args)
 
@@ -4082,6 +4502,31 @@ def _write_camera_detections(cam_id: str, payload: dict):
         _atomic_write_json(path, payload)
     except Exception:
         logger.exception("Failed writing detections.json for %s", cam_id)
+
+CAMERA_WORKERS_LOCK = threading.Lock()
+CAMERA_WORKERS = {}
+
+
+def _apply_camera_zones_runtime(cam_id: str, zones_dict: dict):
+    cam_id = str(cam_id or '').strip()
+    norm = _normalize_zones_dict(zones_dict)
+    if not cam_id:
+        return False, 'camera id missing'
+    cam = CAMERAS.get(cam_id)
+    if not isinstance(cam, dict):
+        return False, f'camera not found: {cam_id}'
+    cam['zones'] = copy.deepcopy(norm)
+    with CAMERA_WORKERS_LOCK:
+        worker = CAMERA_WORKERS.get(cam_id)
+    if worker is not None:
+        try:
+            worker.update_zones(copy.deepcopy(norm))
+        except Exception:
+            logger.exception('Failed updating running worker zones for %s', cam_id)
+            return False, f'failed updating running worker for {cam_id}'
+    MQTT_MANAGER.update_camera_zones(cam_id, str(cam.get('name') or cam_id), norm)
+    return True, f'updated {cam_id}'
+
 
 class CameraWorker(threading.Thread):
     def __init__(self, cam_cfg: dict):
@@ -4287,6 +4732,35 @@ class CameraWorker(threading.Thread):
 
         return stable
 
+    def update_zones(self, zones_dict: dict):
+        norm = _normalize_zones_dict(zones_dict)
+        old_history = self.zone_history
+        old_status = self.propagated_zone_status or {}
+        self.zones = copy.deepcopy(norm)
+
+        self.zone_history = defaultdict(lambda: deque(maxlen=max(1, self.required)))
+        for zone_name in norm.keys():
+            prev = old_history.get(zone_name)
+            if prev:
+                self.zone_history[zone_name].extend(list(prev)[-max(1, self.required):])
+
+        self.propagated_zone_status = {}
+        for zone_name in norm.keys():
+            if zone_name in old_status:
+                self.propagated_zone_status[zone_name] = _clone_zone_status(old_status.get(zone_name))
+            else:
+                self.propagated_zone_status[zone_name] = {"kind": "none", "det": None, "dets": []}
+
+        prev_workers = self.zone_worker_processes
+        self.zone_worker_processes = self._resolve_zone_worker_count()
+        if self.zone_worker_processes <= 1:
+            self._reset_zone_pool()
+        elif (self.zone_pool is None) or (self.zone_worker_processes != prev_workers):
+            self._reset_zone_pool()
+            self._ensure_zone_pool()
+
+        logger.info('Camera %s zones updated in memory: zones=%s zone_workers=%s', self.cam_id, len(self.zones), self.zone_worker_processes)
+
     def run(self):
         if not self.url:
             logger.error("Camera %s has empty rtsp_url; skipping", self.cam_id)
@@ -4443,7 +4917,10 @@ def main():
             if not bool(cam.get("enabled", True)):
                 logger.info("Camera %s disabled; skipping", cid)
                 continue
-            CameraWorker(cam).start()
+            worker = CameraWorker(cam)
+            with CAMERA_WORKERS_LOCK:
+                CAMERA_WORKERS[cid] = worker
+            worker.start()
 
     while True:
         time.sleep(3600)

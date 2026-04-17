@@ -136,7 +136,7 @@ zone_parallel_min_zones: 3
 HTTP:
 - `/detected-list.json`
 - `/detected-list` (HTML-Suchseite)
-- `/zone-helper` (Kamera auswählen, 4 Ecken klicken, JSON für eine Zone kopieren)
+- `/zone-helper` (mehrere Zonen pro Kamera laden, zeichnen, verschieben, exportieren oder direkt in die Kamera-Konfiguration schreiben)
 - `/print`
 - `/print/all`
 - `/print/project/<group_key>`
