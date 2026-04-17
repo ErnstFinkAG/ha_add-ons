@@ -55,7 +55,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
-APP_VERSION = '0.6.10.0'
+APP_VERSION = '0.6.10.1'
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -431,7 +431,10 @@ def _mqtt_sensor_name(cam_name: str, zone_name: str) -> str:
     cam = str(cam_name or "").strip() or "camera"
     zone = _strip_camera_prefix_from_zone(cam, zone_name)
     zone = re.sub(r"[_\s]+", " ", str(zone or "zone")).strip() or "zone"
-    return f"{cam} {zone}".strip()
+    # Home Assistant prefixes the entity name with the device name for MQTT entities
+    # that belong to a device. Therefore the entity name itself must only be the
+    # cleaned zone label, otherwise the camera name appears twice in the UI.
+    return zone
 
 
 def _natural_sort_key(value: str):
