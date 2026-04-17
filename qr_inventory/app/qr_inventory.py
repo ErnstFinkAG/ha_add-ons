@@ -55,7 +55,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
-APP_VERSION = '0.6.11.0'
+APP_VERSION = '0.6.11.1'
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -723,8 +723,8 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
     .layout {{ display: grid; grid-template-columns: minmax(320px, 1.7fr) minmax(280px, 1fr); gap: 18px; align-items: start; }}
     .card {{ border: 1px solid #ddd; border-radius: 12px; padding: 14px; background: #fff; }}
     .viewer-wrap {{ position: relative; width: 100%; background: #f3f3f3; border-radius: 10px; overflow: hidden; }}
-    #frameImg {{ display: block; width: 100%; height: auto; user-select: none; -webkit-user-drag: none; cursor: crosshair; }}
-    #overlayCanvas {{ position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }}
+    #frameImg {{ display: block; width: 100%; height: auto; user-select: none; -webkit-user-drag: none; }}
+    #overlayCanvas {{ position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: auto; touch-action: none; cursor: crosshair; }}
     .status {{ margin-top: 10px; color: #444; font-size: 0.95rem; }}
     .hint {{ margin-top: 8px; color: #666; font-size: 0.88rem; }}
     .coords {{ margin-top: 10px; padding-left: 18px; }}
@@ -738,7 +738,7 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
 </head>
 <body>
   <h1>Zone Helper</h1>
-  <p class=\"note\">Pick a camera, click four corners on the frame, and copy the JSON for one zone. Coordinates are saved in the original frame pixel space, not the scaled preview.</p>
+  <p class=\"note\">Pick a camera, click four corners on the frame, then drag existing points to fine-tune them. Coordinates are saved in the original frame pixel space, not the scaled preview.</p>
 
   <div class=\"toolbar\">
     <div class=\"field\">
@@ -806,7 +806,9 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
 
 <script>
 (() => {{
-  const state = {{ points: [] }};
+  const HANDLE_RADIUS = 8;
+  const HANDLE_HIT_RADIUS = 14;
+  const state = {{ points: [], dragIndex: -1, dragging: false }};
   const cameraSelect = document.getElementById('cameraSelect');
   const zoneNameInput = document.getElementById('zoneName');
   const imageMode = document.getElementById('imageMode');
@@ -868,22 +870,28 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
     return JSON.stringify(v, null, 2);
   }}
 
+  function clamp(value, lo, hi) {{
+    return Math.max(lo, Math.min(hi, value));
+  }}
+
   function renderOutputs() {{
     const pts = orderedPoints();
     coordList.innerHTML = pts.map((p, idx) => `<li>${{idx + 1}}: [${{p[0]}}, ${{p[1]}}]</li>`).join('');
     zonePoints.value = pts.length ? jsonString(pts) : '';
     if (pts.length === 4) {{
-      const fragment = `\"${{zoneName()}}\": ${{jsonString(pts)}}`;
+      const fragment = `"${{zoneName()}}": ${{jsonString(pts)}}`;
       const obj = {{ [zoneName()]: pts }};
       zoneFragment.value = fragment;
       zoneObject.value = jsonString(obj);
-      statusText.textContent = '4 points captured. Copy the fragment or object below.';
+      statusText.textContent = state.dragging
+        ? 'Dragging point… release to keep the updated coordinates.'
+        : '4 points captured. Drag points to fine-tune, or copy the fragment/object below.';
     }} else {{
       zoneFragment.value = '';
       zoneObject.value = '';
       statusText.textContent = state.points.length === 0
         ? 'Click 4 corners on the image.'
-        : `Captured ${{state.points.length}} / 4 points.`;
+        : `Captured ${{state.points.length}} / 4 points. Drag an existing point to adjust it.`;
     }}
   }}
 
@@ -920,7 +928,7 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
       const x = p[0] * sx;
       const y = p[1] * sy;
       ctx.beginPath();
-      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.arc(x, y, HANDLE_RADIUS, 0, Math.PI * 2);
       ctx.fillStyle = '#ff3300';
       ctx.fill();
       ctx.strokeStyle = '#ffffff';
@@ -928,23 +936,110 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
       ctx.stroke();
       ctx.fillStyle = '#111';
       ctx.font = 'bold 14px Arial, sans-serif';
-      ctx.fillText(String(idx + 1), x + 9, y - 9);
+      ctx.fillText(String(idx + 1), x + 10, y - 10);
     }});
 
     renderOutputs();
   }}
 
-  frameImg.addEventListener('click', (ev) => {{
-    if (!frameImg.naturalWidth || !frameImg.naturalHeight) return;
-    if (state.points.length >= 4) {{
-      statusText.textContent = 'Already have 4 points. Use Undo or Reset to change them.';
+  function eventToImagePoint(ev) {{
+    if (!frameImg.naturalWidth || !frameImg.naturalHeight) return null;
+    const rect = overlayCanvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const x = clamp(Math.round((ev.clientX - rect.left) * frameImg.naturalWidth / rect.width), 0, Math.max(0, frameImg.naturalWidth - 1));
+    const y = clamp(Math.round((ev.clientY - rect.top) * frameImg.naturalHeight / rect.height), 0, Math.max(0, frameImg.naturalHeight - 1));
+    return [x, y];
+  }}
+
+  function pointDistanceDisplaySquared(displayX, displayY, point) {{
+    const rect = overlayCanvas.getBoundingClientRect();
+    const sx = rect.width / Math.max(1, frameImg.naturalWidth);
+    const sy = rect.height / Math.max(1, frameImg.naturalHeight);
+    const dx = displayX - (point[0] * sx);
+    const dy = displayY - (point[1] * sy);
+    return dx * dx + dy * dy;
+  }}
+
+  function findPointIndexAtEvent(ev) {{
+    if (!state.points.length) return -1;
+    const rect = overlayCanvas.getBoundingClientRect();
+    const displayX = ev.clientX - rect.left;
+    const displayY = ev.clientY - rect.top;
+    let bestIdx = -1;
+    let bestDist = HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS;
+    state.points.forEach((p, idx) => {{
+      const dist = pointDistanceDisplaySquared(displayX, displayY, p);
+      if (dist <= bestDist) {{
+        bestDist = dist;
+        bestIdx = idx;
+      }}
+    }});
+    return bestIdx;
+  }}
+
+  function updateCanvasCursor(ev) {{
+    if (state.dragging) {{
+      overlayCanvas.style.cursor = 'grabbing';
       return;
     }}
-    const rect = frameImg.getBoundingClientRect();
-    const x = Math.round((ev.clientX - rect.left) * frameImg.naturalWidth / rect.width);
-    const y = Math.round((ev.clientY - rect.top) * frameImg.naturalHeight / rect.height);
-    state.points.push([x, y]);
+    const idx = ev ? findPointIndexAtEvent(ev) : -1;
+    overlayCanvas.style.cursor = idx >= 0 ? 'grab' : 'crosshair';
+  }}
+
+  overlayCanvas.addEventListener('pointerdown', (ev) => {{
+    if (!frameImg.naturalWidth || !frameImg.naturalHeight) return;
+    const idx = findPointIndexAtEvent(ev);
+    if (idx >= 0) {{
+      state.dragIndex = idx;
+      state.dragging = true;
+      overlayCanvas.setPointerCapture(ev.pointerId);
+      overlayCanvas.style.cursor = 'grabbing';
+      statusText.textContent = `Dragging point ${{idx + 1}}…`;
+      return;
+    }}
+    if (state.points.length >= 4) {{
+      statusText.textContent = 'Already have 4 points. Drag a point, or use Undo/Reset.';
+      return;
+    }}
+    const pt = eventToImagePoint(ev);
+    if (!pt) return;
+    state.points.push(pt);
     draw();
+    updateCanvasCursor(ev);
+  }});
+
+  overlayCanvas.addEventListener('pointermove', (ev) => {{
+    if (state.dragging && state.dragIndex >= 0) {{
+      const pt = eventToImagePoint(ev);
+      if (!pt) return;
+      state.points[state.dragIndex] = pt;
+      draw();
+      overlayCanvas.style.cursor = 'grabbing';
+      return;
+    }}
+    updateCanvasCursor(ev);
+  }});
+
+  function finishDrag(ev) {{
+    if (state.dragging) {{
+      state.dragging = false;
+      state.dragIndex = -1;
+      draw();
+    }}
+    try {{
+      if (ev && overlayCanvas.hasPointerCapture && overlayCanvas.hasPointerCapture(ev.pointerId)) {{
+        overlayCanvas.releasePointerCapture(ev.pointerId);
+      }}
+    }} catch (err) {{
+      // ignore release errors
+    }}
+    updateCanvasCursor(ev || null);
+  }}
+
+  overlayCanvas.addEventListener('pointerup', finishDrag);
+  overlayCanvas.addEventListener('pointercancel', finishDrag);
+  overlayCanvas.addEventListener('pointerleave', (ev) => {{
+    if (!state.dragging) updateCanvasCursor(ev);
   }});
 
   frameImg.addEventListener('load', draw);
@@ -953,8 +1048,20 @@ def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
   imageMode.addEventListener('change', refreshImage);
   zoneNameInput.addEventListener('input', renderOutputs);
   document.getElementById('refreshBtn').addEventListener('click', refreshImage);
-  document.getElementById('undoBtn').addEventListener('click', () => {{ state.points.pop(); draw(); }});
-  document.getElementById('resetBtn').addEventListener('click', () => {{ state.points = []; draw(); }});
+  document.getElementById('undoBtn').addEventListener('click', () => {{
+    if (state.dragging) {{
+      state.dragging = false;
+      state.dragIndex = -1;
+    }}
+    state.points.pop();
+    draw();
+  }});
+  document.getElementById('resetBtn').addEventListener('click', () => {{
+    state.points = [];
+    state.dragging = false;
+    state.dragIndex = -1;
+    draw();
+  }});
 
   async function copyFrom(id) {{
     const el = document.getElementById(id);

@@ -179,13 +179,12 @@ entity: sensor.qr_inventory_detected_list
 print_base_url: http://YOUR_ADDON_HOST:8099
 ```
 
-## Version 0.6.11.0
+## Version 0.6.11.1
 
 - built-in zone helper page at `/zone-helper` to click 4 corners on the latest frame and copy JSON for one zone
+- zone helper now lets you drag existing corner points to fine-tune them after they are set
 - helper supports frame or overlay view, ordered point normalization, undo/reset, and copy buttons for points, fragment, and single-zone object
 - MQTT entity naming remains zone-only so Home Assistant shows camera name only once in the UI
-
-- MQTT sensor display names now avoid repeating the camera name when the zone already starts with that prefix, so `DE` + `DE_E1` becomes `DE E1`
 - inventory persistence switched from `payload -> single location` to `payload -> [locations]`
 - inventory snapshots are now rebuilt from propagated per-zone states, so the same payload can stay active in multiple zones at the same time
 - removed single-zone conflict collapsing for identical payloads seen in multiple inventory spaces
@@ -203,3 +202,6 @@ overlay_payload_font_px: 20
 
 - fixed MQTT discovery naming: the entity name now publishes only the cleaned zone label (for example `E1`) because Home Assistant automatically prefixes the device name (for example `DE`), resulting in the displayed name `DE E1`
 - previous 0.6.10.0 package used `DE E1` as entity name, which could still display duplicated names in Home Assistant
+
+
+- drag existing points to fine-tune them
