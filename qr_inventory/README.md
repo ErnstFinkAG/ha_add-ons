@@ -209,3 +209,10 @@ overlay_payload_font_px: 20
 ## Version 0.6.12.1
 
 - add-on landing page now includes a prominent **Open zone helper** button linking directly to `/zone-helper`
+
+
+## Version 0.6.12.2
+
+- fixed zone helper persistence so **Write zones into camera config** also updates the add-on's Supervisor-stored options
+- zone helper changes now survive add-on restart/update instead of reverting to the previous UI config
+- keeps the running worker update behavior so new zones still apply immediately

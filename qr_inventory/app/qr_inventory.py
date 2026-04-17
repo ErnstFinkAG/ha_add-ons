@@ -55,7 +55,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
-APP_VERSION = '0.6.12.1'
+APP_VERSION = '0.6.12.2'
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -414,6 +414,31 @@ def _write_options_to_disk(data: dict):
         return False
 
 
+def _supervisor_set_self_options(options_data: dict):
+    """Persist addon options through Supervisor so UI + restarts stay in sync."""
+    payload = {"options": options_data if isinstance(options_data, dict) else {}}
+    token = str(os.environ.get('SUPERVISOR_TOKEN') or '').strip()
+    headers = {'Content-Type': 'application/json'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+
+    last_err = None
+    urls = [
+        'http://supervisor/addons/self/options',
+        'http://supervisor/addons/qr_inventory/options',
+    ]
+    for url in urls:
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=15)
+            if 200 <= int(resp.status_code) < 300:
+                return True, 'supervisor options updated'
+            body = (resp.text or '').strip()
+            last_err = f'{url} -> HTTP {resp.status_code}: {body[:300]}'
+        except Exception as e:
+            last_err = f'{url} -> {type(e).__name__}: {e}'
+    return False, (last_err or 'supervisor options update failed')
+
+
 def _update_camera_zones_in_options(cam_id: str, zones_dict: dict):
     global opts
     cam_id = str(cam_id or '').strip()
@@ -448,8 +473,15 @@ def _update_camera_zones_in_options(cam_id: str, zones_dict: dict):
     else:
         return False, 'cameras configuration missing in options.json'
 
+    # Keep the local runtime file updated immediately for this container, but also
+    # push the configuration through Supervisor so the add-on UI and future
+    # restarts/updates keep the same options.
     if not _write_options_to_disk(data):
         return False, 'failed writing options.json'
+
+    ok_supervisor, msg_supervisor = _supervisor_set_self_options(data)
+    if not ok_supervisor:
+        return False, f'failed updating supervisor options: {msg_supervisor}'
 
     opts = data
     return True, compact
