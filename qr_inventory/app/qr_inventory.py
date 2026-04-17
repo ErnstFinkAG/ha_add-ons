@@ -55,7 +55,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
-APP_VERSION = '0.6.10.1'
+APP_VERSION = '0.6.11.0'
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -685,6 +685,301 @@ def _build_detected_list_print_group(summary: dict, group_key: str, auto_print: 
 </div>
 """
     return _print_shell_html(f'QR Inventory - {label}', body, auto_print=auto_print)
+
+def _build_zone_helper_html(initial_cam_id: str | None = None) -> bytes:
+    selected_cam = str(initial_cam_id or '').strip()
+    if selected_cam not in CAMERAS:
+        selected_cam = PRIMARY_CAMERA_ID or (CAMERA_IDS[0] if CAMERA_IDS else '')
+
+    options = []
+    for cid in CAMERA_IDS:
+        cam = CAMERAS.get(cid) or {}
+        cname = str(cam.get('name') or cid)
+        sel = ' selected' if cid == selected_cam else ''
+        options.append(f'<option value="{html.escape(cid)}"{sel}>{html.escape(cid)} ({html.escape(cname)})</option>')
+
+    cam_options_html = ''.join(options) if options else '<option value="">No cameras configured</option>'
+    initial_frame = f'/{quote(selected_cam, safe="")}/frame.png' if selected_cam else '/frame.png'
+    initial_overlay = f'/{quote(selected_cam, safe="")}/overlay.png' if selected_cam else '/overlay.png'
+
+    doc = f"""<!doctype html>
+<html>
+<head>
+  <meta charset=\"utf-8\">
+  <title>QR Inventory Zone Helper</title>
+  <style>
+    :root {{ color-scheme: light dark; }}
+    * {{ box-sizing: border-box; }}
+    body {{ font-family: Arial, Helvetica, sans-serif; margin: 20px; color: #111; background: #fff; }}
+    h1 {{ margin: 0 0 8px 0; }}
+    p.note {{ color: #555; margin: 0 0 16px 0; }}
+    .toolbar {{ display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 14px; }}
+    .field {{ display: grid; gap: 6px; min-width: 180px; }}
+    label {{ font-size: 0.9rem; color: #444; }}
+    select, input[type=\"text\"], textarea, button {{ font: inherit; }}
+    select, input[type=\"text\"], textarea {{ width: 100%; padding: 9px 10px; border: 1px solid #cfcfcf; border-radius: 8px; }}
+    button {{ padding: 10px 12px; border: 1px solid #cfcfcf; border-radius: 8px; background: #f6f6f6; cursor: pointer; }}
+    button:hover {{ background: #ececec; }}
+    .layout {{ display: grid; grid-template-columns: minmax(320px, 1.7fr) minmax(280px, 1fr); gap: 18px; align-items: start; }}
+    .card {{ border: 1px solid #ddd; border-radius: 12px; padding: 14px; background: #fff; }}
+    .viewer-wrap {{ position: relative; width: 100%; background: #f3f3f3; border-radius: 10px; overflow: hidden; }}
+    #frameImg {{ display: block; width: 100%; height: auto; user-select: none; -webkit-user-drag: none; cursor: crosshair; }}
+    #overlayCanvas {{ position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }}
+    .status {{ margin-top: 10px; color: #444; font-size: 0.95rem; }}
+    .hint {{ margin-top: 8px; color: #666; font-size: 0.88rem; }}
+    .coords {{ margin-top: 10px; padding-left: 18px; }}
+    .coords li {{ margin-bottom: 4px; }}
+    .actions {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }}
+    textarea {{ min-height: 110px; resize: vertical; }}
+    .small {{ font-size: 0.85rem; color: #666; }}
+    .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
+    @media (max-width: 980px) {{ .layout {{ grid-template-columns: 1fr; }} }}
+  </style>
+</head>
+<body>
+  <h1>Zone Helper</h1>
+  <p class=\"note\">Pick a camera, click four corners on the frame, and copy the JSON for one zone. Coordinates are saved in the original frame pixel space, not the scaled preview.</p>
+
+  <div class=\"toolbar\">
+    <div class=\"field\">
+      <label for=\"cameraSelect\">Camera</label>
+      <select id=\"cameraSelect\">{cam_options_html}</select>
+    </div>
+    <div class=\"field\" style=\"min-width:220px\">
+      <label for=\"zoneName\">Zone name</label>
+      <input id=\"zoneName\" type=\"text\" placeholder=\"E1\" value=\"\">
+    </div>
+    <div class=\"field\">
+      <label for=\"imageMode\">Image</label>
+      <select id=\"imageMode\">
+        <option value=\"frame\" selected>Frame</option>
+        <option value=\"overlay\">Overlay</option>
+      </select>
+    </div>
+    <div class=\"actions\">
+      <button id=\"refreshBtn\" type=\"button\">Refresh image</button>
+      <button id=\"undoBtn\" type=\"button\">Undo last point</button>
+      <button id=\"resetBtn\" type=\"button\">Reset points</button>
+    </div>
+  </div>
+
+  <div class=\"layout\">
+    <div class=\"card\">
+      <div class=\"viewer-wrap\">
+        <img id=\"frameImg\" src=\"{html.escape(initial_frame)}?ts={int(time.time())}\" alt=\"Camera frame\">
+        <canvas id=\"overlayCanvas\"></canvas>
+      </div>
+      <div class=\"status\" id=\"statusText\">Click 4 corners on the image.</div>
+      <div class=\"hint\">Tip: click roughly clockwise around the zone. The output is normalized automatically to start near the top-left corner.</div>
+      <ol class=\"coords mono\" id=\"coordList\"></ol>
+    </div>
+
+    <div class=\"card\">
+      <div class=\"field\">
+        <label for=\"zonePoints\">Ordered points</label>
+        <textarea id=\"zonePoints\" class=\"mono\" readonly></textarea>
+      </div>
+      <div class=\"actions\">
+        <button id=\"copyPointsBtn\" type=\"button\">Copy points</button>
+      </div>
+
+      <div class=\"field\" style=\"margin-top:14px\">
+        <label for=\"zoneFragment\">Zone JSON fragment</label>
+        <textarea id=\"zoneFragment\" class=\"mono\" readonly></textarea>
+      </div>
+      <div class=\"actions\">
+        <button id=\"copyFragmentBtn\" type=\"button\">Copy fragment</button>
+      </div>
+
+      <div class=\"field\" style=\"margin-top:14px\">
+        <label for=\"zoneObject\">Single-zone object</label>
+        <textarea id=\"zoneObject\" class=\"mono\" readonly></textarea>
+      </div>
+      <div class=\"actions\">
+        <button id=\"copyObjectBtn\" type=\"button\">Copy object</button>
+      </div>
+
+      <p class=\"small\" style=\"margin-top:14px\">Use the fragment when merging into an existing camera <span class=\"mono\">zones</span> JSON string. Use the single-zone object if this camera currently has only one zone.</p>
+      <p class=\"small\"><a href=\"/\">Back to index</a> · <a href=\"{html.escape(initial_overlay)}\" target=\"_blank\" rel=\"noreferrer\">Open current overlay</a></p>
+    </div>
+  </div>
+
+<script>
+(() => {{
+  const state = {{ points: [] }};
+  const cameraSelect = document.getElementById('cameraSelect');
+  const zoneNameInput = document.getElementById('zoneName');
+  const imageMode = document.getElementById('imageMode');
+  const frameImg = document.getElementById('frameImg');
+  const overlayCanvas = document.getElementById('overlayCanvas');
+  const statusText = document.getElementById('statusText');
+  const coordList = document.getElementById('coordList');
+  const zonePoints = document.getElementById('zonePoints');
+  const zoneFragment = document.getElementById('zoneFragment');
+  const zoneObject = document.getElementById('zoneObject');
+
+  function cameraPath(kind) {{
+    const cam = (cameraSelect.value || '').trim();
+    if (!cam) return '/frame.png';
+    return `/${{encodeURIComponent(cam)}}/${{kind}}.png`;
+  }}
+
+  function refreshImage() {{
+    const kind = imageMode.value === 'overlay' ? 'overlay' : 'frame';
+    frameImg.src = `${{cameraPath(kind)}}?ts=${{Date.now()}}`;
+  }}
+
+  function resizeCanvas() {{
+    const rect = frameImg.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    overlayCanvas.width = Math.max(1, Math.round(rect.width * ratio));
+    overlayCanvas.height = Math.max(1, Math.round(rect.height * ratio));
+    overlayCanvas.style.width = `${{rect.width}}px`;
+    overlayCanvas.style.height = `${{rect.height}}px`;
+    const ctx = overlayCanvas.getContext('2d');
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  }}
+
+  function orderedPoints() {{
+    if (state.points.length !== 4) return state.points.slice();
+    const cx = state.points.reduce((acc, p) => acc + p[0], 0) / 4;
+    const cy = state.points.reduce((acc, p) => acc + p[1], 0) / 4;
+    const pts = state.points
+      .map((p) => ({{ x: p[0], y: p[1], a: Math.atan2(p[1] - cy, p[0] - cx) }}))
+      .sort((a, b) => a.a - b.a);
+    let start = 0;
+    let best = Number.POSITIVE_INFINITY;
+    pts.forEach((p, idx) => {{
+      const sum = p.x + p.y;
+      if (sum < best) {{
+        best = sum;
+        start = idx;
+      }}
+    }});
+    const rolled = pts.slice(start).concat(pts.slice(0, start));
+    return rolled.map((p) => [Math.round(p.x), Math.round(p.y)]);
+  }}
+
+  function zoneName() {{
+    return (zoneNameInput.value || '').trim() || 'ZONE_NAME';
+  }}
+
+  function jsonString(v) {{
+    return JSON.stringify(v, null, 2);
+  }}
+
+  function renderOutputs() {{
+    const pts = orderedPoints();
+    coordList.innerHTML = pts.map((p, idx) => `<li>${{idx + 1}}: [${{p[0]}}, ${{p[1]}}]</li>`).join('');
+    zonePoints.value = pts.length ? jsonString(pts) : '';
+    if (pts.length === 4) {{
+      const fragment = `\"${{zoneName()}}\": ${{jsonString(pts)}}`;
+      const obj = {{ [zoneName()]: pts }};
+      zoneFragment.value = fragment;
+      zoneObject.value = jsonString(obj);
+      statusText.textContent = '4 points captured. Copy the fragment or object below.';
+    }} else {{
+      zoneFragment.value = '';
+      zoneObject.value = '';
+      statusText.textContent = state.points.length === 0
+        ? 'Click 4 corners on the image.'
+        : `Captured ${{state.points.length}} / 4 points.`;
+    }}
+  }}
+
+  function draw() {{
+    resizeCanvas();
+    const ctx = overlayCanvas.getContext('2d');
+    const rect = frameImg.getBoundingClientRect();
+    const dw = rect.width || 1;
+    const dh = rect.height || 1;
+    ctx.clearRect(0, 0, dw, dh);
+    if (!frameImg.naturalWidth || !frameImg.naturalHeight) {{
+      renderOutputs();
+      return;
+    }}
+    const sx = dw / frameImg.naturalWidth;
+    const sy = dh / frameImg.naturalHeight;
+    const pts = orderedPoints();
+
+    if (pts.length >= 2) {{
+      ctx.beginPath();
+      pts.forEach((p, idx) => {{
+        const x = p[0] * sx;
+        const y = p[1] * sy;
+        if (idx === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }});
+      if (pts.length === 4) ctx.closePath();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#ff3300';
+      ctx.stroke();
+    }}
+
+    pts.forEach((p, idx) => {{
+      const x = p[0] * sx;
+      const y = p[1] * sy;
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff3300';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#111';
+      ctx.font = 'bold 14px Arial, sans-serif';
+      ctx.fillText(String(idx + 1), x + 9, y - 9);
+    }});
+
+    renderOutputs();
+  }}
+
+  frameImg.addEventListener('click', (ev) => {{
+    if (!frameImg.naturalWidth || !frameImg.naturalHeight) return;
+    if (state.points.length >= 4) {{
+      statusText.textContent = 'Already have 4 points. Use Undo or Reset to change them.';
+      return;
+    }}
+    const rect = frameImg.getBoundingClientRect();
+    const x = Math.round((ev.clientX - rect.left) * frameImg.naturalWidth / rect.width);
+    const y = Math.round((ev.clientY - rect.top) * frameImg.naturalHeight / rect.height);
+    state.points.push([x, y]);
+    draw();
+  }});
+
+  frameImg.addEventListener('load', draw);
+  window.addEventListener('resize', draw);
+  cameraSelect.addEventListener('change', refreshImage);
+  imageMode.addEventListener('change', refreshImage);
+  zoneNameInput.addEventListener('input', renderOutputs);
+  document.getElementById('refreshBtn').addEventListener('click', refreshImage);
+  document.getElementById('undoBtn').addEventListener('click', () => {{ state.points.pop(); draw(); }});
+  document.getElementById('resetBtn').addEventListener('click', () => {{ state.points = []; draw(); }});
+
+  async function copyFrom(id) {{
+    const el = document.getElementById(id);
+    const txt = (el.value || '').trim();
+    if (!txt) return;
+    try {{
+      await navigator.clipboard.writeText(txt);
+      statusText.textContent = `Copied ${{id}} to clipboard.`;
+    }} catch (err) {{
+      el.focus();
+      el.select();
+      statusText.textContent = `Copy failed for ${{id}}. Select and copy manually.`;
+    }}
+  }}
+
+  document.getElementById('copyPointsBtn').addEventListener('click', () => copyFrom('zonePoints'));
+  document.getElementById('copyFragmentBtn').addEventListener('click', () => copyFrom('zoneFragment'));
+  document.getElementById('copyObjectBtn').addEventListener('click', () => copyFrom('zoneObject'));
+
+  draw();
+}})();
+</script>
+</body>
+</html>"""
+    return doc.encode('utf-8')
 
 def _is_number(v):
     return isinstance(v, (int, float, np.integer, np.floating))
@@ -3506,6 +3801,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
   <p>Aggregate: <a href="/detections.json">/detections.json</a></p>
   <p>Detected list: <a href="/detected-list.json">/detected-list.json</a></p>
   <p>Print view: <a href="/print">/print</a> | <a href="/print/all">/print/all</a></p>
+  <p>Zone helper: <a href="/zone-helper">/zone-helper</a></p>
   <p>Debug zones: <code>{dz}</code></p>
   <p>Debug index: <a href="/debug/index.json">/debug/index.json</a></p>
 </body></html>""".encode("utf-8")
@@ -3528,6 +3824,12 @@ class OverlayHandler(BaseHTTPRequestHandler):
 
         if path == "/detected-list.json":
             return _send_json(self, build_detected_list_summary(_get_all_states()))
+
+        if path in ('/zone-helper', '/zone-helper/', '/zone-helper/index.html'):
+            parsed = urlparse(self.path)
+            q = parse_qs(parsed.query or '')
+            cam_id = str((q.get('cam') or [''])[0] or '').strip()
+            return self._send(200, 'text/html; charset=utf-8', _build_zone_helper_html(cam_id))
 
         if path.startswith('/print'):
             parsed = urlparse(self.path)

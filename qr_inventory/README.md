@@ -136,6 +136,7 @@ zone_parallel_min_zones: 3
 HTTP:
 - `/detected-list.json`
 - `/detected-list` (HTML-Suchseite)
+- `/zone-helper` (Kamera auswählen, 4 Ecken klicken, JSON für eine Zone kopieren)
 - `/print`
 - `/print/all`
 - `/print/project/<group_key>`
@@ -178,7 +179,11 @@ entity: sensor.qr_inventory_detected_list
 print_base_url: http://YOUR_ADDON_HOST:8099
 ```
 
-## Version 0.6.10.1
+## Version 0.6.11.0
+
+- built-in zone helper page at `/zone-helper` to click 4 corners on the latest frame and copy JSON for one zone
+- helper supports frame or overlay view, ordered point normalization, undo/reset, and copy buttons for points, fragment, and single-zone object
+- MQTT entity naming remains zone-only so Home Assistant shows camera name only once in the UI
 
 - MQTT sensor display names now avoid repeating the camera name when the zone already starts with that prefix, so `DE` + `DE_E1` becomes `DE E1`
 - inventory persistence switched from `payload -> single location` to `payload -> [locations]`
