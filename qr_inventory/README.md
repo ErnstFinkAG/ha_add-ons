@@ -205,3 +205,7 @@ overlay_payload_font_px: 20
 
 
 - drag existing points to fine-tune them
+
+## Version 0.6.12.1
+
+- add-on landing page now includes a prominent **Open zone helper** button linking directly to `/zone-helper`

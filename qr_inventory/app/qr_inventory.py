@@ -55,7 +55,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
-APP_VERSION = '0.6.12.0'
+APP_VERSION = '0.6.12.1'
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -4258,25 +4258,51 @@ class OverlayHandler(BaseHTTPRequestHandler):
             for cid in CAMERA_IDS:
                 cam = CAMERAS.get(cid) or {}
                 cname = cam.get("name") or cid
-                cams_html += f'<li><b>{cid}</b> ({cname}) - ' \
-                            f'<a href="/{cid}/overlay.png">overlay</a> | ' \
-                            f'<a href="/{cid}/frame.png">frame</a> | ' \
-                            f'<a href="/{cid}/detections.json">detections</a></li>\n'
+                cams_html += f'<li><b>{cid}</b> ({cname}) - '                             f'<a href="/{cid}/overlay.png">overlay</a> | '                             f'<a href="/{cid}/frame.png">frame</a> | '                             f'<a href="/{cid}/detections.json">detections</a></li>\n'
             dz = "*" if DEBUG_ALL_ZONES else ", ".join(sorted(DEBUG_ZONES)) if DEBUG_ZONES else "-"
             html = f"""<!doctype html>
-<html><head><meta charset="utf-8"><title>QR Inventory</title></head>
-<body style="font-family: sans-serif">
-  <h3>QR Inventory</h3>
-  <p>Cameras:</p>
-  <ul>{cams_html}</ul>
-  <p>Aggregate: <a href="/detections.json">/detections.json</a></p>
-  <p>Detected list: <a href="/detected-list.json">/detected-list.json</a></p>
-  <p>Print view: <a href="/print">/print</a> | <a href="/print/all">/print/all</a></p>
-  <p>Zone helper: <a href="/zone-helper">/zone-helper</a></p>
-  <p>Debug zones: <code>{dz}</code></p>
-  <p>Debug index: <a href="/debug/index.json">/debug/index.json</a></p>
-</body></html>""".encode("utf-8")
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>QR Inventory</title>
+  <style>
+    :root {{ color-scheme: light; }}
+    body {{ font-family: Arial, Helvetica, sans-serif; margin: 24px; color: #111; background: #f6f7f9; }}
+    h3 {{ margin: 0 0 12px 0; font-size: 1.45rem; }}
+    .hero {{ background: #fff; border: 1px solid #dde2e8; border-radius: 14px; padding: 18px; margin-bottom: 18px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }}
+    .hero p {{ margin: 0 0 14px 0; color: #445; }}
+    .button-row {{ display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 8px 0; }}
+    .btn {{ display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid #c9d1dc; background: #fff; color: #111; text-decoration: none; font-weight: 600; }}
+    .btn:hover {{ background: #f2f5f9; }}
+    .btn.primary {{ background: #2563eb; border-color: #2563eb; color: #fff; }}
+    .btn.primary:hover {{ background: #1d4ed8; }}
+    .card {{ background: #fff; border: 1px solid #dde2e8; border-radius: 14px; padding: 18px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }}
+    ul {{ margin: 10px 0 0 18px; padding: 0; }}
+    li {{ margin: 0 0 8px 0; }}
+    .meta {{ margin-top: 16px; color: #566; }}
+    code {{ background: #eef2f7; border-radius: 6px; padding: 2px 6px; }}
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <h3>QR Inventory</h3>
+    <p>Open the zone editor directly from here, or use the utility endpoints below.</p>
+    <div class="button-row">
+      <a class="btn primary" href="/zone-helper">Open zone helper</a>
+      <a class="btn" href="/print">Print view</a>
+      <a class="btn" href="/detected-list.json">Detected list JSON</a>
+      <a class="btn" href="/detections.json">All detections JSON</a>
+    </div>
+  </div>
+  <div class="card">
+    <p><b>Cameras</b></p>
+    <ul>{cams_html}</ul>
+    <p class="meta">Debug zones: <code>{dz}</code><br>Debug index: <a href="/debug/index.json">/debug/index.json</a></p>
+  </div>
+</body>
+</html>""".encode("utf-8")
             return self._send(200, "text/html; charset=utf-8", html)
+
 
         # Aggregate detections
         if path == "/detections.json":
