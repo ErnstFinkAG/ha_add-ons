@@ -216,3 +216,10 @@ overlay_payload_font_px: 20
 - fixed zone helper persistence so **Write zones into camera config** also updates the add-on's Supervisor-stored options
 - zone helper changes now survive add-on restart/update instead of reverting to the previous UI config
 - keeps the running worker update behavior so new zones still apply immediately
+
+## Version 0.6.12.3
+
+- fixed ZBar character-set corruption for UTF-8 QR payloads containing Western-European characters such as `ä`, `ö`, `ü`, `é`, `è` and `ç`
+- repairs the known UTF-8 -> Big5 -> UTF-8 artifact before OpenCV reconciliation, zone state handling, inventory persistence and MQTT publishing
+- raw QR debug logging now also shows the final decoded/repaired payload as `decoded=...`
+- unchanged ASCII and already-correct UTF-8 payloads continue to pass through normally

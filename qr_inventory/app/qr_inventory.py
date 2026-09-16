@@ -55,7 +55,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
-APP_VERSION = '0.6.12.2'
+APP_VERSION = '0.6.12.3'
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -1951,7 +1951,8 @@ def _safe_decode_qr_bytes(raw_bytes) -> str:
         try:
             s = raw.decode(enc)
             if s:
-                return s.strip()
+                s = s.strip()
+                return _repair_zbar_big5_utf8_text(s)
         except Exception:
             pass
 
@@ -1977,7 +1978,7 @@ def _debug_log_raw_qr_readout(raw_bytes, cam_id: str, zone_name: str, src: str):
         raw = bytes(raw_bytes or b'')
     except Exception:
         raw = b''
-    logger.debug('QR raw readout cam=%s zone=%s src=%s bytes=%s hex=%s utf8_ignore=%r utf8_replace=%r', cam_id, zone_name, src, len(raw), raw.hex(), raw.decode('utf-8', errors='ignore'), raw.decode('utf-8', errors='replace'))
+    logger.debug('QR raw readout cam=%s zone=%s src=%s bytes=%s hex=%s utf8_ignore=%r utf8_replace=%r decoded=%r', cam_id, zone_name, src, len(raw), raw.hex(), raw.decode('utf-8', errors='ignore'), raw.decode('utf-8', errors='replace'), _safe_decode_qr_bytes(raw))
 
 
 def _quad_crop_with_border(gray_img: np.ndarray, quad_pts, border_px: int = 16):
@@ -2006,6 +2007,64 @@ def _quad_crop_with_border(gray_img: np.ndarray, quad_pts, border_px: int = 16):
 def _payload_has_cjk(text: str) -> bool:
     s = str(text or '')
     return any('一' <= ch <= '鿿' for ch in s)
+
+
+def _repair_zbar_big5_utf8_text(text: str) -> str:
+    """Repair ZBar's known UTF-8 -> Big5 -> UTF-8 transcoding artifact.
+
+    Some QR payloads contain ordinary UTF-8 bytes (for example C3 BC for 'ü'),
+    but ZBar can interpret those bytes as Big5 first.  It then returns the
+    resulting CJK character encoded as UTF-8 (C3 BC -> 羹 -> E7 BE B9).
+
+    Repair is intentionally conservative:
+      - only CJK characters returned by ZBar are considered;
+      - each candidate must map through Big5 back to valid UTF-8 Latin text;
+      - the repaired full payload must score better than the original text.
+
+    This keeps ordinary ASCII/UTF-8 payloads unchanged while fixing common
+    Western-European characters such as ä, ö, ü, é, è and ç.
+    """
+    original = str(text or '').strip()
+    if not original or not _payload_has_cjk(original):
+        return original
+
+    out = []
+    changed = False
+    for ch in original:
+        replacement = ch
+        if '一' <= ch <= '鿿':
+            try:
+                candidate = ch.encode('big5').decode('utf-8')
+                # Accept only printable Latin/Latin-extended output.  The ZBar
+                # artifact relevant to our labels is a two-byte UTF-8 character
+                # that was mistaken for one Big5 CJK character.
+                if candidate and all(
+                    c.isprintable() and (ord(c) < 128 or 0x00A0 <= ord(c) <= 0x024F)
+                    for c in candidate
+                ):
+                    replacement = candidate
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                pass
+        if replacement != ch:
+            changed = True
+        out.append(replacement)
+
+    if not changed:
+        return original
+
+    repaired = ''.join(out).strip()
+    if not repaired:
+        return original
+
+    try:
+        if _payload_text_quality_score(repaired) <= _payload_text_quality_score(original):
+            return original
+    except Exception:
+        # If scoring ever changes/fails, prefer the original rather than making
+        # an unverified character-set rewrite.
+        return original
+
+    return repaired
 
 
 def _payload_text_quality_score(text: str) -> int:
