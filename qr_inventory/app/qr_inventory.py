@@ -55,7 +55,7 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger('qr_inventory')
-APP_VERSION = '0.6.12.3'
+APP_VERSION = '0.6.12.4'
 
 # ------------------------------------------------------------
 # Load add-on options
@@ -1978,7 +1978,22 @@ def _debug_log_raw_qr_readout(raw_bytes, cam_id: str, zone_name: str, src: str):
         raw = bytes(raw_bytes or b'')
     except Exception:
         raw = b''
-    logger.debug('QR raw readout cam=%s zone=%s src=%s bytes=%s hex=%s utf8_ignore=%r utf8_replace=%r decoded=%r', cam_id, zone_name, src, len(raw), raw.hex(), raw.decode('utf-8', errors='ignore'), raw.decode('utf-8', errors='replace'), _safe_decode_qr_bytes(raw))
+
+    # ZBar may already have transcoded an original UTF-8 payload through Big5.
+    # Keep the raw bytes as hex for diagnostics, but do not print ZBar's
+    # misleading intermediate Unicode text (for example the CJK character 羹).
+    decoded = _safe_decode_qr_bytes(raw)
+    try:
+        zbar_text = raw.decode('utf-8', errors='replace').strip()
+    except Exception:
+        zbar_text = ''
+    charset_repair = bool(decoded and zbar_text and decoded != zbar_text)
+
+    logger.debug(
+        'QR readout cam=%s zone=%s src=%s bytes=%s hex=%s decoded=%r charset_repair=%s',
+        cam_id, zone_name, src, len(raw), raw.hex(), decoded,
+        'yes' if charset_repair else 'no'
+    )
 
 
 def _quad_crop_with_border(gray_img: np.ndarray, quad_pts, border_px: int = 16):

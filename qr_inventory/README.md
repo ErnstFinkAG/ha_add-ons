@@ -223,3 +223,11 @@ overlay_payload_font_px: 20
 - repairs the known UTF-8 -> Big5 -> UTF-8 artifact before OpenCV reconciliation, zone state handling, inventory persistence and MQTT publishing
 - raw QR debug logging now also shows the final decoded/repaired payload as `decoded=...`
 - unchanged ASCII and already-correct UTF-8 payloads continue to pass through normally
+
+
+## Version 0.6.12.4
+
+- cleaned QR debug logging after the ZBar Big5/UTF-8 repair
+- debug logs now show the repaired `decoded=` payload and `charset_repair=yes/no`
+- raw decoder bytes remain available as hexadecimal for troubleshooting
+- removed misleading intermediate ZBar Unicode text from logs, so repaired umlauts no longer appear as Chinese characters
