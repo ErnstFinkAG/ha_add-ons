@@ -2,238 +2,250 @@
 
 ## Purpose
 
-Public Sensors publishes selected Home Assistant history on separate, read-only URL paths without exposing the Home Assistant frontend.
+Public Sensors publishes selected Home Assistant data on separate read-only URL paths without exposing the Home Assistant frontend.
 
-The app runs as its own Home Assistant OS container on TCP port 8098. It reads Home Assistant Core through the internal Supervisor proxy. The browser receives only the graph page and the selected cached history data.
+The public web process does not receive the Home Assistant Supervisor token. Home Assistant access is isolated in a private collector process.
 
-Home Assistant credentials and SUPERVISOR_TOKEN stay inside the app container.
+## Architecture
 
-## URL model
+The app contains two processes:
 
-Each configured page has its own path.
+    Home Assistant Core
+          ^
+          | internal API + SUPERVISOR_TOKEN
+          |
+    private collector
+          |
+          | sanitized JSON cache
+          v
+    unprivileged public web process :8098
+          |
+          v
+    reverse proxy / Internet
 
-For example, with the public reverse-proxy hostname:
+The collector is the only process that receives `SUPERVISOR_TOKEN`.
 
-    public.fink-holzbau.ch
+Before the public web server starts, `SUPERVISOR_TOKEN` is removed from its environment and the web server is dropped to the unprivileged `publicsensor` user.
 
-the default groundwater page is:
+The private `/data` directory and `options.json` are restricted to root. The public process can read the generated cache but cannot write it.
 
-    https://public.fink-holzbau.ch/groundwater/
+The complete private YAML configuration is never copied into the public cache.
 
-A second configured page with:
+## Universal configuration
 
-    path: outside-temperature
+Version 0.4.0 removes the previous groundwater-specific configuration.
 
-would be:
+Each page now contains four fields:
 
-    https://public.fink-holzbau.ch/outside-temperature/
+    path
+    name
+    yaml
+    entity_id
 
-`show_index` controls the root path. When enabled, `/` shows a read-only list of all enabled Public Sensors pages. When disabled, `/` returns 404. Unknown page paths always return 404.
+Exactly one of `yaml` or `entity_id` must be filled.
 
-Each page has its own data endpoint under the same path:
+Global options remain:
 
-    /groundwater/data
-    /outside-temperature/data
+    browser_refresh_seconds
+    ha_refresh_seconds
+    timezone
+    show_index
 
-## Default configuration
-
-Version 0.3.0 starts with the index enabled and one page:
+Example:
 
     browser_refresh_seconds: 60
     ha_refresh_seconds: 300
     timezone: Europe/Zurich
     show_index: true
-
     pages:
       - path: groundwater
-        enabled: true
-        title: Grundwasserstand und Pump Verlauf
-        sensor_entity: sensor.efimmo_bw_b1_f0_r0_sen0_groundwaterlevel
-        sensor_name: Wasserstand
-        sensor_unit: mm
-        decimals: 1
-        sensor_min: 500
-        sensor_max: 1000
-        binary_entity: switch.pumpe_1
-        binary_name: Pumpe
-        history_hours: 48
-        group_minutes: 5
-        threshold_enabled: true
-        threshold_value: 660
-        threshold_label: Trigger 660 mm
-
-The numeric series is averaged into the configured time buckets. The optional ON/OFF entity is shown as a step line and keeps its state changes.
-
-## Add another public page
-
-In Settings → Apps → Public Sensors → Configuration, add another entry under Public pages.
-
-Example:
-
-    path: outside-temperature
-    enabled: true
-    title: Aussentemperatur
-    sensor_entity: sensor.outside_temperature
-    sensor_name: Aussentemperatur
-    sensor_unit: °C
-    decimals: 1
-    sensor_min: -20
-    sensor_max: 45
-    binary_entity: ""
-    binary_name: Status
-    history_hours: 48
-    group_minutes: 5
-    threshold_enabled: false
-    threshold_value: 0
-    threshold_label: ""
-
-After saving the configuration, restart Public Sensors.
-
-The new page is then:
-
-    https://public.fink-holzbau.ch/outside-temperature/
-
-The path must contain only lowercase letters, numbers, hyphens, and underscores.
-
-## Configuration fields
-
-### Global options
-
-`browser_refresh_seconds`
-
-How often an open browser requests cached graph data.
-
-`ha_refresh_seconds`
-
-How often the app refreshes Recorder history from Home Assistant.
-
-`timezone`
-
-IANA timezone used for graph labels, for example `Europe/Zurich`.
-
-`show_index`
-
-When `true`, the root URL `/` lists all enabled public sensor pages as links. When `false`, the root URL returns 404 and direct sensor URLs continue to work.
-
-### Per-page options
-
-`path`
-
-Unique URL path for this page. Example: `groundwater`.
-
-`enabled`
-
-Controls whether this page is published.
-
-`title`
-
-Title shown above the graph.
-
-`sensor_entity`
-
-Numeric Home Assistant entity whose Recorder history is displayed.
-
-`sensor_name`
-
-Display name for the numeric series.
-
-`sensor_unit`
-
-Unit shown on the graph. Leave empty to use the entity's Home Assistant `unit_of_measurement`.
-
-`decimals`
-
-Number of decimal places shown in the current value and tooltip.
-
-`sensor_min` and `sensor_max`
-
-Fixed left-axis range.
-
-`binary_entity`
-
-Optional ON/OFF entity such as a switch. Leave empty if it is not required.
-
-`binary_name`
-
-Display name for the ON/OFF series.
-
-`history_hours`
-
-Recorder history period for this page.
-
-`group_minutes`
-
-Averaging bucket for the numeric history.
-
-`threshold_enabled`
-
-Controls whether the threshold line is shown.
-
-`threshold_value`
-
-Numeric position of the threshold line.
-
-`threshold_label`
-
-Text shown at the threshold line.
-
-## Home Assistant configuration UI
-
-Home Assistant app schemas support nested arrays, so each Public Sensors page appears as its own item in the app configuration. The fields of one page do not affect another page.
-
-The standard app schema supports fixed lists, but it does not provide a dynamic Home Assistant entity selector populated from the live entity registry. For version 0.3.0, enter the entity ID in the page configuration.
-
-A future Ingress-only administration page can add live entity dropdowns without exposing that administration UI through the public reverse proxy.
-
-## Internal test
-
-After updating and starting the app, check the log.
-
-A successful refresh looks similar to:
-
-    Page '/groundwater/' refreshed: 326 numeric points
-
-From the internal network, the index is:
-
-    http://HOME_ASSISTANT_IP:8098/
-
-and the groundwater page is:
-
-    http://HOME_ASSISTANT_IP:8098/groundwater/
-
-Health check:
-
-    http://HOME_ASSISTANT_IP:8098/healthz
-
-Unknown paths return 404:
-
-    http://HOME_ASSISTANT_IP:8098/not-configured/
-
-## Recommended nginx layout
-
-Keep Home Assistant and Public Sensors separate:
-
-    ga.fink-holzbau.ch
-        -> HOME_ASSISTANT_IP:8123
+        name: Grundwasserstand und Pump Verlauf
+        entity_id: ""
+        yaml: |
+          type: custom:apexcharts-card
+          header:
+            show: true
+            title: Grundwasserstand und Pump Verlauf
+          graph_span: 48h
+          now:
+            show: true
+          yaxis:
+            - id: level
+              min: 500
+              max: 1000
+              apex_config:
+                title:
+                  text: Wasserstand (mm)
+            - id: pump
+              min: 0
+              max: 1.2
+              opposite: true
+              apex_config:
+                title:
+                  text: Pumpe
+          apex_config:
+            annotations:
+              yaxis:
+                - y: 660
+                  yAxisIndex: 0
+                  label:
+                    text: Trigger 660 mm
+          series:
+            - entity: sensor.efimmo_bw_b1_f0_r0_sen0_groundwaterlevel
+              name: Wasserstand
+              yaxis_id: level
+              type: line
+              stroke_width: 1
+              group_by:
+                duration: 5min
+                func: avg
+            - entity: switch.pumpe_1
+              name: Pumpe
+              yaxis_id: pump
+              type: line
+              curve: stepline
+              stroke_width: 1
+
+## Page URLs
+
+With the reverse-proxy hostname:
 
     public.fink-holzbau.ch
-        -> HOME_ASSISTANT_IP:8098
 
-Do not proxy `public.fink-holzbau.ch` to port 8123.
+the example page is:
 
-Because port 8098 contains only the read-only Public Sensors application, nginx can proxy the whole public hostname to that port. The application itself accepts only configured page paths.
+    https://public.fink-holzbau.ch/groundwater/
+
+Its public data endpoint is:
+
+    https://public.fink-holzbau.ch/groundwater/data
+
+If `show_index` is true:
+
+    https://public.fink-holzbau.ch/
+
+lists every configured page as a link.
+
+If `show_index` is false, the root URL returns 404 while direct page URLs continue to work.
+
+## YAML mode
+
+Fill `yaml` and leave `entity_id` empty.
+
+The collector parses the YAML with a safe YAML parser. It searches the YAML for Home Assistant entity references under common keys such as:
+
+    entity:
+    entity_id:
+    entities:
+
+The raw YAML is private and is not sent to the browser.
+
+### ApexCharts-style YAML
+
+The built-in renderer understands the common parts of `custom:apexcharts-card` configuration used for Public Sensors:
+
+- `graph_span`
+- `now.show`
+- `yaxis`
+- Y-axis min/max/opposite/title
+- `series`
+- series name
+- `yaxis_id`
+- `type`
+- `curve: stepline`
+- `stroke_width`
+- `group_by.duration`
+- `group_by.func` with avg, min, max, last, or sum
+- Y-axis annotations
+
+Numeric history is plotted as numeric data. Non-numeric history is treated as an ON/OFF-style series when used in a graph.
+
+### Other Home Assistant YAML
+
+The configuration field accepts complete YAML, but Public Sensors does not execute Home Assistant frontend cards, JavaScript, Jinja templates, `EVAL`, or custom-card code.
+
+This is intentional. Executing arbitrary Lovelace/custom-card code in an Internet-facing page would weaken the isolation model.
+
+For YAML that contains entity references but no recognized graph series, Public Sensors publishes a generic read-only view of the referenced entity states and attributes.
+
+Additional safe renderers can be added later without changing the page configuration format.
+
+## Entity ID mode
+
+Fill `entity_id` and leave `yaml` empty.
 
 Example:
+
+    - path: outside-temperature
+      name: Aussentemperatur
+      yaml: ""
+      entity_id: sensor.outside_temperature
+
+The collector copies the selected Home Assistant entity state and attributes into the sanitized public cache.
+
+The public page shows:
+
+- configured public name;
+- current state;
+- unit when present;
+- all current entity attributes;
+- last update time.
+
+This mode is intended for a simple 1:1 public sensor view.
+
+Because all attributes are published, only use this mode for entities whose attributes are safe to make public. Some Home Assistant entities can contain coordinates, device information, URLs, or other data that should remain private.
+
+## Security properties
+
+The public web server:
+
+- runs as the unprivileged `publicsensor` user;
+- has `SUPERVISOR_TOKEN` removed from its environment;
+- does not import the Home Assistant collector code;
+- cannot read `/data/options.json`;
+- can only read the root-owned sanitized cache;
+- accepts only GET and HEAD;
+- has no service-call endpoint;
+- has no upload endpoint;
+- has no generic proxy endpoint;
+- does not expose the raw YAML configuration.
+
+The collector:
+
+- is not exposed on a TCP port;
+- holds the Supervisor token;
+- performs only GET requests to Home Assistant;
+- writes the sanitized cache atomically;
+- never writes the Supervisor token to the cache.
+
+This substantially reduces the impact of a compromise of the public Flask/Waitress process. It is still one container and therefore is not equivalent to putting the collector and web server in separate network namespaces. Network/firewall restrictions remain recommended.
+
+## Reverse proxy
+
+The intended deployment is:
+
+    ga.fink-holzbau.ch
+        -> Home Assistant :8123
+
+    public.fink-holzbau.ch
+        -> Home Assistant host :8098
+
+The public hostname must never proxy to Home Assistant port 8123.
+
+No authentication is required by Public Sensors itself.
+
+Example nginx configuration after the Let's Encrypt certificate exists:
 
     server {
         listen 80;
+        listen [::]:80;
         server_name public.fink-holzbau.ch;
-
         return 301 https://$host$request_uri;
     }
 
     server {
         listen 443 ssl http2;
+        listen [::]:443 ssl http2;
         server_name public.fink-holzbau.ch;
 
         ssl_certificate /etc/letsencrypt/live/public.fink-holzbau.ch/fullchain.pem;
@@ -241,15 +253,22 @@ Example:
 
         ssl_protocols TLSv1.2 TLSv1.3;
 
-        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
         add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
         add_header Referrer-Policy "no-referrer" always;
 
-        auth_basic "Public Sensors";
-        auth_basic_user_file /etc/nginx/.htpasswd-public-sensors;
+        location = /healthz {
+            return 404;
+        }
 
         location / {
+            limit_except GET HEAD {
+                deny all;
+            }
+
             proxy_pass http://HOME_ASSISTANT_IP:8098;
+            proxy_http_version 1.1;
 
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -258,51 +277,46 @@ Example:
         }
     }
 
-This gives one external hostname with multiple independent pages:
+For the current deployment, replace `HOME_ASSISTANT_IP` with the HAOS host IP reachable from the reverse proxy.
 
-    https://public.fink-holzbau.ch/groundwater/
-    https://public.fink-holzbau.ch/outside-temperature/
-    https://public.fink-holzbau.ch/whatever/
+Do not forward TCP 8098 directly from the Internet. Permit the reverse proxy to reach it and block unnecessary sources at the firewall where practical.
 
-With `show_index: true`, the root URL lists all enabled Public Sensors pages. With `show_index: false`, the root URL returns 404. Unknown paths always return 404.
+## Updating from 0.3.x
 
-If different viewers must have access to different pages, put `auth_basic` inside separate nginx `location` blocks instead of at server level.
+Version 0.4.0 intentionally removes the old page fields such as:
 
-## Security
+    sensor_entity
+    sensor_name
+    sensor_unit
+    sensor_min
+    sensor_max
+    binary_entity
+    history_hours
+    group_minutes
+    threshold_value
 
-- Do not expose Home Assistant port 8123 through the public hostname.
-- Do not port-forward TCP 8098 directly from the Internet.
-- Put HTTPS and authentication on nginx.
-- If possible, permit TCP 8098 only from internal networks and the reverse proxy.
-- Public Sensors uses `homeassistant_api: true` only to read Home Assistant state and Recorder history.
-- The Python application makes GET requests only to Home Assistant.
-- The browser never receives Home Assistant credentials.
-- The graph page has no service-call, POST, PUT, PATCH, or DELETE function.
-- Unknown page paths return 404.
-- The root path lists only enabled page titles and links when `show_index` is enabled. It does not expose Home Assistant entity IDs.
+The new configuration is universal and does not keep the old single-purpose schema.
 
-## Compatibility
-
-Version 0.3.0 can still read the original 0.1.x single-page settings. An existing 0.1.x installation therefore continues to publish its groundwater view at:
-
-    /groundwater/
-
-New configurations should use the `pages` list.
+If Home Assistant retains an old 0.3.x options object after updating, reset the Public Sensors configuration to defaults or replace the old `pages` entries with the new four-field structure before starting 0.4.0.
 
 ## Troubleshooting
 
-### Page returns 404
+### Collector says exactly one of yaml or entity_id is required
 
-Confirm that the configured `path` matches the URL and that `enabled` is true.
+For that page, fill one field and leave the other empty.
 
-### Page returns data unavailable
+### YAML page says no entity references were found
 
-Open the app log. Check the entity ID and confirm that Recorder contains numeric history for it.
+Ensure the YAML contains an entity under `entity`, `entity_id`, or `entities`.
 
-### ON/OFF line stays OFF
+### Public page returns 503
 
-The optional binary entity currently maps state `on` to 1 and all other states to 0.
+Check the Public Sensors log. The collector may still be starting or the configured Home Assistant entity/YAML may be invalid.
+
+### Public page returns 404
+
+Confirm that the path exists in `pages`. If only the root URL returns 404, check `show_index`.
 
 ### nginx returns 502
 
-Check the Home Assistant host address and the Public Sensors port mapping in Settings → Apps → Public Sensors → Network.
+Verify that the reverse proxy can reach the Home Assistant host on TCP 8098.
