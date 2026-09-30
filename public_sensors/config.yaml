@@ -3,7 +3,7 @@ version: "0.2.0"
 slug: "public_sensors"
 description: >-
   Publish independently configured, read-only Home Assistant history graphs
-  without exposing the Home Assistant frontend or credentials to the browser.
+  on separate URL paths without exposing the Home Assistant frontend.
 url: "https://github.com/ErnstFinkAG/ha_add-ons/tree/main/public_sensors"
 startup: services
 boot: auto
@@ -25,13 +25,14 @@ ports:
   8098/tcp: 8098
 ports_description:
   8098/tcp: "Read-only Public Sensors web interface"
-webui: "http://[HOST]:[PORT:8098]/"
+webui: "http://[HOST]:[PORT:8098]/groundwater/"
 options:
   browser_refresh_seconds: 60
   ha_refresh_seconds: 300
   timezone: "Europe/Zurich"
-  graphs:
-    - id: "groundwater"
+  pages:
+    - path: "groundwater"
+      enabled: true
       title: "Grundwasserstand und Pump Verlauf"
       sensor_entity: "sensor.efimmo_bw_b1_f0_r0_sen0_groundwaterlevel"
       sensor_name: "Wasserstand"
@@ -50,8 +51,9 @@ schema:
   browser_refresh_seconds: int
   ha_refresh_seconds: int
   timezone: str
-  graphs:
-    - id: str
+  pages:
+    - path: str
+      enabled: bool
       title: str
       sensor_entity: str
       sensor_name: str
@@ -67,8 +69,25 @@ schema:
       threshold_value: float
       threshold_label: str
 
-  # v0.1.x compatibility. Existing installations can update without losing
-  # their current single-graph configuration. New installations use graphs.
+  # v0.1.x/v0.2-development compatibility.
+  graphs:
+    - id: "str?"
+      path: "str?"
+      enabled: "bool?"
+      title: str
+      sensor_entity: str
+      sensor_name: str
+      sensor_unit: "str?"
+      decimals: "int?"
+      sensor_min: float
+      sensor_max: float
+      binary_entity: "str?"
+      binary_name: str
+      history_hours: int
+      group_minutes: int
+      threshold_enabled: "bool?"
+      threshold_value: float
+      threshold_label: str
   title: "str?"
   sensor_entity: "str?"
   sensor_name: "str?"
