@@ -1,0 +1,48 @@
+configuration:
+  title:
+    name: Page title
+    description: Title shown above the public read-only graph.
+  sensor_entity:
+    name: Numeric entity
+    description: Home Assistant entity ID for the main numeric history series.
+  sensor_name:
+    name: Numeric series name
+    description: Display name for the main numeric series.
+  sensor_unit:
+    name: Numeric unit
+    description: Unit shown on the graph. Leave empty to use the Home Assistant entity unit.
+  sensor_min:
+    name: Axis minimum
+    description: Fixed minimum for the numeric Y axis.
+  sensor_max:
+    name: Axis maximum
+    description: Fixed maximum for the numeric Y axis.
+  binary_entity:
+    name: ON/OFF entity
+    description: Optional entity ID for the read-only ON/OFF step series.
+  binary_name:
+    name: ON/OFF series name
+    description: Display name for the ON/OFF series.
+  history_hours:
+    name: History hours
+    description: Number of hours of Recorder history to show.
+  group_minutes:
+    name: Averaging minutes
+    description: Numeric history averaging bucket in minutes.
+  threshold_value:
+    name: Threshold value
+    description: Value of the horizontal threshold line.
+  threshold_label:
+    name: Threshold label
+    description: Text shown at the threshold line.
+  browser_refresh_seconds:
+    name: Browser refresh
+    description: Seconds between browser requests for cached graph data.
+  ha_refresh_seconds:
+    name: Home Assistant refresh
+    description: Seconds between Recorder history refreshes inside the app.
+  timezone:
+    name: Timezone
+    description: IANA timezone used for graph labels, for example Europe/Zurich.
+network:
+  8098/tcp: Public read-only web interface

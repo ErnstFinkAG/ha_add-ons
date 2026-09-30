@@ -1,0 +1,48 @@
+configuration:
+  title:
+    name: Seitentitel
+    description: Titel oberhalb des öffentlichen Nur-Lese-Diagramms.
+  sensor_entity:
+    name: Numerische Entität
+    description: Home-Assistant-Entity-ID für die numerische Hauptkurve.
+  sensor_name:
+    name: Name der numerischen Kurve
+    description: Anzeigename der numerischen Hauptkurve.
+  sensor_unit:
+    name: Einheit
+    description: Einheit im Diagramm. Leer lassen, um die Einheit aus Home Assistant zu verwenden.
+  sensor_min:
+    name: Achsenminimum
+    description: Fester Minimalwert der numerischen Y-Achse.
+  sensor_max:
+    name: Achsenmaximum
+    description: Fester Maximalwert der numerischen Y-Achse.
+  binary_entity:
+    name: EIN/AUS-Entität
+    description: Optionale Entity-ID für die Nur-Lese-EIN/AUS-Stufenkurve.
+  binary_name:
+    name: Name der EIN/AUS-Kurve
+    description: Anzeigename der EIN/AUS-Kurve.
+  history_hours:
+    name: Verlauf in Stunden
+    description: Anzahl Stunden Recorder-Verlauf im Diagramm.
+  group_minutes:
+    name: Mittelwertintervall
+    description: Intervall in Minuten für die Mittelung der numerischen Daten.
+  threshold_value:
+    name: Schwellwert
+    description: Wert der horizontalen Schwellwertlinie.
+  threshold_label:
+    name: Schwellwertbeschriftung
+    description: Text an der Schwellwertlinie.
+  browser_refresh_seconds:
+    name: Browser-Aktualisierung
+    description: Sekunden zwischen Abfragen der zwischengespeicherten Diagrammdaten.
+  ha_refresh_seconds:
+    name: Home-Assistant-Aktualisierung
+    description: Sekunden zwischen Recorder-Abfragen durch die App.
+  timezone:
+    name: Zeitzone
+    description: IANA-Zeitzone für Diagrammbeschriftungen, zum Beispiel Europe/Zurich.
+network:
+  8098/tcp: Öffentliche Nur-Lese-Weboberfläche

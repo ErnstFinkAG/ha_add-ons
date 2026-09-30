@@ -1,0 +1,60 @@
+name: "Public Sensors"
+version: "0.1.0"
+slug: "public_sensors"
+description: >-
+  Publish a small, read-only web graph from Home Assistant history without
+  exposing the Home Assistant frontend or credentials to the browser.
+url: "https://github.com/ErnstFinkAG/ha_add-ons/tree/main/public_sensors"
+startup: services
+boot: auto
+init: false
+homeassistant_api: true
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+build_from:
+  aarch64: "ghcr.io/home-assistant/aarch64-base:3.21"
+  amd64: "ghcr.io/home-assistant/amd64-base:3.21"
+  armhf: "ghcr.io/home-assistant/armhf-base:3.21"
+  armv7: "ghcr.io/home-assistant/armv7-base:3.21"
+  i386: "ghcr.io/home-assistant/i386-base:3.21"
+ports:
+  8098/tcp: 8098
+ports_description:
+  8098/tcp: "Read-only Public Sensors web interface"
+webui: "http://[HOST]:[PORT:8098]/"
+options:
+  title: "Grundwasserstand und Pump Verlauf"
+  sensor_entity: "sensor.efimmo_bw_b1_f0_r0_sen0_groundwaterlevel"
+  sensor_name: "Wasserstand"
+  sensor_unit: "mm"
+  sensor_min: 500
+  sensor_max: 1000
+  binary_entity: "switch.pumpe_1"
+  binary_name: "Pumpe"
+  history_hours: 48
+  group_minutes: 5
+  threshold_value: 660
+  threshold_label: "Trigger 660 mm"
+  browser_refresh_seconds: 60
+  ha_refresh_seconds: 300
+  timezone: "Europe/Zurich"
+schema:
+  title: str
+  sensor_entity: str
+  sensor_name: str
+  sensor_unit: "str?"
+  sensor_min: float
+  sensor_max: float
+  binary_entity: "str?"
+  binary_name: str
+  history_hours: int
+  group_minutes: int
+  threshold_value: float
+  threshold_label: str
+  browser_refresh_seconds: int
+  ha_refresh_seconds: int
+  timezone: str
