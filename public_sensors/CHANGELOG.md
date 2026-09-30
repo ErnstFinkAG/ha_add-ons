@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- Add multiple independently configured public pages.
+- Use a path for each page, for example `/groundwater/`.
+- Add an enable switch for each page.
+- Add configurable decimal places per page.
+- Keep the root path unpublished and return 404 for unknown paths.
+- Keep graph data below the same public path, for example `/groundwater/data`.
+- Preserve compatibility with the original 0.1.x single groundwater configuration.
+
 ## 0.1.0
 
 - Initial Public Sensors release.
