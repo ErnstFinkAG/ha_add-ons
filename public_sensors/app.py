@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import os
+import re
 import threading
 import time
 from collections import defaultdict
@@ -22,71 +23,155 @@ logging.basicConfig(
 OPTIONS_PATH = Path("/data/options.json")
 HA_API_BASE = "http://supervisor/core/api"
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
+PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 APP = Flask(__name__, static_folder="static", template_folder="templates")
 SESSION = requests.Session()
 CACHE_LOCK = threading.Lock()
 CACHE: dict[str, Any] = {
-    "data": None,
-    "error": "Waiting for first Home Assistant history refresh",
-    "updated_monotonic": 0.0,
+    "catalog": [],
+    "data": {},
+    "errors": {},
+    "updated_monotonic": {},
+    "global_error": "Waiting for first Home Assistant history refresh",
 }
 
 
-def load_options() -> dict[str, Any]:
-    defaults: dict[str, Any] = {
-        "title": "Grundwasserstand und Pump Verlauf",
-        "sensor_entity": "sensor.efimmo_bw_b1_f0_r0_sen0_groundwaterlevel",
-        "sensor_name": "Wasserstand",
-        "sensor_unit": "mm",
-        "sensor_min": 500.0,
-        "sensor_max": 1000.0,
-        "binary_entity": "switch.pumpe_1",
-        "binary_name": "Pumpe",
-        "history_hours": 48,
-        "group_minutes": 5,
-        "threshold_value": 660.0,
-        "threshold_label": "Trigger 660 mm",
-        "browser_refresh_seconds": 60,
-        "ha_refresh_seconds": 300,
-        "timezone": "Europe/Zurich",
-    }
+def clamp_int(value: Any, minimum: int, maximum: int, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
 
+
+def as_float(value: Any, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if math.isfinite(parsed) else default
+
+
+def load_raw_options() -> dict[str, Any]:
     try:
         with OPTIONS_PATH.open("r", encoding="utf-8") as handle:
             configured = json.load(handle)
             if isinstance(configured, dict):
-                defaults.update(configured)
+                return configured
     except FileNotFoundError:
         LOG.warning("%s does not exist; using defaults", OPTIONS_PATH)
     except Exception:
         LOG.exception("Could not read %s; using defaults", OPTIONS_PATH)
 
-    defaults["history_hours"] = max(1, min(int(defaults["history_hours"]), 24 * 31))
-    defaults["group_minutes"] = max(1, min(int(defaults["group_minutes"]), 1440))
-    defaults["browser_refresh_seconds"] = max(
-        15, min(int(defaults["browser_refresh_seconds"]), 3600)
-    )
-    defaults["ha_refresh_seconds"] = max(
-        30, min(int(defaults["ha_refresh_seconds"]), 3600)
-    )
-    defaults["sensor_min"] = float(defaults["sensor_min"])
-    defaults["sensor_max"] = float(defaults["sensor_max"])
-    defaults["threshold_value"] = float(defaults["threshold_value"])
+    return {}
 
-    if defaults["sensor_max"] <= defaults["sensor_min"]:
-        raise ValueError("sensor_max must be greater than sensor_min")
 
-    return defaults
+def normalize_profile(raw: dict[str, Any], index: int) -> dict[str, Any]:
+    profile_id = str(raw.get("id") or f"sensor-{index + 1}").strip().lower()
+    if not PROFILE_ID_RE.fullmatch(profile_id):
+        raise ValueError(
+            f"Invalid graph id '{profile_id}'. Use lowercase letters, numbers, '-' or '_'."
+        )
+
+    sensor_entity = str(raw.get("sensor_entity") or "").strip()
+    if not sensor_entity:
+        raise ValueError(f"Graph '{profile_id}' has no sensor_entity")
+
+    sensor_min = as_float(raw.get("sensor_min"), 0.0)
+    sensor_max = as_float(raw.get("sensor_max"), 100.0)
+    if sensor_max <= sensor_min:
+        raise ValueError(
+            f"Graph '{profile_id}' sensor_max must be greater than sensor_min"
+        )
+
+    return {
+        "id": profile_id,
+        "title": str(raw.get("title") or profile_id),
+        "sensor_entity": sensor_entity,
+        "sensor_name": str(raw.get("sensor_name") or "").strip(),
+        "sensor_unit": str(raw.get("sensor_unit") or "").strip(),
+        "decimals": clamp_int(raw.get("decimals"), 0, 6, 2),
+        "sensor_min": sensor_min,
+        "sensor_max": sensor_max,
+        "binary_entity": str(raw.get("binary_entity") or "").strip(),
+        "binary_name": str(raw.get("binary_name") or "Status").strip(),
+        "history_hours": clamp_int(raw.get("history_hours"), 1, 24 * 31, 48),
+        "group_minutes": clamp_int(raw.get("group_minutes"), 1, 1440, 5),
+        "threshold_enabled": bool(raw.get("threshold_enabled", True)),
+        "threshold_value": as_float(raw.get("threshold_value"), 0.0),
+        "threshold_label": str(raw.get("threshold_label") or "").strip(),
+    }
+
+
+def legacy_profile(options: dict[str, Any]) -> dict[str, Any]:
+    return normalize_profile(
+        {
+            "id": "groundwater",
+            "title": options.get("title", "Grundwasserstand und Pump Verlauf"),
+            "sensor_entity": options.get(
+                "sensor_entity",
+                "sensor.efimmo_bw_b1_f0_r0_sen0_groundwaterlevel",
+            ),
+            "sensor_name": options.get("sensor_name", "Wasserstand"),
+            "sensor_unit": options.get("sensor_unit", "mm"),
+            "decimals": 1,
+            "sensor_min": options.get("sensor_min", 500),
+            "sensor_max": options.get("sensor_max", 1000),
+            "binary_entity": options.get("binary_entity", "switch.pumpe_1"),
+            "binary_name": options.get("binary_name", "Pumpe"),
+            "history_hours": options.get("history_hours", 48),
+            "group_minutes": options.get("group_minutes", 5),
+            "threshold_enabled": True,
+            "threshold_value": options.get("threshold_value", 660),
+            "threshold_label": options.get("threshold_label", "Trigger 660 mm"),
+        },
+        0,
+    )
+
+
+def load_options() -> dict[str, Any]:
+    configured = load_raw_options()
+
+    browser_refresh_seconds = clamp_int(
+        configured.get("browser_refresh_seconds"), 15, 3600, 60
+    )
+    ha_refresh_seconds = clamp_int(
+        configured.get("ha_refresh_seconds"), 30, 3600, 300
+    )
+    timezone_name = str(configured.get("timezone") or "Europe/Zurich").strip()
+
+    raw_profiles = configured.get("graphs")
+    profiles: list[dict[str, Any]] = []
+
+    if isinstance(raw_profiles, list) and raw_profiles:
+        for index, raw_profile in enumerate(raw_profiles):
+            if not isinstance(raw_profile, dict):
+                raise ValueError(f"graphs[{index}] must be an object")
+            profiles.append(normalize_profile(raw_profile, index))
+    else:
+        profiles.append(legacy_profile(configured))
+
+    seen: set[str] = set()
+    for profile in profiles:
+        if profile["id"] in seen:
+            raise ValueError(f"Duplicate graph id '{profile['id']}'")
+        seen.add(profile["id"])
+
+    return {
+        "browser_refresh_seconds": browser_refresh_seconds,
+        "ha_refresh_seconds": ha_refresh_seconds,
+        "timezone": timezone_name,
+        "profiles": profiles,
+    }
 
 
 def ha_get(path: str, params: dict[str, Any] | None = None) -> Any:
     if not SUPERVISOR_TOKEN:
         raise RuntimeError("SUPERVISOR_TOKEN is not available")
 
-    url = f"{HA_API_BASE}{path}"
     response = SESSION.get(
-        url,
+        f"{HA_API_BASE}{path}",
         params=params,
         headers={
             "Authorization": f"Bearer {SUPERVISOR_TOKEN}",
@@ -105,12 +190,10 @@ def utc_iso(value: datetime) -> str:
 def parse_timestamp(value: str | None) -> int | None:
     if not value:
         return None
-
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
-
     return int(dt.timestamp() * 1000)
 
 
@@ -118,11 +201,9 @@ def find_series(history: list[Any], entity_id: str) -> list[dict[str, Any]]:
     for series in history:
         if not isinstance(series, list) or not series:
             continue
-
         first = series[0]
         if isinstance(first, dict) and first.get("entity_id") == entity_id:
             return [item for item in series if isinstance(item, dict)]
-
     return []
 
 
@@ -158,8 +239,7 @@ def numeric_points(
     result: list[list[float | int]] = []
     for bucket in sorted(buckets):
         values = buckets[bucket]
-        result.append([bucket, round(sum(values) / len(values), 3)])
-
+        result.append([bucket, round(sum(values) / len(values), 6)])
     return result
 
 
@@ -177,25 +257,20 @@ def binary_points(
             continue
 
         value = 1 if str(item.get("state", "")).lower() == "on" else 0
-
         if result and result[-1][1] == value:
             continue
-
         result.append([timestamp, value])
 
     if not result:
         return [[start_ms, fallback_value], [end_ms, fallback_value]]
 
-    first_value = result[0][1]
-    last_value = result[-1][1]
-
     if result[0][0] > start_ms:
-        result.insert(0, [start_ms, first_value])
+        result.insert(0, [start_ms, result[0][1]])
     else:
         result[0][0] = max(result[0][0], start_ms)
 
     if result[-1][0] < end_ms:
-        result.append([end_ms, last_value])
+        result.append([end_ms, result[-1][1]])
 
     return result
 
@@ -205,15 +280,17 @@ def current_entity(entity_id: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def build_payload() -> dict[str, Any]:
-    options = load_options()
+def build_payload(
+    profile: dict[str, Any],
+    browser_refresh_seconds: int,
+    timezone_name: str,
+) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
-    start = now - timedelta(hours=options["history_hours"])
+    start = now - timedelta(hours=profile["history_hours"])
 
-    entities = [options["sensor_entity"]]
-    binary_entity = str(options.get("binary_entity", "")).strip()
-    if binary_entity:
-        entities.append(binary_entity)
+    entities = [profile["sensor_entity"]]
+    if profile["binary_entity"]:
+        entities.append(profile["binary_entity"])
 
     history = ha_get(
         f"/history/period/{utc_iso(start)}",
@@ -224,34 +301,37 @@ def build_payload() -> dict[str, Any]:
             "no_attributes": "",
         },
     )
-
     if not isinstance(history, list):
         raise RuntimeError("Unexpected response from Home Assistant history API")
 
     start_ms = int(start.timestamp() * 1000)
     end_ms = int(now.timestamp() * 1000)
 
-    sensor_series = find_series(history, options["sensor_entity"])
+    sensor_series = find_series(history, profile["sensor_entity"])
     sensor_data = numeric_points(
         sensor_series,
-        options["group_minutes"],
+        profile["group_minutes"],
         start_ms,
         end_ms,
     )
+    if not sensor_data:
+        raise RuntimeError(
+            f"No numeric history data returned for {profile['sensor_entity']}"
+        )
 
-    sensor_state = current_entity(options["sensor_entity"])
+    sensor_state = current_entity(profile["sensor_entity"])
     sensor_attributes = sensor_state.get("attributes", {})
     if not isinstance(sensor_attributes, dict):
         sensor_attributes = {}
 
-    sensor_unit = str(options.get("sensor_unit", "")).strip()
+    sensor_unit = profile["sensor_unit"]
     if not sensor_unit:
         sensor_unit = str(sensor_attributes.get("unit_of_measurement", ""))
 
-    sensor_name = str(options.get("sensor_name", "")).strip()
+    sensor_name = profile["sensor_name"]
     if not sensor_name:
         sensor_name = str(
-            sensor_attributes.get("friendly_name", options["sensor_entity"])
+            sensor_attributes.get("friendly_name", profile["sensor_entity"])
         )
 
     try:
@@ -259,92 +339,120 @@ def build_payload() -> dict[str, Any]:
         if not math.isfinite(current_sensor):
             raise ValueError("non-finite state")
     except (TypeError, ValueError):
-        current_sensor = sensor_data[-1][1] if sensor_data else None
+        current_sensor = sensor_data[-1][1]
 
     binary_payload = None
-    if binary_entity:
-        binary_series = find_series(history, binary_entity)
-        binary_state = current_entity(binary_entity)
+    if profile["binary_entity"]:
+        binary_series = find_series(history, profile["binary_entity"])
+        binary_state = current_entity(profile["binary_entity"])
         binary_current = str(binary_state.get("state", "unknown")).lower()
         fallback_binary = 1 if binary_current == "on" else 0
-        binary_data = binary_points(
-            binary_series,
-            start_ms,
-            end_ms,
-            fallback_binary,
-        )
-
         binary_payload = {
-            "entity_id": binary_entity,
-            "name": str(options.get("binary_name", "Binary sensor")),
+            "name": profile["binary_name"],
             "current": binary_current,
-            "data": binary_data,
+            "data": binary_points(
+                binary_series,
+                start_ms,
+                end_ms,
+                fallback_binary,
+            ),
         }
 
-    if not sensor_data:
-        raise RuntimeError(
-            f"No numeric history data returned for {options['sensor_entity']}"
-        )
+    threshold_payload = None
+    if profile["threshold_enabled"]:
+        threshold_payload = {
+            "value": profile["threshold_value"],
+            "label": profile["threshold_label"]
+            or str(profile["threshold_value"]),
+        }
 
-    payload = {
-        "title": str(options["title"]),
+    return {
+        "graph_id": profile["id"],
+        "title": profile["title"],
         "updated": utc_iso(now),
         "range": {
             "start": start_ms,
             "end": end_ms,
-            "hours": options["history_hours"],
+            "hours": profile["history_hours"],
         },
-        "refresh_seconds": options["browser_refresh_seconds"],
-        "timezone": str(options["timezone"]),
+        "refresh_seconds": browser_refresh_seconds,
+        "timezone": timezone_name,
         "sensor": {
-            "entity_id": options["sensor_entity"],
             "name": sensor_name,
             "unit": sensor_unit,
-            "min": options["sensor_min"],
-            "max": options["sensor_max"],
+            "decimals": profile["decimals"],
+            "min": profile["sensor_min"],
+            "max": profile["sensor_max"],
             "current": current_sensor,
             "data": sensor_data,
         },
         "binary": binary_payload,
-        "threshold": {
-            "value": options["threshold_value"],
-            "label": str(options["threshold_label"]),
-        },
+        "threshold": threshold_payload,
     }
-
-    return payload
 
 
 def refresh_cache() -> None:
     try:
-        payload = build_payload()
+        options = load_options()
     except Exception as exc:
-        LOG.exception("Could not refresh Home Assistant history")
+        LOG.exception("Could not load Public Sensors configuration")
         with CACHE_LOCK:
-            CACHE["error"] = str(exc)
+            CACHE["global_error"] = str(exc)
         return
 
-    with CACHE_LOCK:
-        CACHE["data"] = payload
-        CACHE["error"] = None
-        CACHE["updated_monotonic"] = time.monotonic()
+    profiles = options["profiles"]
+    catalog = [
+        {"id": profile["id"], "title": profile["title"]}
+        for profile in profiles
+    ]
 
-    LOG.info(
-        "History refreshed: %s numeric points",
-        len(payload["sensor"]["data"]),
-    )
+    fresh_data: dict[str, Any] = {}
+    fresh_errors: dict[str, str] = {}
+    fresh_times: dict[str, float] = {}
+
+    with CACHE_LOCK:
+        old_data = dict(CACHE["data"])
+        old_times = dict(CACHE["updated_monotonic"])
+
+    for profile in profiles:
+        profile_id = profile["id"]
+        try:
+            payload = build_payload(
+                profile,
+                options["browser_refresh_seconds"],
+                options["timezone"],
+            )
+            fresh_data[profile_id] = payload
+            fresh_times[profile_id] = time.monotonic()
+            LOG.info(
+                "Graph '%s' refreshed: %s numeric points",
+                profile_id,
+                len(payload["sensor"]["data"]),
+            )
+        except Exception as exc:
+            LOG.exception("Could not refresh graph '%s'", profile_id)
+            fresh_errors[profile_id] = str(exc)
+
+            if profile_id in old_data:
+                fresh_data[profile_id] = old_data[profile_id]
+                fresh_times[profile_id] = old_times.get(profile_id, 0.0)
+
+    with CACHE_LOCK:
+        CACHE["catalog"] = catalog
+        CACHE["data"] = fresh_data
+        CACHE["errors"] = fresh_errors
+        CACHE["updated_monotonic"] = fresh_times
+        CACHE["global_error"] = None
 
 
 def refresh_loop() -> None:
     while True:
         refresh_cache()
-
         try:
             interval = load_options()["ha_refresh_seconds"]
         except Exception:
             LOG.exception("Could not read refresh interval; using 300 seconds")
             interval = 300
-
         time.sleep(interval)
 
 
@@ -382,22 +490,65 @@ def index():
     return render_template("index.html")
 
 
+@APP.get("/api/catalog")
+def api_catalog():
+    with CACHE_LOCK:
+        catalog = list(CACHE["catalog"])
+        global_error = CACHE["global_error"]
+
+    if not catalog:
+        try:
+            options = load_options()
+            catalog = [
+                {"id": profile["id"], "title": profile["title"]}
+                for profile in options["profiles"]
+            ]
+        except Exception as exc:
+            global_error = str(exc)
+
+    if not catalog:
+        return jsonify({"error": global_error or "No graphs configured"}), 503
+
+    response = jsonify({"graphs": catalog})
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
+
+
 @APP.get("/api/data")
 def api_data():
-    with CACHE_LOCK:
-        data = CACHE["data"]
-        error = CACHE["error"]
-        updated_monotonic = CACHE["updated_monotonic"]
+    requested_id = str(request.args.get("graph") or "").strip().lower()
 
+    with CACHE_LOCK:
+        catalog = list(CACHE["catalog"])
+        data_by_id = dict(CACHE["data"])
+        errors = dict(CACHE["errors"])
+        updated_times = dict(CACHE["updated_monotonic"])
+        global_error = CACHE["global_error"]
+
+    if not catalog:
+        return jsonify({"error": global_error or "No graphs configured"}), 503
+
+    valid_ids = [item["id"] for item in catalog]
+    graph_id = requested_id or valid_ids[0]
+
+    if graph_id not in valid_ids:
+        return jsonify({"error": "unknown_graph", "graph": graph_id}), 404
+
+    data = data_by_id.get(graph_id)
     if data is None:
-        return jsonify({"error": error or "No data available"}), 503
+        return jsonify(
+            {"error": errors.get(graph_id) or "Graph data is not available yet"}
+        ), 503
 
     response = jsonify(
         {
             **data,
             "cache_age_seconds": round(
-                max(0.0, time.monotonic() - updated_monotonic), 1
+                max(0.0, time.monotonic() - updated_times.get(graph_id, 0.0)),
+                1,
             ),
+            "stale": graph_id in errors,
+            "refresh_error": errors.get(graph_id),
         }
     )
     response.headers["Cache-Control"] = "no-store, max-age=0"
@@ -407,11 +558,34 @@ def api_data():
 @APP.get("/healthz")
 def healthz():
     with CACHE_LOCK:
-        ready = CACHE["data"] is not None
-        error = CACHE["error"]
+        catalog = list(CACHE["catalog"])
+        data_by_id = dict(CACHE["data"])
+        errors = dict(CACHE["errors"])
+        global_error = CACHE["global_error"]
 
-    status = 200 if ready else 503
-    return jsonify({"status": "ok" if ready else "starting", "error": error}), status
+    total = len(catalog)
+    ready = sum(1 for item in catalog if item["id"] in data_by_id)
+
+    if ready == 0:
+        return jsonify(
+            {
+                "status": "starting" if total else "error",
+                "ready": ready,
+                "total": total,
+                "error": global_error,
+                "graph_errors": errors,
+            }
+        ), 503
+
+    status = "ok" if ready == total and not errors else "degraded"
+    return jsonify(
+        {
+            "status": status,
+            "ready": ready,
+            "total": total,
+            "graph_errors": errors,
+        }
+    ), 200
 
 
 def start_background_worker() -> None:
