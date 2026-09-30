@@ -11,21 +11,27 @@ Version 0.4 uses a universal page definition. Every public page has:
 
 Exactly one of `yaml` or `entity_id` must be filled for each page.
 
+The repository default contains no sensor entities:
+
+    pages: []
+
+This lets a fresh installation start cleanly on any Home Assistant instance. Add your own pages through the app configuration after installation.
+
 Example URLs:
 
-- `https://public.example.com/groundwater/`
 - `https://public.example.com/outside-temperature/`
+- `https://public.example.com/energy/`
 
 The optional index at `/` lists all configured pages.
 
 ## Security design
 
-Public Sensors now separates collection from serving:
+Public Sensors separates collection from serving:
 
-1. A private collector receives the Home Assistant Supervisor token and reads only the configured entities/history.
+1. A private collector receives the Home Assistant Supervisor token and reads only configured entities/history.
 2. The collector writes a sanitized JSON cache.
-3. The public web process runs as an unprivileged user with `SUPERVISOR_TOKEN` removed.
-4. The public process reads only the sanitized cache and does not read the private add-on options.
+3. The public web process runs as an unprivileged user with a clean environment and no Supervisor/Home Assistant environment variables.
+4. The public process reads only the sanitized cache and does not read the private app options.
 
 The raw YAML configuration is not copied to the public cache.
 
