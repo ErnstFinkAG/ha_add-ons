@@ -108,7 +108,10 @@ def page_view(public_path: str):
     if public_path not in known:
         abort(404)
 
-    return render_template("index.html")
+    return render_template(
+        "index.html",
+        show_index=bool(cache.get("show_index", True)),
+    )
 
 
 @APP.get("/<public_path>/data")
