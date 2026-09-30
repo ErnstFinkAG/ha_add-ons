@@ -175,6 +175,16 @@ def healthz():
     ready = len(data) if isinstance(data, dict) else 0
     error_count = len(errors) if isinstance(errors, dict) else 0
 
+    if total == 0:
+        return jsonify(
+            {
+                "status": "unconfigured",
+                "ready": 0,
+                "total": 0,
+                "errors": 0,
+            }
+        ), 200
+
     return jsonify(
         {
             "status": (
