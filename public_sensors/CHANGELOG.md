@@ -13,6 +13,7 @@
 - Keep private options unreadable by the public web user.
 - Never copy the raw private YAML into the public cache.
 - Remove the old single-purpose and legacy page configuration.
+- Show a return-to-index button on every public sensor page when `show_index` is enabled.
 
 ## 0.3.1
 
