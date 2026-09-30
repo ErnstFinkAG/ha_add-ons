@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <title>Public Sensors</title>
+  <link rel="stylesheet" href="./static/style.css">
+  <script src="./static/app.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="card" aria-labelledby="page-title">
+      <header class="card-header">
+        <div>
+          <p class="eyebrow">Home Assistant · Read only</p>
+          <h1 id="page-title">Public Sensors</h1>
+        </div>
+        <div class="status-row" aria-label="Aktuelle Werte">
+          <span class="status-chip" id="sensor-current">Wasserstand: —</span>
+          <span class="status-chip" id="binary-chip" hidden>
+            <span id="binary-current">Pumpe: —</span>
+          </span>
+        </div>
+      </header>
+
+      <div id="error" class="error" role="status" hidden></div>
+
+      <div id="chart-shell" class="chart-shell">
+        <canvas
+          id="chart"
+          role="img"
+          aria-label="Zeitverlauf der veröffentlichten Home Assistant Sensorwerte"
+        ></canvas>
+        <div id="tooltip" class="tooltip" hidden></div>
+      </div>
+
+      <footer class="card-footer">
+        <span id="updated">Daten werden geladen …</span>
+        <span>Nur Anzeige · keine Steuerung</span>
+      </footer>
+    </section>
+  </main>
+</body>
+</html>
