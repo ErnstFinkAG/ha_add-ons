@@ -1,67 +1,31 @@
 configuration:
   browser_refresh_seconds:
     name: Browser-Aktualisierung
-    description: Sekunden zwischen Abfragen der zwischengespeicherten Diagrammdaten.
+    description: Sekunden zwischen Browser-Abfragen der öffentlichen Cache-Daten.
   ha_refresh_seconds:
     name: Home-Assistant-Aktualisierung
-    description: Sekunden zwischen Recorder-Abfragen durch die App.
+    description: Sekunden zwischen internen Abfragen des privaten Collectors bei Home Assistant.
   timezone:
     name: Zeitzone
-    description: IANA-Zeitzone für Diagrammbeschriftungen, zum Beispiel Europe/Zurich.
+    description: IANA-Zeitzone für öffentliche Seiten, zum Beispiel Europe/Zurich.
   show_index:
     name: Indexseite anzeigen
-    description: Liste aller aktivierten öffentlichen Sensorseiten unter der Root-URL anzeigen.
+    description: Liste aller konfigurierten öffentlichen Seiten unter der Root-URL anzeigen.
   pages:
     name: Öffentliche Seiten
-    description: Unabhängig konfigurierte Nur-Lese-Sensorseiten.
+    description: Universelle öffentliche Seiten. Jede Seite verwendet entweder vollständiges YAML oder eine Entity-ID.
     fields:
       path:
-        name: URL-Pfad
-        description: Kleingeschriebener Pfad unter der öffentlichen Domain, zum Beispiel groundwater.
-      enabled:
-        name: Aktiv
-        description: Diese konfigurierte Seite veröffentlichen.
-      title:
-        name: Seitentitel
-        description: Titel oberhalb dieses Diagramms.
-      sensor_entity:
-        name: Numerische Entität
-        description: Home-Assistant-Entity-ID für die numerische Hauptkurve.
-      sensor_name:
-        name: Name der numerischen Kurve
-        description: Anzeigename der numerischen Hauptkurve.
-      sensor_unit:
-        name: Einheit
-        description: Einheit im Diagramm. Leer lassen, um die Einheit der Entität zu verwenden.
-      decimals:
-        name: Dezimalstellen
-        description: Anzahl der angezeigten Dezimalstellen.
-      sensor_min:
-        name: Achsenminimum
-        description: Fester Minimalwert der numerischen Y-Achse.
-      sensor_max:
-        name: Achsenmaximum
-        description: Fester Maximalwert der numerischen Y-Achse.
-      binary_entity:
-        name: EIN/AUS-Entität
-        description: Optionale Entity-ID für eine EIN/AUS-Stufenkurve.
-      binary_name:
-        name: Name der EIN/AUS-Kurve
-        description: Anzeigename der EIN/AUS-Kurve.
-      history_hours:
-        name: Verlauf in Stunden
-        description: Anzahl Stunden Recorder-Verlauf auf dieser Seite.
-      group_minutes:
-        name: Mittelwertintervall
-        description: Intervall in Minuten für die Mittelung der numerischen Daten.
-      threshold_enabled:
-        name: Schwellwert anzeigen
-        description: Eine horizontale Schwellwertlinie anzeigen.
-      threshold_value:
-        name: Schwellwert
-        description: Wert der horizontalen Schwellwertlinie.
-      threshold_label:
-        name: Schwellwertbeschriftung
-        description: Text an der Schwellwertlinie.
+        name: URL / Pfad
+        description: Kleingeschriebener öffentlicher Pfad unter der Domain, zum Beispiel groundwater.
+      name:
+        name: Name
+        description: Öffentlicher Anzeigename für Seite und Index.
+      yaml:
+        name: Vollständiges YAML
+        description: Vollständiges Home-Assistant-Card-YAML. Leer lassen, wenn Entity-ID verwendet wird.
+      entity_id:
+        name: Entity-ID
+        description: Zustand und Attribute einer Home-Assistant-Entität auf die öffentliche Seite kopieren. Leer lassen, wenn YAML verwendet wird.
 network:
-  8098/tcp: Öffentliche Nur-Lese-Weboberfläche
+  8098/tcp: Zugangsdatenfreie Nur-Lese-Weboberfläche von Public Sensors
