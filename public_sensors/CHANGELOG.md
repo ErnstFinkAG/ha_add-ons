@@ -4,6 +4,9 @@
 
 - Add a return-to-index button on every public sensor page when `show_index` is enabled.
 - Hide the return button completely when the index is disabled.
+- Remove deployment-specific sensor defaults from the repository configuration.
+- Start fresh installations with an empty `pages` list and a neutral UTC timezone.
+- Allow Public Sensors to start cleanly before any public pages are configured.
 
 ## 0.4.0
 
