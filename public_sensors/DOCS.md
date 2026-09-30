@@ -128,6 +128,8 @@ lists every configured page as a link.
 
 If `show_index` is false, the root URL returns 404 while direct page URLs continue to work.
 
+When `show_index` is true, every public sensor page shows a `← Übersicht` button that returns to the root index. When `show_index` is false, that button is not rendered.
+
 ## YAML mode
 
 Fill `yaml` and leave `entity_id` empty.
