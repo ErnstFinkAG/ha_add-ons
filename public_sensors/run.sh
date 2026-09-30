@@ -18,9 +18,12 @@ if ! kill -0 "${COLLECTOR_PID}" 2>/dev/null; then
     exit 1
 fi
 
-# The Internet-facing process must not inherit the Home Assistant token.
-unset SUPERVISOR_TOKEN
-
+# Start the Internet-facing process with a clean environment. It receives no
+# Supervisor/Home Assistant environment variables at all.
 bashio::log.info "Starting credential-free Public Sensors web server on port 8098"
-exec su-exec publicsensor:publicsensor \
+exec env -i \
+    PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    HOME="/tmp" \
+    PYTHONUNBUFFERED="1" \
+    su-exec publicsensor:publicsensor \
     waitress-serve --listen=0.0.0.0:8098 --threads=4 web:APP
