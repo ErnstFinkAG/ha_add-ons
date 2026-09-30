@@ -1,15 +1,15 @@
 # Public Sensors
 
-A small Home Assistant app/add-on that publishes selected Home Assistant history as a standalone, read-only web graph.
+Public Sensors publishes selected Home Assistant history as standalone, read-only web pages.
 
-The browser does not receive a Home Assistant access token and cannot call Home Assistant services through this app. The app reads Home Assistant history through the internal Supervisor/Core API, caches the result, and exposes only a small display page and JSON data endpoint.
+Each configured page is independent and has its own URL path. For example:
 
-The first release supports:
+- `https://public.example.com/groundwater/`
+- `https://public.example.com/tank-level/`
+- `https://public.example.com/temperature/`
 
-- one numeric sensor, such as a water level;
-- one optional ON/OFF entity, such as a pump switch;
-- one threshold line;
-- a fixed history period and fixed axes;
-- hover tooltips only, with no zoom, pan, export, configuration, or control functions.
+Each page can define its own entity, title, unit, axis, decimal places, history range, averaging interval, optional ON/OFF companion entity, and optional threshold.
 
-See DOCS.md for installation, configuration, and reverse-proxy examples.
+The browser does not receive a Home Assistant access token and cannot call Home Assistant services through this app. The app reads Home Assistant through the internal Supervisor/Core API and exposes only read-only graph data.
+
+See `DOCS.md` for configuration and reverse-proxy examples.
