@@ -306,3 +306,27 @@ canvas {
     padding-top: 2px;
   }
 }
+
+
+.index-return {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  margin: 0 0 10px;
+  padding: 5px 10px;
+  border: 1px solid #303740;
+  border-radius: 8px;
+  background: #171a20;
+  color: #dfe4ea;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.index-return:hover,
+.index-return:focus-visible {
+  border-color: #4a5663;
+  background: #1c2027;
+  color: #ffffff;
+  outline: none;
+}
