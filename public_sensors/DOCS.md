@@ -28,7 +28,7 @@ would be:
 
     https://public.fink-holzbau.ch/outside-temperature/
 
-The app returns 404 for the root path and for unknown page paths.
+`show_index` controls the root path. When enabled, `/` shows a read-only list of all enabled Public Sensors pages. When disabled, `/` returns 404. Unknown page paths always return 404.
 
 Each page has its own data endpoint under the same path:
 
@@ -37,11 +37,12 @@ Each page has its own data endpoint under the same path:
 
 ## Default configuration
 
-Version 0.2.0 starts with one page:
+Version 0.3.0 starts with the index enabled and one page:
 
     browser_refresh_seconds: 60
     ha_refresh_seconds: 300
     timezone: Europe/Zurich
+    show_index: true
 
     pages:
       - path: groundwater
@@ -110,6 +111,10 @@ How often the app refreshes Recorder history from Home Assistant.
 
 IANA timezone used for graph labels, for example `Europe/Zurich`.
 
+`show_index`
+
+When `true`, the root URL `/` lists all enabled public sensor pages as links. When `false`, the root URL returns 404 and direct sensor URLs continue to work.
+
 ### Per-page options
 
 `path`
@@ -176,7 +181,7 @@ Text shown at the threshold line.
 
 Home Assistant app schemas support nested arrays, so each Public Sensors page appears as its own item in the app configuration. The fields of one page do not affect another page.
 
-The standard app schema supports fixed lists, but it does not provide a dynamic Home Assistant entity selector populated from the live entity registry. For version 0.2.0, enter the entity ID in the page configuration.
+The standard app schema supports fixed lists, but it does not provide a dynamic Home Assistant entity selector populated from the live entity registry. For version 0.3.0, enter the entity ID in the page configuration.
 
 A future Ingress-only administration page can add live entity dropdowns without exposing that administration UI through the public reverse proxy.
 
@@ -188,7 +193,11 @@ A successful refresh looks similar to:
 
     Page '/groundwater/' refreshed: 326 numeric points
 
-From the internal network:
+From the internal network, the index is:
+
+    http://HOME_ASSISTANT_IP:8098/
+
+and the groundwater page is:
 
     http://HOME_ASSISTANT_IP:8098/groundwater/
 
@@ -255,7 +264,7 @@ This gives one external hostname with multiple independent pages:
     https://public.fink-holzbau.ch/outside-temperature/
     https://public.fink-holzbau.ch/whatever/
 
-The root URL and unknown paths return 404 from Public Sensors.
+With `show_index: true`, the root URL lists all enabled Public Sensors pages. With `show_index: false`, the root URL returns 404. Unknown paths always return 404.
 
 If different viewers must have access to different pages, put `auth_basic` inside separate nginx `location` blocks instead of at server level.
 
@@ -270,11 +279,11 @@ If different viewers must have access to different pages, put `auth_basic` insid
 - The browser never receives Home Assistant credentials.
 - The graph page has no service-call, POST, PUT, PATCH, or DELETE function.
 - Unknown page paths return 404.
-- The root path does not list configured sensors.
+- The root path lists only enabled page titles and links when `show_index` is enabled. It does not expose Home Assistant entity IDs.
 
 ## Compatibility
 
-Version 0.2.0 can still read the original 0.1.x single-page settings. An existing 0.1.x installation therefore continues to publish its groundwater view at:
+Version 0.3.0 can still read the original 0.1.x single-page settings. An existing 0.1.x installation therefore continues to publish its groundwater view at:
 
     /groundwater/
 
