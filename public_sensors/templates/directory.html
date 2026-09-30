@@ -24,6 +24,10 @@
           <span class="sensor-link-title">{{ page.name }}</span>
           <span class="sensor-link-path">/{{ page.path }}/</span>
         </a>
+        {% else %}
+        <div class="empty-state">
+          No public sensor pages are configured yet.
+        </div>
         {% endfor %}
       </nav>
 
