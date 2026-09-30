@@ -1,9 +1,9 @@
 name: "Public Sensors"
-version: "0.3.1"
+version: "0.4.0"
 slug: "public_sensors"
 description: >-
-  Publish independently configured, read-only Home Assistant history graphs
-  on separate URL paths without exposing the Home Assistant frontend.
+  Publish independently configured, read-only Home Assistant sensor pages
+  through a credential-isolated public web process.
 url: "https://github.com/ErnstFinkAG/ha_add-ons/tree/main/public_sensors"
 startup: services
 boot: auto
@@ -33,21 +33,54 @@ options:
   show_index: true
   pages:
     - path: "groundwater"
-      enabled: true
-      title: "Grundwasserstand und Pump Verlauf"
-      sensor_entity: "sensor.efimmo_bw_b1_f0_r0_sen0_groundwaterlevel"
-      sensor_name: "Wasserstand"
-      sensor_unit: "mm"
-      decimals: 1
-      sensor_min: 500
-      sensor_max: 1000
-      binary_entity: "switch.pumpe_1"
-      binary_name: "Pumpe"
-      history_hours: 48
-      group_minutes: 5
-      threshold_enabled: true
-      threshold_value: 660
-      threshold_label: "Trigger 660 mm"
+      name: "Grundwasserstand und Pump Verlauf"
+      entity_id: ""
+      yaml: |
+        type: custom:apexcharts-card
+        header:
+          show: true
+          title: Grundwasserstand und Pump Verlauf
+        graph_span: 48h
+        now:
+          show: true
+        yaxis:
+          - id: level
+            min: 500
+            max: 1000
+            decimals: 0
+            apex_config:
+              title:
+                text: Wasserstand (mm)
+          - id: pump
+            min: 0
+            max: 1.2
+            opposite: true
+            decimals: 0
+            apex_config:
+              title:
+                text: Pumpe
+        apex_config:
+          annotations:
+            yaxis:
+              - y: 660
+                yAxisIndex: 0
+                label:
+                  text: Trigger 660 mm
+        series:
+          - entity: sensor.efimmo_bw_b1_f0_r0_sen0_groundwaterlevel
+            name: Wasserstand
+            yaxis_id: level
+            type: line
+            stroke_width: 1
+            group_by:
+              duration: 5min
+              func: avg
+          - entity: switch.pumpe_1
+            name: Pumpe
+            yaxis_id: pump
+            type: line
+            curve: stepline
+            stroke_width: 1
 schema:
   browser_refresh_seconds: int
   ha_refresh_seconds: int
@@ -55,33 +88,6 @@ schema:
   show_index: bool
   pages:
     - path: str
-      enabled: bool
-      title: str
-      sensor_entity: str
-      sensor_name: str
-      sensor_unit: "str?"
-      decimals: int
-      sensor_min: float
-      sensor_max: float
-      binary_entity: "str?"
-      binary_name: str
-      history_hours: int
-      group_minutes: int
-      threshold_enabled: bool
-      threshold_value: float
-      threshold_label: str
-
-
-  # v0.1.x compatibility.
-  title: "str?"
-  sensor_entity: "str?"
-  sensor_name: "str?"
-  sensor_unit: "str?"
-  sensor_min: "float?"
-  sensor_max: "float?"
-  binary_entity: "str?"
-  binary_name: "str?"
-  history_hours: "int?"
-  group_minutes: "int?"
-  threshold_value: "float?"
-  threshold_label: "str?"
+      name: str
+      yaml: "str?"
+      entity_id: "str?"
