@@ -21,7 +21,7 @@
       <nav class="sensor-directory" aria-label="Public Sensors">
         {% for page in pages %}
         <a class="sensor-link" href="/{{ page.path }}/">
-          <span class="sensor-link-title">{{ page.title }}</span>
+          <span class="sensor-link-title">{{ page.name }}</span>
           <span class="sensor-link-path">/{{ page.path }}/</span>
         </a>
         {% endfor %}

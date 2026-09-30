@@ -1,67 +1,31 @@
 configuration:
   browser_refresh_seconds:
     name: Browser refresh
-    description: Seconds between browser requests for cached graph data.
+    description: Seconds between browser requests for the public cached data.
   ha_refresh_seconds:
     name: Home Assistant refresh
-    description: Seconds between Recorder history refreshes inside the app.
+    description: Seconds between private collector refreshes from Home Assistant.
   timezone:
     name: Timezone
-    description: IANA timezone used for graph labels, for example Europe/Zurich.
+    description: IANA timezone used for public page labels, for example Europe/Zurich.
   show_index:
     name: Show index page
-    description: Show a list of all enabled public sensor pages at the root URL.
+    description: Show a list of all configured public pages at the root URL.
   pages:
     name: Public pages
-    description: Independently configured read-only sensor pages.
+    description: Universal public pages. Each page uses either full YAML or one entity ID.
     fields:
       path:
-        name: URL path
-        description: Lowercase path below the public domain, for example groundwater.
-      enabled:
-        name: Enabled
-        description: Publish this configured page.
-      title:
-        name: Page title
-        description: Title shown above this graph.
-      sensor_entity:
-        name: Numeric entity
-        description: Home Assistant entity ID for the main numeric history series.
-      sensor_name:
-        name: Numeric series name
-        description: Display name for the main numeric series.
-      sensor_unit:
-        name: Numeric unit
-        description: Unit shown on the graph. Leave empty to use the entity unit.
-      decimals:
-        name: Decimal places
-        description: Number of decimal places shown for this sensor.
-      sensor_min:
-        name: Axis minimum
-        description: Fixed minimum for the numeric Y axis.
-      sensor_max:
-        name: Axis maximum
-        description: Fixed maximum for the numeric Y axis.
-      binary_entity:
-        name: ON/OFF entity
-        description: Optional entity ID for an ON/OFF step series.
-      binary_name:
-        name: ON/OFF series name
-        description: Display name for the ON/OFF series.
-      history_hours:
-        name: History hours
-        description: Number of hours of Recorder history shown on this page.
-      group_minutes:
-        name: Averaging minutes
-        description: Numeric history averaging bucket in minutes.
-      threshold_enabled:
-        name: Show threshold
-        description: Show a horizontal threshold line.
-      threshold_value:
-        name: Threshold value
-        description: Value of the horizontal threshold line.
-      threshold_label:
-        name: Threshold label
-        description: Text shown at the threshold line.
+        name: URL / path
+        description: Lowercase public path below the domain, for example groundwater.
+      name:
+        name: Name
+        description: Public display name used on the page and index.
+      yaml:
+        name: Full YAML
+        description: Full Home Assistant card-style YAML. Leave empty when entity ID mode is used.
+      entity_id:
+        name: Entity ID
+        description: Copy one Home Assistant entity state and its attributes to the public page. Leave empty when YAML mode is used.
 network:
-  8098/tcp: Public read-only web interface
+  8098/tcp: Credential-free read-only Public Sensors web interface

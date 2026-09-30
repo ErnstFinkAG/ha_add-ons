@@ -1,15 +1,32 @@
 # Public Sensors
 
-Public Sensors publishes selected Home Assistant history as standalone, read-only web pages.
+Public Sensors publishes selected Home Assistant data as standalone, read-only web pages.
 
-The optional index page at `/` lists all enabled public pages. Each configured page is independent and has its own URL path. For example:
+Version 0.4 uses a universal page definition. Every public page has:
+
+- a URL/path;
+- a public name;
+- a full YAML field; and
+- an entity ID field.
+
+Exactly one of `yaml` or `entity_id` must be filled for each page.
+
+Example URLs:
 
 - `https://public.example.com/groundwater/`
-- `https://public.example.com/tank-level/`
-- `https://public.example.com/temperature/`
+- `https://public.example.com/outside-temperature/`
 
-Each page can define its own entity, title, unit, axis, decimal places, history range, averaging interval, optional ON/OFF companion entity, and optional threshold.
+The optional index at `/` lists all configured pages.
 
-The browser does not receive a Home Assistant access token and cannot call Home Assistant services through this app. The app reads Home Assistant through the internal Supervisor/Core API and exposes only read-only graph data.
+## Security design
 
-The index can be enabled or disabled with `show_index`. See `DOCS.md` for configuration and reverse-proxy examples.
+Public Sensors now separates collection from serving:
+
+1. A private collector receives the Home Assistant Supervisor token and reads only the configured entities/history.
+2. The collector writes a sanitized JSON cache.
+3. The public web process runs as an unprivileged user with `SUPERVISOR_TOKEN` removed.
+4. The public process reads only the sanitized cache and does not read the private add-on options.
+
+The raw YAML configuration is not copied to the public cache.
+
+See `DOCS.md` for configuration, YAML behavior, and reverse-proxy setup.

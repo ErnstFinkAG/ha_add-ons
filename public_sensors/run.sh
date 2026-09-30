@@ -1,4 +1,29 @@
 #!/usr/bin/with-contenv bashio
+set -eu
 
-bashio::log.info "Starting Public Sensors on port 8098"
-exec waitress-serve --listen=0.0.0.0:8098 --threads=4 app:APP
+mkdir -p /run/public-sensors
+chmod 0755 /run/public-sensors
+
+# Keep private configuration inaccessible to the unprivileged public process.
+chmod 0700 /data 2>/dev/null || true
+chmod 0600 /data/options.json 2>/dev/null || true
+
+bashio::log.info "Starting Home Assistant collector"
+python3 -u /app/collector.py &
+COLLECTOR_PID=$!
+
+sleep 1
+if ! kill -0 "${COLLECTOR_PID}" 2>/dev/null; then
+    bashio::log.error "Collector exited during startup"
+    exit 1
+fi
+
+# Start the Internet-facing process with a clean environment. It receives no
+# Supervisor/Home Assistant environment variables at all.
+bashio::log.info "Starting credential-free Public Sensors web server on port 8098"
+exec env -i \
+    PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    HOME="/tmp" \
+    PYTHONUNBUFFERED="1" \
+    su-exec publicsensor:publicsensor \
+    waitress-serve --listen=0.0.0.0:8098 --threads=4 web:APP

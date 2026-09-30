@@ -16,17 +16,12 @@
           <p class="eyebrow">Home Assistant · Read only</p>
           <h1 id="page-title">Public Sensors</h1>
         </div>
-        <div class="status-row" aria-label="Aktuelle Werte">
-          <span class="status-chip" id="sensor-current">Wasserstand: —</span>
-          <span class="status-chip" id="binary-chip" hidden>
-            <span id="binary-current">Pumpe: —</span>
-          </span>
-        </div>
+        <div id="status-row" class="status-row" aria-label="Aktuelle Werte"></div>
       </header>
 
       <div id="error" class="error" role="status" hidden></div>
 
-      <div id="chart-shell" class="chart-shell">
+      <div id="chart-shell" class="chart-shell" hidden>
         <canvas
           id="chart"
           role="img"
@@ -34,6 +29,8 @@
         ></canvas>
         <div id="tooltip" class="tooltip" hidden></div>
       </div>
+
+      <div id="entity-panel" class="entity-panel" hidden></div>
 
       <footer class="card-footer">
         <span id="updated">Daten werden geladen …</span>

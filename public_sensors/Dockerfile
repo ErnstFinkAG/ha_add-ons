@@ -12,19 +12,25 @@ LABEL \
 RUN apk add --no-cache \
     python3 \
     py3-pip \
+    su-exec \
+  && addgroup -S publicsensor \
+  && adduser -S -D -H -G publicsensor publicsensor \
   && pip3 install --no-cache-dir --break-system-packages \
     flask==3.1.2 \
     requests==2.32.5 \
-    waitress==3.0.2
+    waitress==3.0.2 \
+    PyYAML==6.0.2
 
 WORKDIR /app
 
-COPY app.py /app/app.py
+COPY collector.py /app/collector.py
+COPY web.py /app/web.py
 COPY templates /app/templates
 COPY static /app/static
 COPY run.sh /run.sh
 
-RUN chmod a+x /run.sh
+RUN chmod a+x /run.sh \
+  && chmod -R a+rX /app
 
 EXPOSE 8098
 
