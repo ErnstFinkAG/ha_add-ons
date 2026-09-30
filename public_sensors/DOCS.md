@@ -25,7 +25,7 @@ The app contains two processes:
 
 The collector is the only process that receives `SUPERVISOR_TOKEN`.
 
-Before the public web server starts, `SUPERVISOR_TOKEN` is removed from its environment and the web server is dropped to the unprivileged `publicsensor` user.
+Before the public web server starts, it is launched with a clean environment containing no Supervisor/Home Assistant environment variables and is dropped to the unprivileged `publicsensor` user.
 
 The private `/data` directory and `options.json` are restricted to root. The public process can read the generated cache but cannot write it.
 
@@ -132,7 +132,7 @@ If `show_index` is false, the root URL returns 404 while direct page URLs contin
 
 Fill `yaml` and leave `entity_id` empty.
 
-The collector parses the YAML with a safe YAML parser. It searches the YAML for Home Assistant entity references under common keys such as:
+The collector parses the YAML with a safe YAML parser. It discovers exact Home Assistant entity-ID strings anywhere in the YAML, including common keys such as:
 
     entity:
     entity_id:
