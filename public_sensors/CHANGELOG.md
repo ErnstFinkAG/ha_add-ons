@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- Add Home Assistant image metadata labels for app version, type, and architecture.
+- Declare BUILD_VERSION and BUILD_ARCH in the Dockerfile so locally built images carry the Supervisor build metadata.
+
 ## 0.3.0
 
 - Add an optional index page at the root URL.
