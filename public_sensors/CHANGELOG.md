@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0
+
+- Replace the groundwater-specific page schema with a universal page schema.
+- Each page now has only URL/path, name, full YAML, and entity ID.
+- Require exactly one data definition per page: YAML or entity ID.
+- Add full YAML parsing with generic entity discovery.
+- Add ApexCharts-style series, Y-axis, graph span, grouping, step-line, and annotation support.
+- Add direct entity mode that publishes the selected entity state and attributes.
+- Split Home Assistant collection from the Internet-facing web process.
+- Run the public web process as an unprivileged user with SUPERVISOR_TOKEN removed.
+- Keep private options unreadable by the public web user.
+- Never copy the raw private YAML into the public cache.
+- Remove the old single-purpose and legacy page configuration.
+
 ## 0.3.1
 
 - Add Home Assistant image metadata labels for app version, type, and architecture.
