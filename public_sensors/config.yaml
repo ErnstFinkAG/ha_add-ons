@@ -69,25 +69,8 @@ schema:
       threshold_value: float
       threshold_label: str
 
-  # v0.1.x/v0.2-development compatibility.
-  graphs:
-    - id: "str?"
-      path: "str?"
-      enabled: "bool?"
-      title: str
-      sensor_entity: str
-      sensor_name: str
-      sensor_unit: "str?"
-      decimals: "int?"
-      sensor_min: float
-      sensor_max: float
-      binary_entity: "str?"
-      binary_name: str
-      history_hours: int
-      group_minutes: int
-      threshold_enabled: "bool?"
-      threshold_value: float
-      threshold_label: str
+
+  # v0.1.x compatibility.
   title: "str?"
   sensor_entity: "str?"
   sensor_name: "str?"
