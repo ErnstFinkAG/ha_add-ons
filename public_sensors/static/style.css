@@ -330,3 +330,12 @@ canvas {
   color: #ffffff;
   outline: none;
 }
+
+
+.empty-state {
+  padding: 18px 16px;
+  border: 1px dashed #303740;
+  border-radius: 10px;
+  color: #9ba4ae;
+  text-align: center;
+}
