@@ -304,6 +304,10 @@ def collect_entity_ids(value: Any) -> set[str]:
         elif isinstance(node, list):
             for child in node:
                 visit(child)
+        elif isinstance(node, str):
+            candidate = node.strip().lower()
+            if ENTITY_ID_RE.fullmatch(candidate):
+                result.add(candidate)
 
     visit(value)
     return result
