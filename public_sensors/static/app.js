@@ -59,8 +59,8 @@
   }
 
   function sensorDecimals(data) {
-    const unit = String(data.sensor.unit || "").toLowerCase();
-    return unit === "mm" ? 1 : 2;
+    const decimals = Number(data.sensor.decimals);
+    return Number.isInteger(decimals) ? Math.max(0, Math.min(decimals, 6)) : 2;
   }
 
   function setStatus(data) {
@@ -250,7 +250,9 @@
       });
     }
 
-    const threshold = Number(graphData.threshold && graphData.threshold.value);
+    const threshold = graphData.threshold
+      ? Number(graphData.threshold.value)
+      : Number.NaN;
     if (Number.isFinite(threshold) && threshold >= yMin && threshold <= yMax) {
       const y = yFor(threshold);
       ctx.save();
@@ -493,7 +495,7 @@
 
   async function fetchData() {
     try {
-      const response = await fetch("./api/data", {
+      const response = await fetch("data", {
         cache: "no-store",
         headers: { Accept: "application/json" }
       });

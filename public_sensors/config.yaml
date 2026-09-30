@@ -1,9 +1,9 @@
 name: "Public Sensors"
-version: "0.1.0"
+version: "0.2.0"
 slug: "public_sensors"
 description: >-
-  Publish a small, read-only web graph from Home Assistant history without
-  exposing the Home Assistant frontend or credentials to the browser.
+  Publish independently configured, read-only Home Assistant history graphs
+  on separate URL paths without exposing the Home Assistant frontend.
 url: "https://github.com/ErnstFinkAG/ha_add-ons/tree/main/public_sensors"
 startup: services
 boot: auto
@@ -25,36 +25,61 @@ ports:
   8098/tcp: 8098
 ports_description:
   8098/tcp: "Read-only Public Sensors web interface"
-webui: "http://[HOST]:[PORT:8098]/"
+webui: "http://[HOST]:[PORT:8098]/groundwater/"
 options:
-  title: "Grundwasserstand und Pump Verlauf"
-  sensor_entity: "sensor.efimmo_bw_b1_f0_r0_sen0_groundwaterlevel"
-  sensor_name: "Wasserstand"
-  sensor_unit: "mm"
-  sensor_min: 500
-  sensor_max: 1000
-  binary_entity: "switch.pumpe_1"
-  binary_name: "Pumpe"
-  history_hours: 48
-  group_minutes: 5
-  threshold_value: 660
-  threshold_label: "Trigger 660 mm"
   browser_refresh_seconds: 60
   ha_refresh_seconds: 300
   timezone: "Europe/Zurich"
+  pages:
+    - path: "groundwater"
+      enabled: true
+      title: "Grundwasserstand und Pump Verlauf"
+      sensor_entity: "sensor.efimmo_bw_b1_f0_r0_sen0_groundwaterlevel"
+      sensor_name: "Wasserstand"
+      sensor_unit: "mm"
+      decimals: 1
+      sensor_min: 500
+      sensor_max: 1000
+      binary_entity: "switch.pumpe_1"
+      binary_name: "Pumpe"
+      history_hours: 48
+      group_minutes: 5
+      threshold_enabled: true
+      threshold_value: 660
+      threshold_label: "Trigger 660 mm"
 schema:
-  title: str
-  sensor_entity: str
-  sensor_name: str
-  sensor_unit: "str?"
-  sensor_min: float
-  sensor_max: float
-  binary_entity: "str?"
-  binary_name: str
-  history_hours: int
-  group_minutes: int
-  threshold_value: float
-  threshold_label: str
   browser_refresh_seconds: int
   ha_refresh_seconds: int
   timezone: str
+  pages:
+    - path: str
+      enabled: bool
+      title: str
+      sensor_entity: str
+      sensor_name: str
+      sensor_unit: "str?"
+      decimals: int
+      sensor_min: float
+      sensor_max: float
+      binary_entity: "str?"
+      binary_name: str
+      history_hours: int
+      group_minutes: int
+      threshold_enabled: bool
+      threshold_value: float
+      threshold_label: str
+
+
+  # v0.1.x compatibility.
+  title: "str?"
+  sensor_entity: "str?"
+  sensor_name: "str?"
+  sensor_unit: "str?"
+  sensor_min: "float?"
+  sensor_max: "float?"
+  binary_entity: "str?"
+  binary_name: "str?"
+  history_hours: "int?"
+  group_minutes: "int?"
+  threshold_value: "float?"
+  threshold_label: "str?"
