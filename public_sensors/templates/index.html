@@ -13,6 +13,9 @@
     <section class="card" aria-labelledby="page-title">
       <header class="card-header">
         <div>
+          {% if show_index %}
+          <a class="index-return" href="/" aria-label="Zurück zur Übersicht">← Übersicht</a>
+          {% endif %}
           <p class="eyebrow">Home Assistant · Read only</p>
           <h1 id="page-title">Public Sensors</h1>
         </div>

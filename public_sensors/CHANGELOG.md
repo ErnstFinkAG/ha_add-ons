@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+- Add a return-to-index button on every public sensor page when `show_index` is enabled.
+- Hide the return button completely when the index is disabled.
+
 ## 0.4.0
 
 - Replace the groundwater-specific page schema with a universal page schema.

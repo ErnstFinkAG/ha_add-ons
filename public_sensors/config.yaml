@@ -1,5 +1,5 @@
 name: "Public Sensors"
-version: "0.4.0"
+version: "0.4.1"
 slug: "public_sensors"
 description: >-
   Publish independently configured, read-only Home Assistant sensor pages
