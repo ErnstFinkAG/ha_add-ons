@@ -91,9 +91,9 @@ def load_options() -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("options.json must contain an object")
 
-    pages_raw = raw.get("pages")
-    if not isinstance(pages_raw, list) or not pages_raw:
-        raise ValueError("At least one page must be configured in pages")
+    pages_raw = raw.get("pages", [])
+    if not isinstance(pages_raw, list):
+        raise ValueError("pages must be a list")
 
     pages: list[dict[str, str]] = []
     seen_paths: set[str] = set()
@@ -143,7 +143,7 @@ def load_options() -> dict[str, Any]:
         "ha_refresh_seconds": clamp_int(
             raw.get("ha_refresh_seconds"), 30, 3600, 300
         ),
-        "timezone": str(raw.get("timezone") or "Europe/Zurich").strip(),
+        "timezone": str(raw.get("timezone") or "UTC").strip(),
         "show_index": bool(raw.get("show_index", True)),
         "pages": pages,
     }
