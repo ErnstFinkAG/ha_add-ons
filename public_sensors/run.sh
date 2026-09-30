@@ -4,6 +4,10 @@ set -eu
 mkdir -p /run/public-sensors
 chmod 0755 /run/public-sensors
 
+# Keep private configuration inaccessible to the unprivileged public process.
+chmod 0700 /data 2>/dev/null || true
+chmod 0600 /data/options.json 2>/dev/null || true
+
 bashio::log.info "Starting Home Assistant collector"
 python3 -u /app/collector.py &
 COLLECTOR_PID=$!
