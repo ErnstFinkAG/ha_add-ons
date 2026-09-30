@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- Add an optional index page at the root URL.
+- Add the `show_index` configuration switch.
+- The index lists all enabled Public Sensors pages as links.
+- Keep direct sensor pages unchanged.
+
 ## 0.2.0
 
 - Add multiple independently configured public pages.

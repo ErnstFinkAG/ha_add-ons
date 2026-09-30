@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <title>Public Sensors</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="page">
+    <section class="card index-card" aria-labelledby="page-title">
+      <header class="card-header">
+        <div>
+          <p class="eyebrow">Home Assistant · Read only</p>
+          <h1 id="page-title">Public Sensors</h1>
+          <p class="index-intro">Öffentlich freigegebene Sensoransichten</p>
+        </div>
+      </header>
+
+      <nav class="sensor-directory" aria-label="Public Sensors">
+        {% for page in pages %}
+        <a class="sensor-link" href="/{{ page.path }}/">
+          <span class="sensor-link-title">{{ page.title }}</span>
+          <span class="sensor-link-path">/{{ page.path }}/</span>
+        </a>
+        {% endfor %}
+      </nav>
+
+      <footer class="card-footer">
+        <span>Nur Anzeige · keine Steuerung</span>
+      </footer>
+    </section>
+  </main>
+</body>
+</html>

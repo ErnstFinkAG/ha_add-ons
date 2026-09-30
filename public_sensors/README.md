@@ -2,7 +2,7 @@
 
 Public Sensors publishes selected Home Assistant history as standalone, read-only web pages.
 
-Each configured page is independent and has its own URL path. For example:
+The optional index page at `/` lists all enabled public pages. Each configured page is independent and has its own URL path. For example:
 
 - `https://public.example.com/groundwater/`
 - `https://public.example.com/tank-level/`
@@ -12,4 +12,4 @@ Each page can define its own entity, title, unit, axis, decimal places, history 
 
 The browser does not receive a Home Assistant access token and cannot call Home Assistant services through this app. The app reads Home Assistant through the internal Supervisor/Core API and exposes only read-only graph data.
 
-See `DOCS.md` for configuration and reverse-proxy examples.
+The index can be enabled or disabled with `show_index`. See `DOCS.md` for configuration and reverse-proxy examples.

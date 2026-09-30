@@ -8,6 +8,9 @@ configuration:
   timezone:
     name: Timezone
     description: IANA timezone used for graph labels, for example Europe/Zurich.
+  show_index:
+    name: Show index page
+    description: Show a list of all enabled public sensor pages at the root URL.
   pages:
     name: Public pages
     description: Independently configured read-only sensor pages.

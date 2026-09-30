@@ -1,5 +1,5 @@
 name: "Public Sensors"
-version: "0.2.0"
+version: "0.3.0"
 slug: "public_sensors"
 description: >-
   Publish independently configured, read-only Home Assistant history graphs
@@ -25,11 +25,12 @@ ports:
   8098/tcp: 8098
 ports_description:
   8098/tcp: "Read-only Public Sensors web interface"
-webui: "http://[HOST]:[PORT:8098]/groundwater/"
+webui: "http://[HOST]:[PORT:8098]/"
 options:
   browser_refresh_seconds: 60
   ha_refresh_seconds: 300
   timezone: "Europe/Zurich"
+  show_index: true
   pages:
     - path: "groundwater"
       enabled: true
@@ -51,6 +52,7 @@ schema:
   browser_refresh_seconds: int
   ha_refresh_seconds: int
   timezone: str
+  show_index: bool
   pages:
     - path: str
       enabled: bool

@@ -145,6 +145,7 @@ def load_options() -> dict[str, Any]:
         configured.get("ha_refresh_seconds"), 30, 3600, 300
     )
     timezone_name = str(configured.get("timezone") or "Europe/Zurich").strip()
+    show_index = bool(configured.get("show_index", True))
 
     raw_pages = configured.get("pages")
     if not isinstance(raw_pages, list) or not raw_pages:
@@ -174,6 +175,7 @@ def load_options() -> dict[str, Any]:
         "browser_refresh_seconds": browser_refresh_seconds,
         "ha_refresh_seconds": ha_refresh_seconds,
         "timezone": timezone_name,
+        "show_index": show_index,
         "pages": pages,
     }
 
@@ -507,7 +509,20 @@ def allow_read_only():
 
 @APP.get("/")
 def root():
-    abort(404)
+    try:
+        options = load_options()
+    except Exception:
+        LOG.exception("Could not load Public Sensors index configuration")
+        abort(503)
+
+    if not options["show_index"]:
+        abort(404)
+
+    pages = [
+        {"path": page["path"], "title": page["title"]}
+        for page in options["pages"]
+    ]
+    return render_template("directory.html", pages=pages)
 
 
 @APP.get("/<public_path>/")

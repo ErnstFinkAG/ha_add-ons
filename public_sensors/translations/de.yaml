@@ -8,6 +8,9 @@ configuration:
   timezone:
     name: Zeitzone
     description: IANA-Zeitzone für Diagrammbeschriftungen, zum Beispiel Europe/Zurich.
+  show_index:
+    name: Indexseite anzeigen
+    description: Liste aller aktivierten öffentlichen Sensorseiten unter der Root-URL anzeigen.
   pages:
     name: Öffentliche Seiten
     description: Unabhängig konfigurierte Nur-Lese-Sensorseiten.
