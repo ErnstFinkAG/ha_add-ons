@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, abort, jsonify, render_template, request
 
 LOG = logging.getLogger("public_sensors")
 logging.basicConfig(
@@ -23,13 +23,13 @@ logging.basicConfig(
 OPTIONS_PATH = Path("/data/options.json")
 HA_API_BASE = "http://supervisor/core/api"
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
-PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+PUBLIC_PATH_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 APP = Flask(__name__, static_folder="static", template_folder="templates")
 SESSION = requests.Session()
 CACHE_LOCK = threading.Lock()
 CACHE: dict[str, Any] = {
-    "catalog": [],
+    "pages": [],
     "data": {},
     "errors": {},
     "updated_monotonic": {},
@@ -63,31 +63,35 @@ def load_raw_options() -> dict[str, Any]:
         LOG.warning("%s does not exist; using defaults", OPTIONS_PATH)
     except Exception:
         LOG.exception("Could not read %s; using defaults", OPTIONS_PATH)
-
     return {}
 
 
-def normalize_profile(raw: dict[str, Any], index: int) -> dict[str, Any]:
-    profile_id = str(raw.get("id") or f"sensor-{index + 1}").strip().lower()
-    if not PROFILE_ID_RE.fullmatch(profile_id):
+def normalize_page(raw: dict[str, Any], index: int) -> dict[str, Any]:
+    public_path = str(
+        raw.get("path") or raw.get("id") or f"sensor-{index + 1}"
+    ).strip().lower()
+
+    if not PUBLIC_PATH_RE.fullmatch(public_path):
         raise ValueError(
-            f"Invalid graph id '{profile_id}'. Use lowercase letters, numbers, '-' or '_'."
+            f"Invalid public path '{public_path}'. "
+            "Use lowercase letters, numbers, '-' or '_'."
         )
 
     sensor_entity = str(raw.get("sensor_entity") or "").strip()
     if not sensor_entity:
-        raise ValueError(f"Graph '{profile_id}' has no sensor_entity")
+        raise ValueError(f"Page '{public_path}' has no sensor_entity")
 
     sensor_min = as_float(raw.get("sensor_min"), 0.0)
     sensor_max = as_float(raw.get("sensor_max"), 100.0)
     if sensor_max <= sensor_min:
         raise ValueError(
-            f"Graph '{profile_id}' sensor_max must be greater than sensor_min"
+            f"Page '{public_path}' sensor_max must be greater than sensor_min"
         )
 
     return {
-        "id": profile_id,
-        "title": str(raw.get("title") or profile_id),
+        "path": public_path,
+        "enabled": bool(raw.get("enabled", True)),
+        "title": str(raw.get("title") or public_path),
         "sensor_entity": sensor_entity,
         "sensor_name": str(raw.get("sensor_name") or "").strip(),
         "sensor_unit": str(raw.get("sensor_unit") or "").strip(),
@@ -104,10 +108,11 @@ def normalize_profile(raw: dict[str, Any], index: int) -> dict[str, Any]:
     }
 
 
-def legacy_profile(options: dict[str, Any]) -> dict[str, Any]:
-    return normalize_profile(
+def legacy_page(options: dict[str, Any]) -> dict[str, Any]:
+    return normalize_page(
         {
-            "id": "groundwater",
+            "path": "groundwater",
+            "enabled": True,
             "title": options.get("title", "Grundwasserstand und Pump Verlauf"),
             "sensor_entity": options.get(
                 "sensor_entity",
@@ -141,28 +146,35 @@ def load_options() -> dict[str, Any]:
     )
     timezone_name = str(configured.get("timezone") or "Europe/Zurich").strip()
 
-    raw_profiles = configured.get("graphs")
-    profiles: list[dict[str, Any]] = []
+    raw_pages = configured.get("pages")
+    if not isinstance(raw_pages, list) or not raw_pages:
+        raw_pages = configured.get("graphs")
 
-    if isinstance(raw_profiles, list) and raw_profiles:
-        for index, raw_profile in enumerate(raw_profiles):
-            if not isinstance(raw_profile, dict):
-                raise ValueError(f"graphs[{index}] must be an object")
-            profiles.append(normalize_profile(raw_profile, index))
+    pages: list[dict[str, Any]] = []
+    if isinstance(raw_pages, list) and raw_pages:
+        for index, raw_page in enumerate(raw_pages):
+            if not isinstance(raw_page, dict):
+                raise ValueError(f"pages[{index}] must be an object")
+            page = normalize_page(raw_page, index)
+            if page["enabled"]:
+                pages.append(page)
     else:
-        profiles.append(legacy_profile(configured))
+        pages.append(legacy_page(configured))
+
+    if not pages:
+        raise ValueError("No enabled Public Sensors pages are configured")
 
     seen: set[str] = set()
-    for profile in profiles:
-        if profile["id"] in seen:
-            raise ValueError(f"Duplicate graph id '{profile['id']}'")
-        seen.add(profile["id"])
+    for page in pages:
+        if page["path"] in seen:
+            raise ValueError(f"Duplicate public path '{page['path']}'")
+        seen.add(page["path"])
 
     return {
         "browser_refresh_seconds": browser_refresh_seconds,
         "ha_refresh_seconds": ha_refresh_seconds,
         "timezone": timezone_name,
-        "profiles": profiles,
+        "pages": pages,
     }
 
 
@@ -281,16 +293,16 @@ def current_entity(entity_id: str) -> dict[str, Any]:
 
 
 def build_payload(
-    profile: dict[str, Any],
+    page: dict[str, Any],
     browser_refresh_seconds: int,
     timezone_name: str,
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
-    start = now - timedelta(hours=profile["history_hours"])
+    start = now - timedelta(hours=page["history_hours"])
 
-    entities = [profile["sensor_entity"]]
-    if profile["binary_entity"]:
-        entities.append(profile["binary_entity"])
+    entities = [page["sensor_entity"]]
+    if page["binary_entity"]:
+        entities.append(page["binary_entity"])
 
     history = ha_get(
         f"/history/period/{utc_iso(start)}",
@@ -307,31 +319,31 @@ def build_payload(
     start_ms = int(start.timestamp() * 1000)
     end_ms = int(now.timestamp() * 1000)
 
-    sensor_series = find_series(history, profile["sensor_entity"])
+    sensor_series = find_series(history, page["sensor_entity"])
     sensor_data = numeric_points(
         sensor_series,
-        profile["group_minutes"],
+        page["group_minutes"],
         start_ms,
         end_ms,
     )
     if not sensor_data:
         raise RuntimeError(
-            f"No numeric history data returned for {profile['sensor_entity']}"
+            f"No numeric history data returned for {page['sensor_entity']}"
         )
 
-    sensor_state = current_entity(profile["sensor_entity"])
+    sensor_state = current_entity(page["sensor_entity"])
     sensor_attributes = sensor_state.get("attributes", {})
     if not isinstance(sensor_attributes, dict):
         sensor_attributes = {}
 
-    sensor_unit = profile["sensor_unit"]
+    sensor_unit = page["sensor_unit"]
     if not sensor_unit:
         sensor_unit = str(sensor_attributes.get("unit_of_measurement", ""))
 
-    sensor_name = profile["sensor_name"]
+    sensor_name = page["sensor_name"]
     if not sensor_name:
         sensor_name = str(
-            sensor_attributes.get("friendly_name", profile["sensor_entity"])
+            sensor_attributes.get("friendly_name", page["sensor_entity"])
         )
 
     try:
@@ -342,13 +354,13 @@ def build_payload(
         current_sensor = sensor_data[-1][1]
 
     binary_payload = None
-    if profile["binary_entity"]:
-        binary_series = find_series(history, profile["binary_entity"])
-        binary_state = current_entity(profile["binary_entity"])
+    if page["binary_entity"]:
+        binary_series = find_series(history, page["binary_entity"])
+        binary_state = current_entity(page["binary_entity"])
         binary_current = str(binary_state.get("state", "unknown")).lower()
         fallback_binary = 1 if binary_current == "on" else 0
         binary_payload = {
-            "name": profile["binary_name"],
+            "name": page["binary_name"],
             "current": binary_current,
             "data": binary_points(
                 binary_series,
@@ -359,30 +371,29 @@ def build_payload(
         }
 
     threshold_payload = None
-    if profile["threshold_enabled"]:
+    if page["threshold_enabled"]:
         threshold_payload = {
-            "value": profile["threshold_value"],
-            "label": profile["threshold_label"]
-            or str(profile["threshold_value"]),
+            "value": page["threshold_value"],
+            "label": page["threshold_label"] or str(page["threshold_value"]),
         }
 
     return {
-        "graph_id": profile["id"],
-        "title": profile["title"],
+        "path": page["path"],
+        "title": page["title"],
         "updated": utc_iso(now),
         "range": {
             "start": start_ms,
             "end": end_ms,
-            "hours": profile["history_hours"],
+            "hours": page["history_hours"],
         },
         "refresh_seconds": browser_refresh_seconds,
         "timezone": timezone_name,
         "sensor": {
             "name": sensor_name,
             "unit": sensor_unit,
-            "decimals": profile["decimals"],
-            "min": profile["sensor_min"],
-            "max": profile["sensor_max"],
+            "decimals": page["decimals"],
+            "min": page["sensor_min"],
+            "max": page["sensor_max"],
             "current": current_sensor,
             "data": sensor_data,
         },
@@ -400,11 +411,8 @@ def refresh_cache() -> None:
             CACHE["global_error"] = str(exc)
         return
 
-    profiles = options["profiles"]
-    catalog = [
-        {"id": profile["id"], "title": profile["title"]}
-        for profile in profiles
-    ]
+    pages = options["pages"]
+    page_list = [{"path": page["path"], "title": page["title"]} for page in pages]
 
     fresh_data: dict[str, Any] = {}
     fresh_errors: dict[str, str] = {}
@@ -414,31 +422,31 @@ def refresh_cache() -> None:
         old_data = dict(CACHE["data"])
         old_times = dict(CACHE["updated_monotonic"])
 
-    for profile in profiles:
-        profile_id = profile["id"]
+    for page in pages:
+        public_path = page["path"]
         try:
             payload = build_payload(
-                profile,
+                page,
                 options["browser_refresh_seconds"],
                 options["timezone"],
             )
-            fresh_data[profile_id] = payload
-            fresh_times[profile_id] = time.monotonic()
+            fresh_data[public_path] = payload
+            fresh_times[public_path] = time.monotonic()
             LOG.info(
-                "Graph '%s' refreshed: %s numeric points",
-                profile_id,
+                "Page '/%s/' refreshed: %s numeric points",
+                public_path,
                 len(payload["sensor"]["data"]),
             )
         except Exception as exc:
-            LOG.exception("Could not refresh graph '%s'", profile_id)
-            fresh_errors[profile_id] = str(exc)
+            LOG.exception("Could not refresh page '/%s/'", public_path)
+            fresh_errors[public_path] = str(exc)
 
-            if profile_id in old_data:
-                fresh_data[profile_id] = old_data[profile_id]
-                fresh_times[profile_id] = old_times.get(profile_id, 0.0)
+            if public_path in old_data:
+                fresh_data[public_path] = old_data[public_path]
+                fresh_times[public_path] = old_times.get(public_path, 0.0)
 
     with CACHE_LOCK:
-        CACHE["catalog"] = catalog
+        CACHE["pages"] = page_list
         CACHE["data"] = fresh_data
         CACHE["errors"] = fresh_errors
         CACHE["updated_monotonic"] = fresh_times
@@ -454,6 +462,18 @@ def refresh_loop() -> None:
             LOG.exception("Could not read refresh interval; using 300 seconds")
             interval = 300
         time.sleep(interval)
+
+
+def configured_paths() -> set[str]:
+    with CACHE_LOCK:
+        cached = {item["path"] for item in CACHE["pages"]}
+    if cached:
+        return cached
+
+    try:
+        return {page["path"] for page in load_options()["pages"]}
+    except Exception:
+        return set()
 
 
 @APP.after_request
@@ -486,69 +506,52 @@ def allow_read_only():
 
 
 @APP.get("/")
-def index():
-    return render_template("index.html")
+def root():
+    abort(404)
 
 
-@APP.get("/api/catalog")
-def api_catalog():
-    with CACHE_LOCK:
-        catalog = list(CACHE["catalog"])
-        global_error = CACHE["global_error"]
-
-    if not catalog:
-        try:
-            options = load_options()
-            catalog = [
-                {"id": profile["id"], "title": profile["title"]}
-                for profile in options["profiles"]
-            ]
-        except Exception as exc:
-            global_error = str(exc)
-
-    if not catalog:
-        return jsonify({"error": global_error or "No graphs configured"}), 503
-
-    response = jsonify({"graphs": catalog})
-    response.headers["Cache-Control"] = "no-store, max-age=0"
-    return response
+@APP.get("/<public_path>/")
+def page_view(public_path: str):
+    public_path = public_path.lower()
+    if public_path not in configured_paths():
+        abort(404)
+    return render_template("index.html", public_path=public_path)
 
 
-@APP.get("/api/data")
-def api_data():
-    requested_id = str(request.args.get("graph") or "").strip().lower()
+@APP.get("/<public_path>/data")
+def page_data(public_path: str):
+    public_path = public_path.lower()
 
     with CACHE_LOCK:
-        catalog = list(CACHE["catalog"])
-        data_by_id = dict(CACHE["data"])
+        known_paths = {item["path"] for item in CACHE["pages"]}
+        data_by_path = dict(CACHE["data"])
         errors = dict(CACHE["errors"])
         updated_times = dict(CACHE["updated_monotonic"])
         global_error = CACHE["global_error"]
 
-    if not catalog:
-        return jsonify({"error": global_error or "No graphs configured"}), 503
+    if public_path not in known_paths:
+        if public_path not in configured_paths():
+            return jsonify({"error": "not_found"}), 404
 
-    valid_ids = [item["id"] for item in catalog]
-    graph_id = requested_id or valid_ids[0]
-
-    if graph_id not in valid_ids:
-        return jsonify({"error": "unknown_graph", "graph": graph_id}), 404
-
-    data = data_by_id.get(graph_id)
+    data = data_by_path.get(public_path)
     if data is None:
         return jsonify(
-            {"error": errors.get(graph_id) or "Graph data is not available yet"}
+            {
+                "error": errors.get(public_path)
+                or global_error
+                or "Page data is not available yet"
+            }
         ), 503
 
     response = jsonify(
         {
             **data,
             "cache_age_seconds": round(
-                max(0.0, time.monotonic() - updated_times.get(graph_id, 0.0)),
+                max(0.0, time.monotonic() - updated_times.get(public_path, 0.0)),
                 1,
             ),
-            "stale": graph_id in errors,
-            "refresh_error": errors.get(graph_id),
+            "stale": public_path in errors,
+            "refresh_error": errors.get(public_path),
         }
     )
     response.headers["Cache-Control"] = "no-store, max-age=0"
@@ -558,13 +561,13 @@ def api_data():
 @APP.get("/healthz")
 def healthz():
     with CACHE_LOCK:
-        catalog = list(CACHE["catalog"])
-        data_by_id = dict(CACHE["data"])
+        pages = list(CACHE["pages"])
+        data_by_path = dict(CACHE["data"])
         errors = dict(CACHE["errors"])
         global_error = CACHE["global_error"]
 
-    total = len(catalog)
-    ready = sum(1 for item in catalog if item["id"] in data_by_id)
+    total = len(pages)
+    ready = sum(1 for item in pages if item["path"] in data_by_path)
 
     if ready == 0:
         return jsonify(
@@ -573,7 +576,7 @@ def healthz():
                 "ready": ready,
                 "total": total,
                 "error": global_error,
-                "graph_errors": errors,
+                "page_errors": errors,
             }
         ), 503
 
@@ -583,7 +586,7 @@ def healthz():
             "status": status,
             "ready": ready,
             "total": total,
-            "graph_errors": errors,
+            "page_errors": errors,
         }
     ), 200
 
