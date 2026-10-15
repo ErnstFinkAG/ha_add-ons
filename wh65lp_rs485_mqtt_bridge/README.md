@@ -18,7 +18,7 @@ A Home Assistant Add-on for publishing WH65LP weather station data (via RS485/TC
 
 1. **Add this repo to Home Assistant:**
    - Go to *Settings > Add-ons > Add-on Store > ... > Repositories*.
-   - Add your repo URL (e.g. `https://github.com/ErnstFinkAG/ha_addons`).
+   - Add your repo URL (e.g. `https://github.com/ErnstFinkAG/ha_add-ons`).
 
 2. **Install the add-on:**
    - Find `WH65LP RS485 to MQTT` in the add-on store.
@@ -27,11 +27,12 @@ A Home Assistant Add-on for publishing WH65LP weather station data (via RS485/TC
 3. **Configure the add-on:**
    - Set all MQTT and weather station connection parameters under **Configuration**.
    - The most important fields are:
-     - `mqtt_host`, `mqtt_port`, `mqtt_user`, `mqtt_pass`: MQTT broker connection details.
+     - `mqtt_host`, `mqtt_port`, `mqtt_user`, `mqtt_pass`: MQTT broker connection details. Leave `mqtt_host` empty to use the Mosquitto add-on automatically.
      - `mqtt_prefix`: The prefix for MQTT topics (e.g. `myweatherstation`).
      - `discovery_prefix`: Usually **set to `homeassistant`** for Home Assistant MQTT Discovery.
      - `unique_prefix`: Must be set! Used as entity and unique ID prefix (e.g. `myweatherstation1`).
      - `ws_host`, `ws_port`: IP/port of your WH65LP station (or RS485 gateway).
+     - `log_level`: `info` by default; `debug` logs every decoded frame.
 
 4. **Start the add-on.**
 
@@ -45,17 +46,20 @@ A Home Assistant Add-on for publishing WH65LP weather station data (via RS485/TC
 
 ```json
 {
-  "mqtt_host": "localhost",
+  "mqtt_host": "",
   "mqtt_port": 1883,
-  "mqtt_user": "mqtt_user",
-  "mqtt_pass": "mqtt_password",
-  "mqtt_prefix": "mqtt_prefix",
+  "mqtt_user": "",
+  "mqtt_pass": "",
+  "mqtt_prefix": "weatherstation1",
   "discovery_prefix": "homeassistant",
-  "unique_prefix": "your weatherstation",
-  "ws_host": "10.80.24.101",
-  "ws_port": 502
+  "unique_prefix": "weatherstation1",
+  "ws_host": "192.168.1.100",
+  "ws_port": 502,
+  "log_level": "info"
 }
 ```
+
+The add-on publishes `online`/`offline` on `<mqtt_prefix>/status`. Entities become unavailable when no valid frame arrives for 60 seconds.
 
 ## WH65LP information
 
@@ -82,7 +86,7 @@ so temperature is: 18.9℃
 11th、12th：37 (Humidity)  
 （Explanation:37(HEX)=55(D), so it is 55%)
 
-13th、14 th：0D (wind speed)  
+13th、14 th：0D (wind speed, 9th bit is bit 4 of the byte holding the temperature high bits)  
 (explanation:  
 00 (HEX) = B 0000 1101 
 (Bit8=0, Bit 7=0, Bit 6=0, Bit 5=0, Bit 4=0, Bit 3=1, Bit 2=1, Bit 1=0, Bit 0=1,)  
