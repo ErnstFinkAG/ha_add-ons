@@ -19,8 +19,10 @@ thermostat card:
 
 - **Mode**: the heating operating mode. `auto` = Automatik, `heat` = Party, `off` = Aus;
   the other modes (e.g. Zus. Wärmeerz, Ferien) are presets.
-- **Target temperature**: the heating curve shift ("Temperatur +-"). The CS19i heats
+- **Target temperature**: the heating curve shift ("Temperatur +-", −5 to +5 °C). The CS19i heats
   weather-compensated, so this is an offset (e.g. +2 °C = warmer), not a room setpoint.
+  Firmware that does not show it on the web interface (e.g. V1.88) is handled through the
+  controller's parameter interface on `luxtronik_port` (default 8889; 0 turns it off).
 - **Current temperature**: room temperature if the controller has one, else Rücklauf.
 
 The settings are found automatically; the add-on log shows which ones with `[climate] using ...`.

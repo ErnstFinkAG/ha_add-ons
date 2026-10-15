@@ -1,4 +1,4 @@
-import asyncio, json, os, re, signal, sys, time, unicodedata, urllib.request
+import asyncio, json, os, re, signal, struct, sys, time, unicodedata, urllib.request
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed
 import xml.etree.ElementTree as ET
@@ -548,6 +548,37 @@ class CTAClient:
 
         raise RuntimeError(f"Timed out waiting for Content of {title} ({page_id}). Last:\n{last}")
 
+class LuxParamClient:
+    """Luxtronik parameter interface (TCP port 8889, big-endian int32 words).
+
+    Some firmware does not offer every setting on the web interface; the heating
+    curve shift ("Temperatur +-", parameter 1, tenths of °C) is reachable here.
+    """
+    HEATING_OFFSET = 1
+
+    def __init__(self, host, port):
+        self.host, self.port = host, int(port)
+
+    async def _session(self, request: bytes, reply_words: int = None):
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(self.host, self.port), 5)
+        try:
+            writer.write(request)
+            await writer.drain()
+            head = struct.unpack(">ii", await asyncio.wait_for(reader.readexactly(8), 10))
+            if reply_words is None:
+                count = head[1]
+                body = await asyncio.wait_for(reader.readexactly(4 * count), 10)
+                return struct.unpack(f">{count}i", body)
+            return head
+        finally:
+            writer.close()
+
+    async def read_parameters(self):
+        return await self._session(struct.pack(">ii", 3003, 0))
+
+    async def write_parameter(self, index: int, value: int):
+        await self._session(struct.pack(">iii", 3002, index, value), reply_words=2)
+
 def supervisor_mqtt():
     """MQTT service (Mosquitto add-on) credentials from the Supervisor, if any."""
     token = os.environ.get("SUPERVISOR_TOKEN")
@@ -578,6 +609,9 @@ async def run(opts: dict, mqtt_cfg: dict):
     include_path_prefixes = split_list(opts.get("include_path_prefixes", ""))
     writable_path_prefixes = split_list(opts.get("writable_path_prefixes", ""))
     climate_enabled = bool(opts.get("climate", True))
+    lux_port = int(opts.get("luxtronik_port", 8889) or 0)
+    lux = LuxParamClient(host, lux_port) if lux_port else None
+    lux_state = {"ok": None}
     climate_cfg = {
         "mode": (opts.get("climate_mode_setting") or "").strip(),
         "target": (opts.get("climate_temperature_setting") or "").strip(),
@@ -650,6 +684,32 @@ async def run(opts: dict, mqtt_cfg: dict):
                     controls[f"climate_{part}"] = info
                     if part == "mode":
                         controls["climate_preset"] = info
+
+    def set_lux_target(raw: int):
+        info = climate["target"]
+        if info and not info.get("lux"):
+            return  # a heating offset from the web interface wins
+        if info is None:
+            info = {"key": f"parameter {LuxParamClient.HEATING_OFFSET} (port {lux_port})", "lux": True,
+                    "kind": "number", "scale": 10, "min": -50.0, "max": 50.0, "prio": 5}
+            climate["target"] = info
+            controls["climate_target"] = info
+            print(f"[climate] using heating curve shift from {info['key']} as target", flush=True)
+        info["row"] = {"raw": str(raw), "step": "5"}
+
+    async def refresh_lux_target():
+        if not (climate_enabled and lux) or (climate["target"] and not climate["target"].get("lux")):
+            return
+        try:
+            params = await lux.read_parameters()
+            set_lux_target(params[LuxParamClient.HEATING_OFFSET])
+            if lux_state["ok"] is not True:
+                print(f"[lux] read {len(params)} parameters from port {lux_port}", flush=True)
+            lux_state["ok"] = True
+        except Exception as e:
+            if lux_state["ok"] is not False:
+                print(f"[lux] port {lux_port} not usable ({e!r}); the dial has no temperature", flush=True)
+            lux_state["ok"] = False
 
     def publish_climate():
         if climate_enabled and (climate["mode"] or climate["target"]):
@@ -759,6 +819,19 @@ async def run(opts: dict, mqtt_cfg: dict):
                 return
             raw = str(raw_num)
 
+        if ctl.get("lux"):
+            await lux.write_parameter(LuxParamClient.HEATING_OFFSET, int(raw))
+            await asyncio.sleep(1)
+            params = await lux.read_parameters()
+            set_lux_target(params[LuxParamClient.HEATING_OFFSET])
+            publish_climate()
+            if str(params[LuxParamClient.HEATING_OFFSET]) == raw:
+                print(f"[write] heating curve shift = {payload} (raw {raw})", flush=True)
+            else:
+                print(f"[write] heating curve shift: controller kept raw "
+                      f"{params[LuxParamClient.HEATING_OFFSET]} instead of {raw}", flush=True)
+            return
+
         leaf = ctl["leaf"]
 
         def find_row(page):
@@ -858,6 +931,7 @@ async def run(opts: dict, mqtt_cfg: dict):
 
                 await asyncio.sleep(0.15)
 
+            await refresh_lux_target()
             publish_climate()
 
             # only clean up after a full cycle, so a missing page never deletes its entities
