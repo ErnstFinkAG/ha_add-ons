@@ -112,9 +112,42 @@ def parse_content(root: ET.Element):
         for opt in it.findall("option"):
             opts.append({"text": (opt.text or ""), "val": opt.get("value")})
         rows.append(
-            {"name": name, "value": value, "id": item_id, "unit": unit, "raw": raw, "div": div, "options": opts}
+            {"name": name, "value": value, "id": item_id, "unit": unit, "raw": raw, "div": div, "options": opts,
+             "min": it.findtext("min"), "max": it.findtext("max"), "step": it.findtext("step")}
         )
     return title, rows
+
+def control_kind(row: dict):
+    """'select' or 'number' if the controller lets this row be changed, else None."""
+    if row.get("raw") is None:
+        return None
+    if row["options"]:
+        return "select"
+    if row.get("min") is not None and row.get("max") is not None:
+        return "number"
+    return None
+
+def raw_scale(row: dict) -> int:
+    """Factor between the raw value and the shown value (650 -> 65.0 °C is 10)."""
+    num, _ = extract_number(row["value"])
+    try:
+        raw = float(row["raw"])
+    except (TypeError, ValueError):
+        raw = 0.0
+    if num and raw:
+        return max(1, round(abs(raw / num)))
+    return 10 if re.search(r"\d[.,]\d", row["value"] or "") else 1
+
+def hvac_for(option_text: str):
+    """HA hvac mode for a heating operating mode, or None if it is better shown as a preset."""
+    t = (option_text or "").strip().lower()
+    if t.startswith("auto"):
+        return "auto"
+    if "party" in t:
+        return "heat"
+    if t in ("aus", "off"):
+        return "off"
+    return None
 
 def slug(s: str, keep_slash: bool = False) -> str:
     s = (s or "").strip().lower()
@@ -165,6 +198,8 @@ class MqttBridge:
         self.published_configs = set()
         self.found_configs = set()
         self.cleanup_done = False
+        # set by run(): called from the MQTT thread with (unique_id, payload) for HA commands
+        self.on_command = None
 
         client_id = f"cs19i_bridge_{int(time.time())}"
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
@@ -182,6 +217,7 @@ class MqttBridge:
             c.publish(f"{self.state_base}/status", "online", retain=True)
             # HA announces "online" here when it (re)starts; configs are then sent again
             c.subscribe(f"{self.discovery}/status")
+            c.subscribe(f"{self.state_base}/set/+")
             if self.cleanup_discovery and not self.cleanup_done:
                 c.subscribe(f"{self.discovery}/+/+/config")
             # a reconnect may follow a broker restart without persistence
@@ -190,6 +226,10 @@ class MqttBridge:
             c.publish(f"{self.discovery}/button/{self.state_base}_start_heating/config", b"", retain=True)
 
         def on_message(c, u, msg):
+            if msg.topic.startswith(f"{self.state_base}/set/"):
+                if self.on_command:
+                    self.on_command(msg.topic.rsplit("/", 1)[-1], msg.payload.decode("utf-8", "replace"))
+                return
             if msg.topic == f"{self.discovery}/status":
                 if msg.payload == b"online":
                     print("[mqtt] Home Assistant restarted, re-sending discovery", flush=True)
@@ -285,6 +325,108 @@ class MqttBridge:
 
         self._announce(cfg_topic, payload)
         self.client.publish(st_topic, state_payload, retain=True)
+
+    def pub_control(self, page_title: str, row: dict, page_path: str, suffix: str = ""):
+        """Publish a changeable setting as an HA select or number. Returns its spec, or None."""
+        kind = control_kind(row)
+        if not kind:
+            return None
+        page_slug = slug(page_path, keep_slash=True).replace("/", "_")
+        name_slug = slug(row["name"]) + suffix
+        uniq = f"{self.state_base}_{page_slug}_{name_slug}"
+        st_topic = f"{self.state_base}/{slug(page_path, keep_slash=True)}/{name_slug}"
+        cfg_topic = f"{self.discovery}/{kind}/{uniq}/config"
+
+        payload = {
+            "name": f"{page_title}: {row['name']}",
+            "unique_id": uniq,
+            "default_entity_id": f"{kind}.{uniq}",
+            "state_topic": st_topic,
+            "command_topic": f"{self.state_base}/set/{uniq}",
+            "availability_topic": f"{self.state_base}/status",
+            "device": self.device(),
+        }
+        spec = {"kind": kind, "uniq": uniq}
+
+        if kind == "select":
+            options = {o["text"]: o["val"] for o in row["options"] if o["val"] is not None}
+            payload["options"] = list(options)
+            state = row["value"] if row["value"] in options else "None"
+            spec["options"] = options
+        else:
+            scale = raw_scale(row)
+            num, unit = extract_number(row["value"])
+            payload["min"] = float(row["min"]) / scale
+            payload["max"] = float(row["max"]) / scale
+            try:
+                payload["step"] = float(row["step"] or 1) / scale
+            except ValueError:
+                payload["step"] = 1 / scale
+            payload["mode"] = "box"
+            if unit:
+                device_class, _, ha_unit = UNIT_CLASSES.get(unit, (None, None, unit))
+                payload["unit_of_measurement"] = ha_unit
+                if device_class == "temperature":
+                    payload["device_class"] = "temperature"
+            state = f"{float(row['raw']) / scale}"
+            spec.update(scale=scale, min=float(row["min"]), max=float(row["max"]))
+
+        self._announce(cfg_topic, payload)
+        self.client.publish(st_topic, state, retain=True)
+        return spec
+
+    def pub_climate(self, mode, target, current):
+        """Thermostat entity from the heating mode setting, the temperature setting and a measured temperature."""
+        uniq = f"{self.state_base}_heizung"
+        base = f"{self.state_base}/climate"
+        payload = {
+            "name": "Heizung",
+            "unique_id": uniq,
+            "default_entity_id": f"climate.{uniq}",
+            "availability_topic": f"{self.state_base}/status",
+            "device": self.device(),
+            "temperature_unit": "C",
+            "precision": 0.1,
+        }
+        states = {}
+        if mode:
+            options = list(mode["options"])
+            modes = [h for h in (hvac_for(o) for o in options) if h]
+            presets = [o for o in options if not hvac_for(o)]
+            payload["modes"] = list(dict.fromkeys(modes)) or ["heat"]
+            payload["mode_state_topic"] = f"{base}/mode"
+            payload["mode_command_topic"] = f"{self.state_base}/set/climate_mode"
+            value = mode["row"]["value"]
+            hvac = hvac_for(value)
+            if not hvac:
+                hvac = "off" if "ferien" in value.lower() else "heat"
+            states[f"{base}/mode"] = hvac
+            if presets:
+                payload["preset_modes"] = presets
+                payload["preset_mode_state_topic"] = f"{base}/preset"
+                payload["preset_mode_command_topic"] = f"{self.state_base}/set/climate_preset"
+                states[f"{base}/preset"] = value if value in presets else "none"
+        else:
+            payload["modes"] = ["heat"]
+        if target:
+            scale = target["scale"]
+            payload["temperature_state_topic"] = f"{base}/target"
+            payload["temperature_command_topic"] = f"{self.state_base}/set/climate_target"
+            payload["min_temp"] = target["min"] / scale
+            payload["max_temp"] = target["max"] / scale
+            try:
+                payload["temp_step"] = float(target["row"]["step"] or 1) / scale
+            except ValueError:
+                payload["temp_step"] = 1 / scale
+            states[f"{base}/target"] = f"{float(target['row']['raw']) / scale}"
+        if current:
+            num, _ = extract_number(current["row"]["value"])
+            payload["current_temperature_topic"] = f"{base}/current"
+            states[f"{base}/current"] = f"{num}" if num is not None else "None"
+
+        self._announce(f"{self.discovery}/climate/{uniq}/config", payload)
+        for topic, value in states.items():
+            self.client.publish(topic, value, retain=True)
 
     def _pub_log_latest(self, kind: str, title: str, rows: list, keep_last: int = 50):
         entries = []
@@ -434,14 +576,84 @@ async def run(opts: dict, mqtt_cfg: dict):
     log_changes_only = bool(opts.get("log_changes_only", True))
     skip_path_prefixes = split_list(opts.get("skip_path_prefixes", "Zugang:"))
     include_path_prefixes = split_list(opts.get("include_path_prefixes", ""))
+    writable_path_prefixes = split_list(opts.get("writable_path_prefixes", ""))
+    climate_enabled = bool(opts.get("climate", True))
+    climate_cfg = {
+        "mode": (opts.get("climate_mode_setting") or "").strip(),
+        "target": (opts.get("climate_temperature_setting") or "").strip(),
+        "current": (opts.get("climate_current_temperature") or "").strip(),
+    }
 
     prev = {}
     mqttb = MqttBridge(mqtt_cfg["host"], mqtt_cfg["port"], mqtt_cfg["username"], mqtt_cfg["password"],
                        opts.get("discovery_prefix", "homeassistant"), opts.get("state_base_topic", "cta_cs19i"),
                        cleanup_discovery=bool(opts.get("cleanup_discovery", True)))
+    loop = asyncio.get_running_loop()
+    commands: asyncio.Queue = asyncio.Queue()
+    mqttb.on_command = lambda uniq, payload: loop.call_soon_threadsafe(commands.put_nowait, (uniq, payload))
     mqttb.connect_async()
 
     cta = CTAClient(host, port, opts.get("controller_password", ""))
+
+    # unique_id -> {"kind", "leaf", "name", "suffix", ...} for settings HA may change
+    controls = {}
+    logged_controls = set()
+    hinted_pages = set()
+    # firmware differs in how a setting is addressed: "SET;set_<id>;<raw>" or "SET;<id>;<raw>"
+    set_prefixes = ["set_", ""]
+
+    # parts of the thermostat entity: {"key", "leaf", "name", "suffix", "row", "prio", ...}
+    climate = {"mode": None, "target": None, "current": None}
+
+    def climate_priority(part, key, row):
+        """Lower is better; None if the row can't serve as this part. Explicit options win."""
+        name = row["name"].lower()
+        path = key.lower()
+        if climate_cfg[part]:
+            return 0 if key == climate_cfg[part] else None
+        kind = control_kind(row)
+        if part == "mode":
+            if kind == "select" and name.startswith("heiz") and any(hvac_for(o["text"]) == "auto" for o in row["options"]):
+                return 1
+        elif part == "target":
+            if kind == "number" and ("+-" in name or "±" in name) and "warmw" not in path and "ww" not in name:
+                return 1
+        elif part == "current":
+            num, _ = extract_number(row["value"])
+            if num is None:
+                return None
+            if name.startswith("raum"):
+                return 1
+            if name.startswith("rücklauf") and "soll" not in name:
+                return 2
+        return None
+
+    def track_climate(leaf, rows, suffixes):
+        for r, sfx in zip(rows, suffixes):
+            key = f"{leaf['path']}/{r['name']}"
+            for part in climate:
+                cur = climate[part]
+                if cur and cur["key"] == key and cur["suffix"] == sfx:
+                    cur["row"], cur["leaf"] = r, leaf
+                    continue
+                prio = climate_priority(part, key, r)
+                if prio is None or (cur and cur["prio"] <= prio):
+                    continue
+                info = {"key": key, "leaf": leaf, "name": r["name"], "suffix": sfx, "row": r, "prio": prio}
+                if part == "mode":
+                    info.update(kind="select", options={o["text"]: o["val"] for o in r["options"] if o["val"] is not None})
+                elif part == "target":
+                    info.update(kind="number", scale=raw_scale(r), min=float(r["min"]), max=float(r["max"]))
+                climate[part] = info
+                print(f"[climate] using '{key}' as {part}", flush=True)
+                if part in ("mode", "target"):
+                    controls[f"climate_{part}"] = info
+                    if part == "mode":
+                        controls["climate_preset"] = info
+
+    def publish_climate():
+        if climate_enabled and (climate["mode"] or climate["target"]):
+            mqttb.pub_climate(climate["mode"], climate["target"], climate["current"])
 
     cached_leaves = None
     cached_at = 0.0
@@ -482,6 +694,122 @@ async def run(opts: dict, mqtt_cfg: dict):
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 300)
 
+    def row_suffixes(rows):
+        # rows with the same name on one page get _2, _3, ... so they don't share an entity
+        seen, suffixes = {}, []
+        for r in rows:
+            n = seen.get(r["name"], 0) + 1
+            seen[r["name"]] = n
+            suffixes.append("" if n == 1 else f"_{n}")
+        return suffixes
+
+    def publish_page(leaf, page):
+        title, rows = parse_content(page)
+        suffixes = row_suffixes(rows)
+        writable = any(leaf["path"].startswith(w) for w in writable_path_prefixes)
+
+        p = leaf["path"].lower()
+        if p.startswith("informationen/abschaltungen"):
+            mqttb.pub_abschaltungen_latest(title, rows, keep_last=50)
+        elif p.startswith("informationen/fehlerspeicher"):
+            mqttb.pub_fehlerspeicher_latest(title, rows, keep_last=50)
+        else:
+            for r, sfx in zip(rows, suffixes):
+                spec = mqttb.pub_control(title, r, leaf["path"], suffix=sfx) if writable else None
+                if spec:
+                    controls[spec["uniq"]] = dict(spec, leaf=leaf, name=r["name"], suffix=sfx)
+                    if spec["uniq"] not in logged_controls:
+                        logged_controls.add(spec["uniq"])
+                        print(f"[control] {leaf['path']}/{r['name']}: {spec['kind']} raw={r['raw']} value={r['value']!r} "
+                              f"min={r['min']} max={r['max']} step={r['step']} "
+                              f"options={[(o['val'], o['text']) for o in r['options']]}", flush=True)
+                else:
+                    mqttb.pub_sensor(title, r, leaf["path"], suffix=sfx)
+            if climate_enabled:
+                track_climate(leaf, rows, suffixes)
+            if not writable and leaf["path"] not in hinted_pages and any(control_kind(r) for r in rows):
+                hinted_pages.add(leaf["path"])
+                print(f"[settings] '{leaf['path']}' has changeable values; add it to writable_path_prefixes "
+                      f"to control them from Home Assistant", flush=True)
+        return title, rows, suffixes
+
+    async def apply_command(uniq, payload):
+        ctl = controls.get(uniq)
+        if not ctl:
+            print(f"[write] ignored command for unknown setting {uniq}", flush=True)
+            return
+        if uniq == "climate_mode":
+            # HA hvac mode -> controller option text
+            payload = next((o for o in ctl["options"] if hvac_for(o) == payload), payload)
+        elif uniq == "climate_preset" and payload == "none":
+            payload = next((o for o in ctl["options"] if hvac_for(o) == "auto"), payload)
+        if ctl["kind"] == "select":
+            raw = ctl["options"].get(payload)
+            if raw is None:
+                print(f"[write] {uniq}: {payload!r} is not one of {list(ctl['options'])}", flush=True)
+                return
+        else:
+            try:
+                raw_num = round(float(payload.replace(",", ".")) * ctl["scale"])
+            except ValueError:
+                print(f"[write] {uniq}: {payload!r} is not a number", flush=True)
+                return
+            if not (ctl["min"] <= raw_num <= ctl["max"]):
+                print(f"[write] {uniq}: {payload} is outside the allowed range", flush=True)
+                return
+            raw = str(raw_num)
+
+        leaf = ctl["leaf"]
+
+        def find_row(page):
+            _, rows = parse_content(page)
+            for r, sfx in zip(rows, row_suffixes(rows)):
+                if r["name"] == ctl["name"] and sfx == ctl["suffix"]:
+                    return r
+            return None
+
+        # item ids change between sessions, so take the id from a fresh read of the page
+        row = find_row(await cta.get_page(leaf["id"], leaf["name"]))
+        if row is None:
+            print(f"[write] {leaf['path']}/{ctl['name']}: setting not found on the page any more", flush=True)
+            return
+        if row["raw"] == raw:
+            print(f"[write] {leaf['path']}/{ctl['name']}: already {raw}", flush=True)
+            return
+
+        for prefix in list(set_prefixes):
+            await cta.send(f"SET;{prefix}{row['id']};{raw}")
+            await cta.send("SAVE;1")
+            await asyncio.sleep(1)
+            page = await cta.get_page(leaf["id"], leaf["name"])
+            publish_page(leaf, page)
+            publish_climate()
+            row = find_row(page) or row
+            if row["raw"] == raw:
+                # remember the form this firmware accepts
+                set_prefixes.sort(key=lambda x: x != prefix)
+                print(f"[write] {leaf['path']}/{ctl['name']} = {payload} (raw {raw})", flush=True)
+                return
+        print(f"[write] {leaf['path']}/{ctl['name']}: controller did not take {payload} (raw {raw}); "
+              f"the controller password may lack permission for this setting", flush=True)
+
+    async def run_commands(wait: float = 0.0):
+        """Apply queued HA commands; with wait > 0, keep handling them for that many seconds."""
+        deadline = loop.time() + wait
+        while True:
+            try:
+                remaining = deadline - loop.time()
+                if remaining > 0:
+                    uniq, payload = await asyncio.wait_for(commands.get(), remaining)
+                else:
+                    uniq, payload = commands.get_nowait()
+            except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                return
+            try:
+                await apply_command(uniq, payload)
+            except Exception as e:
+                print(f"[write] {uniq}: {e}", flush=True)
+
     try:
         await reconnect()
 
@@ -497,25 +825,10 @@ async def run(opts: dict, mqtt_cfg: dict):
             cycle_complete = True
             for leaf in leaves:
                 try:
+                    await run_commands()
                     page = await cta.get_page(leaf["id"], leaf["name"])
                     failures = 0
-                    title, rows = parse_content(page)
-
-                    # rows with the same name on one page get _2, _3, ... so they don't share an entity
-                    seen, suffixes = {}, []
-                    for r in rows:
-                        n = seen.get(r["name"], 0) + 1
-                        seen[r["name"]] = n
-                        suffixes.append("" if n == 1 else f"_{n}")
-
-                    p = leaf["path"].lower()
-                    if p.startswith("informationen/abschaltungen"):
-                        mqttb.pub_abschaltungen_latest(title, rows, keep_last=50)
-                    elif p.startswith("informationen/fehlerspeicher"):
-                        mqttb.pub_fehlerspeicher_latest(title, rows, keep_last=50)
-                    else:
-                        for r, sfx in zip(rows, suffixes):
-                            mqttb.pub_sensor(title, r, leaf["path"], suffix=sfx)
+                    title, rows, suffixes = publish_page(leaf, page)
 
                     if log_pages:
                         if log_changes_only:
@@ -545,11 +858,13 @@ async def run(opts: dict, mqtt_cfg: dict):
 
                 await asyncio.sleep(0.15)
 
+            publish_climate()
+
             # only clean up after a full cycle, so a missing page never deletes its entities
             if cycle_complete and mqttb.cleanup_discovery and not mqttb.cleanup_done and mqttb.client.is_connected():
                 mqttb.cleanup_stale()
 
-            await asyncio.sleep(poll_interval)
+            await run_commands(wait=poll_interval)
 
     except asyncio.CancelledError:
         print("[main] stopping", flush=True)

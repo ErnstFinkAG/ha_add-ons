@@ -1,5 +1,5 @@
 name: CTA CS19i Bridge
-version: "0.1.0"
+version: "0.2.0"
 slug: cta_cs19i_bridge
 description: CTA CS19i → MQTT bridge with Home Assistant discovery
 arch:
@@ -33,6 +33,12 @@ options:
 
   cleanup_discovery: true
 
+  climate: true
+  climate_mode_setting: ""
+  climate_temperature_setting: ""
+  climate_current_temperature: ""
+  writable_path_prefixes: ""
+
 schema:
   hostname: str
   controller_port: int
@@ -53,6 +59,12 @@ schema:
   include_path_prefixes: str?
 
   cleanup_discovery: bool
+
+  climate: bool
+  climate_mode_setting: str?
+  climate_temperature_setting: str?
+  climate_current_temperature: str?
+  writable_path_prefixes: str?
 
 services:
   - mqtt:need
