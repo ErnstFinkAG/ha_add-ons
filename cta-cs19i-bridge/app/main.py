@@ -1,18 +1,51 @@
-import asyncio, json, os, re, argparse, signal, time, unicodedata, urllib.request
-import websockets
+import asyncio, json, os, re, signal, sys, time, unicodedata, urllib.request
+from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed
 import xml.etree.ElementTree as ET
 from paho.mqtt import client as mqtt
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-TZ = ZoneInfo("Europe/Zurich")
+OPTIONS_PATH = "/data/options.json"
+
+# Supervisor passes the HA timezone as TZ; log timestamps on the controller are local time
+try:
+    TZ = ZoneInfo(os.environ.get("TZ") or "Europe/Zurich")
+except Exception:
+    TZ = ZoneInfo("Europe/Zurich")
+
+# consecutive page failures before the controller connection is treated as dead
+MAX_PAGE_FAILURES = 3
+
+# unit as shown by the controller -> (device_class, state_class, unit for HA)
+UNIT_CLASSES = {
+    "°C": ("temperature", "measurement", "°C"),
+    "C": ("temperature", "measurement", "°C"),
+    "degC": ("temperature", "measurement", "°C"),
+    "K": (None, "measurement", "K"),
+    "bar": ("pressure", "measurement", "bar"),
+    "W": ("power", "measurement", "W"),
+    "kW": ("power", "measurement", "kW"),
+    "kWh": ("energy", "total_increasing", "kWh"),
+    "MWh": ("energy", "total_increasing", "MWh"),
+    "V": ("voltage", "measurement", "V"),
+    "Volt": ("voltage", "measurement", "V"),
+    "%": (None, "measurement", "%"),
+    "h": ("duration", "total_increasing", "h"),
+    "min": ("duration", "measurement", "min"),
+    "s": ("duration", "measurement", "s"),
+    "Hz": ("frequency", "measurement", "Hz"),
+    "l/h": ("volume_flow_rate", "measurement", "L/h"),
+    "L/h": ("volume_flow_rate", "measurement", "L/h"),
+    "rpm": (None, "measurement", "rpm"),
+}
 
 def ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def extract_number(value: str):
-    m = re.match(r"^\s*([\-+]?\d+(?:[.,]\d+)?)\s*([^\d\s].*)?$", value or "")
+    # a unit containing digits ("00:12:34", "1h 23m") is not a plain number with a unit
+    m = re.match(r"^\s*([\-+]?\d+(?:[.,]\d+)?)\s*([^\d\s][^\d]*)?$", value or "")
     if not m:
         return None, None
     num = float(m.group(1).replace(",", "."))
@@ -27,7 +60,10 @@ def parse_ddmmyy_hhmmss(s: str):
         return None
     dd, mm, yy, hh, mi, ss = map(int, m.groups())
     year = 2000 + yy
-    dt = datetime(year, mm, dd, hh, mi, ss, tzinfo=TZ)
+    try:
+        dt = datetime(year, mm, dd, hh, mi, ss, tzinfo=TZ)
+    except ValueError:
+        return None
     return dt.isoformat()
 
 def parse_xml(xml_text: str) -> ET.Element:
@@ -116,35 +152,56 @@ def is_ws_close_error(e: Exception) -> bool:
     )
 
 class MqttBridge:
-    def __init__(self, host, port, user, pw, discovery_prefix, state_base_topic, cleanup_discovery: bool, cleanup_prefixes: list[str]):
+    def __init__(self, host, port, user, pw, discovery_prefix, state_base_topic, cleanup_discovery: bool):
         self.discovery = discovery_prefix.rstrip("/")
         self.state_base = state_base_topic.rstrip("/")
         self.cleanup_discovery = cleanup_discovery
-        self.cleanup_prefixes = cleanup_prefixes
+
+        # discovery configs already sent (topic -> payload); cleared when HA restarts
+        self.announced = {}
+        # numeric or text, fixed per entity on first publish so its config never flips
+        self.numeric = {}
+        # every config topic this process has published, and retained ones of ours found on the broker
+        self.published_configs = set()
+        self.found_configs = set()
+        self.cleanup_done = False
 
         client_id = f"cs19i_bridge_{int(time.time())}"
-        self.client = mqtt.Client(client_id=client_id)
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
         if user:
             self.client.username_pw_set(user, pw)
         # Broker marks us offline if the add-on dies without a clean disconnect
         self.client.will_set(f"{self.state_base}/status", "offline", retain=True)
         self.client.reconnect_delay_set(min_delay=1, max_delay=60)
 
-        def on_connect(c, u, flags, rc):
-            if rc != 0:
-                print(f"[mqtt] connect refused rc={rc} ({mqtt.connack_string(rc)})", flush=True)
+        def on_connect(c, u, flags, reason_code, properties):
+            if reason_code.is_failure:
+                print(f"[mqtt] connect refused: {reason_code}", flush=True)
                 return
             print("[mqtt] connected", flush=True)
             c.publish(f"{self.state_base}/status", "online", retain=True)
-
-            # one-time cleanup of old retained discovery topics
-            if self.cleanup_discovery:
-                self.cleanup_retained_discovery()
-
+            # HA announces "online" here when it (re)starts; configs are then sent again
+            c.subscribe(f"{self.discovery}/status")
+            if self.cleanup_discovery and not self.cleanup_done:
+                c.subscribe(f"{self.discovery}/+/+/config")
+            # a reconnect may follow a broker restart without persistence
+            self.announced.clear()
             # remove the old "Start Heating" button, it was never functional
-            c.publish(f"{self.discovery}/button/{self.state_base}_start_heating/config", b"", retain=False)
+            c.publish(f"{self.discovery}/button/{self.state_base}_start_heating/config", b"", retain=True)
+
+        def on_message(c, u, msg):
+            if msg.topic == f"{self.discovery}/status":
+                if msg.payload == b"online":
+                    print("[mqtt] Home Assistant restarted, re-sending discovery", flush=True)
+                    self.announced.clear()
+                return
+            if msg.topic.endswith("/config") and msg.retain and msg.payload:
+                object_id = msg.topic.split("/")[-2]
+                if object_id.startswith(f"{self.state_base}_"):
+                    self.found_configs.add(msg.topic)
 
         self.client.on_connect = on_connect
+        self.client.on_message = on_message
         self.host, self.port = host, int(port)
 
     def connect_async(self):
@@ -166,75 +223,45 @@ class MqttBridge:
     def device(self):
         return {"identifiers": [self.state_base], "name": "CTA CS19i", "manufacturer": "CTA", "model": "CS19i"}
 
+    def _announce(self, cfg_topic: str, payload: dict):
+        data = json.dumps(payload)
+        if self.announced.get(cfg_topic) == data:
+            return
+        self.client.publish(cfg_topic, data, retain=True)
+        self.announced[cfg_topic] = data
+        self.published_configs.add(cfg_topic)
+
     # ---------- discovery cleanup ----------
 
-    def _tombstone(self, topic: str):
-        # Deleting a retained message: publish empty payload with retain=True
-        self.client.publish(topic, payload=b"", qos=0, retain=True)
+    def cleanup_stale(self):
+        """Remove retained configs of ours that the current controller pages no longer produce.
 
-    def cleanup_retained_discovery(self):
+        Only called after a complete cycle, so every current entity is in self.published_configs.
         """
-        We cannot wildcard-delete in MQTT itself, so we delete known problematic retained configs:
-          - old per-entry Abschaltungen/Fehlerspeicher (timestamp suffix)
-          - illegal "ø" entities from earlier versions
-        You can add more prefixes via config.
-        """
-        print("[mqtt] cleanup retained discovery configs...", flush=True)
+        if self.cleanup_done:
+            return
+        self.cleanup_done = True
+        self.client.unsubscribe(f"{self.discovery}/+/+/config")
+        stale = sorted(t for t in self.found_configs if t not in self.published_configs)
+        for t in stale:
+            self.client.publish(t, b"", retain=True)
+        print(f"[mqtt] cleanup: removed {len(stale)} stale discovery config(s)", flush=True)
+        self.found_configs.clear()
 
-        # Known old patterns from this bridge
-        patterns = [
-            # old per-entry log entities created by earlier versions
-            re.compile(rf"^{re.escape(self.state_base)}_informationen_abschaltungen_\d{{2}}_\d{{2}}_\d{{2}}_\d{{2}}_\d{{2}}_\d{{2}}$"),
-            re.compile(rf"^{re.escape(self.state_base)}_informationen_fehlerspeicher_\d{{2}}_\d{{2}}_\d{{2}}_\d{{2}}_\d{{2}}_\d{{2}}$"),
+    # ---------- publishing ----------
 
-            # illegal unicode "ø" in betriebsstunden entity ids (topic still retained from older run)
-            re.compile(rf"^{re.escape(self.state_base)}_informationen_betriebsstunden_.*$"),
-        ]
-
-        # Also allow explicit prefixes to be wiped (exact discovery unique_id prefixes)
-        prefix_list = [p.strip() for p in (self.cleanup_prefixes or []) if p.strip()]
-
-        # We can’t list topics from broker; instead we tombstone *only* what we know how to form.
-        # Therefore: we also tombstone the specific illegal "laufzeit_oe_vd1/vd2" configs produced now by ascii slug,
-        # and leave the rest to be cleaned in HA UI if needed.
-        # Practical approach: tombstone ALL configs under our known “bad” set by publishing to those exact topics we can predict.
-        #
-        # For logs: the timestamps are unknown => cannot be predicted here without broker topic listing.
-        # So we DO NOT pretend we can delete all old per-entry configs automatically.
-        # Instead, we ensure from now on we do not retain configs and we provide the exact manual wipe patterns below (in response text).
-        print("[mqtt] NOTE: cannot wildcard-delete old retained per-entry configs without broker-side tooling.", flush=True)
-
-        # Still: if user provided explicit prefixes, we tombstone those exact unique_ids as "best effort"
-        for pref in prefix_list:
-            for domain in ("sensor", "button"):
-                t = f"{self.discovery}/{domain}/{pref}/config"
-                self._tombstone(t)
-
-    # ---------- publishing (no retained configs) ----------
-
-    def pub_sensor(self, page_title: str, row: dict, page_path: str):
+    def pub_sensor(self, page_title: str, row: dict, page_path: str, suffix: str = ""):
         page_slug = slug(page_path, keep_slash=True).replace("/", "_")
-        name_slug = slug(row["name"])
+        name_slug = slug(row["name"]) + suffix
         uniq = f"{self.state_base}_{page_slug}_{name_slug}"
 
         st_topic = f"{self.state_base}/{slug(page_path, keep_slash=True)}/{name_slug}"
         cfg_topic = f"{self.discovery}/sensor/{uniq}/config"
 
         num, unit = extract_number(row["value"])
-        device_class = None
-        state_class = None
-
-        if num is not None and unit:
-            state_payload = f"{num}"
-            u = (unit or "").strip()
-            if u in ("°C", "C", "degC"):
-                device_class = "temperature"
-            elif u in ("V", "Volt", "volts"):
-                device_class = "voltage"
-            state_class = "measurement"
-        else:
-            state_payload = row["value"]
-            unit = None
+        if uniq not in self.numeric:
+            self.numeric[uniq] = unit if (num is not None and unit) else None
+        ha_unit_src = self.numeric[uniq]
 
         payload = {
             "name": f"{page_title}: {row['name']}",
@@ -244,16 +271,20 @@ class MqttBridge:
             "availability_topic": f"{self.state_base}/status",
             "device": self.device(),
         }
-        if unit:
-            payload["unit_of_measurement"] = unit
-        if device_class:
-            payload["device_class"] = device_class
-        if state_class:
-            payload["state_class"] = state_class
 
-        # IMPORTANT: discovery configs NOT retained
-        self.client.publish(cfg_topic, json.dumps(payload), retain=False)
-        self.client.publish(st_topic, state_payload, retain=False)
+        if ha_unit_src:
+            device_class, state_class, ha_unit = UNIT_CLASSES.get(ha_unit_src, (None, "measurement", ha_unit_src))
+            payload["unit_of_measurement"] = ha_unit
+            payload["state_class"] = state_class
+            if device_class:
+                payload["device_class"] = device_class
+            # "None" makes HA show unknown instead of rejecting a non-numeric value
+            state_payload = f"{num}" if (num is not None and unit == ha_unit_src) else "None"
+        else:
+            state_payload = row["value"]
+
+        self._announce(cfg_topic, payload)
+        self.client.publish(st_topic, state_payload, retain=True)
 
     def _pub_log_latest(self, kind: str, title: str, rows: list, keep_last: int = 50):
         entries = []
@@ -264,7 +295,7 @@ class MqttBridge:
 
         entries.sort(key=lambda x: x["ts"], reverse=True)
         entries = entries[:keep_last]
-        latest_ts = entries[0]["ts"] if entries else ""
+        latest_ts = entries[0]["ts"] if entries else "None"
         latest_text = entries[0]["text"] if entries else ""
 
         uniq = f"{self.state_base}_informationen_{kind}_latest"
@@ -283,9 +314,9 @@ class MqttBridge:
             "json_attributes_topic": attr_topic,
         }
 
-        self.client.publish(cfg_topic, json.dumps(payload), retain=False)
-        self.client.publish(st_topic, latest_ts, retain=False)
-        self.client.publish(attr_topic, json.dumps({"latest_text": latest_text, "entries": entries}), retain=False)
+        self._announce(cfg_topic, payload)
+        self.client.publish(st_topic, latest_ts, retain=True)
+        self.client.publish(attr_topic, json.dumps({"latest_text": latest_text, "entries": entries}), retain=True)
 
     def pub_abschaltungen_latest(self, title: str, rows: list, keep_last: int = 50):
         self._pub_log_latest("abschaltungen", title, rows, keep_last=keep_last)
@@ -300,11 +331,10 @@ class CTAClient:
         self.uri = f"ws://{host}:{port}"
 
     async def connect(self):
-        headers = [("Origin", f"http://{self.host}")]
-        self.ws = await websockets.connect(
+        self.ws = await ws_connect(
             self.uri,
             subprotocols=["Lux_WS"],
-            extra_headers=headers,
+            origin=f"http://{self.host}",
             ping_interval=None,
             ping_timeout=None,
             close_timeout=1,
@@ -355,10 +385,11 @@ class CTAClient:
         raise RuntimeError(f"No Navigation received. Last:\n{last}")
 
     async def get_page(self, page_id: str, title: str, per_read=4.0, overall=25.0, poll_ms=300):
-        deadline = asyncio.get_event_loop().time() + overall
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + overall
         sent_get = False
         last = None
-        while asyncio.get_event_loop().time() < deadline:
+        while loop.time() < deadline:
             if not sent_get:
                 await self.send(f"GET;{page_id}")
                 sent_get = True
@@ -388,29 +419,29 @@ def supervisor_mqtt():
         print(f"[mqtt] no MQTT service from the Supervisor ({e})", flush=True)
         return None
 
-# consecutive page failures before the controller connection is treated as dead
-MAX_PAGE_FAILURES = 3
+def split_list(s: str) -> list[str]:
+    return [p.strip() for p in (s or "").split(",") if p.strip()]
 
-async def run(
-    host, port, password,
-    mqtt_host, mqtt_port, mqtt_user, mqtt_pass,
-    poll_interval, discovery_prefix, state_base_topic,
-    log_pages, log_changes_only,
-    nav_refresh_seconds: int,
-    skip_path_prefixes: list[str],
-    cleanup_discovery: bool,
-    cleanup_prefixes: list[str],
-):
+async def run(opts: dict, mqtt_cfg: dict):
     # Supervisor stops the add-on with SIGTERM: cancel so the finally block runs
     main_task = asyncio.current_task()
     asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, main_task.cancel)
 
+    host, port = opts["hostname"], int(opts.get("controller_port", 8214))
+    poll_interval = int(opts.get("poll_interval", 30))
+    nav_refresh_seconds = int(opts.get("nav_refresh_seconds", 3600))
+    log_pages = bool(opts.get("log_pages", False))
+    log_changes_only = bool(opts.get("log_changes_only", True))
+    skip_path_prefixes = split_list(opts.get("skip_path_prefixes", "Zugang:"))
+    include_path_prefixes = split_list(opts.get("include_path_prefixes", ""))
+
     prev = {}
-    mqttb = MqttBridge(mqtt_host, mqtt_port, mqtt_user, mqtt_pass, discovery_prefix, state_base_topic,
-                      cleanup_discovery=cleanup_discovery, cleanup_prefixes=cleanup_prefixes)
+    mqttb = MqttBridge(mqtt_cfg["host"], mqtt_cfg["port"], mqtt_cfg["username"], mqtt_cfg["password"],
+                       opts.get("discovery_prefix", "homeassistant"), opts.get("state_base_topic", "cta_cs19i"),
+                       cleanup_discovery=bool(opts.get("cleanup_discovery", True)))
     mqttb.connect_async()
 
-    cta = CTAClient(host, port, password)
+    cta = CTAClient(host, port, opts.get("controller_password", ""))
 
     cached_leaves = None
     cached_at = 0.0
@@ -423,15 +454,10 @@ async def run(
 
         nav = await cta.get_navigation()
         leaves = list(walk_nav_leaves(nav, []))
-
+        if include_path_prefixes:
+            leaves = [l for l in leaves if any(l["path"].startswith(p) for p in include_path_prefixes)]
         if skip_path_prefixes:
-            out = []
-            for l in leaves:
-                p = l["path"]
-                if any(p.startswith(pref) for pref in skip_path_prefixes):
-                    continue
-                out.append(l)
-            leaves = out
+            leaves = [l for l in leaves if not any(l["path"].startswith(p) for p in skip_path_prefixes)]
 
         cached_leaves = leaves
         cached_at = now
@@ -468,11 +494,19 @@ async def run(
                 await reconnect()
                 continue
 
+            cycle_complete = True
             for leaf in leaves:
                 try:
                     page = await cta.get_page(leaf["id"], leaf["name"])
                     failures = 0
                     title, rows = parse_content(page)
+
+                    # rows with the same name on one page get _2, _3, ... so they don't share an entity
+                    seen, suffixes = {}, []
+                    for r in rows:
+                        n = seen.get(r["name"], 0) + 1
+                        seen[r["name"]] = n
+                        suffixes.append("" if n == 1 else f"_{n}")
 
                     p = leaf["path"].lower()
                     if p.startswith("informationen/abschaltungen"):
@@ -480,14 +514,14 @@ async def run(
                     elif p.startswith("informationen/fehlerspeicher"):
                         mqttb.pub_fehlerspeicher_latest(title, rows, keep_last=50)
                     else:
-                        for r in rows:
-                            mqttb.pub_sensor(title, r, leaf["path"])
+                        for r, sfx in zip(rows, suffixes):
+                            mqttb.pub_sensor(title, r, leaf["path"], suffix=sfx)
 
                     if log_pages:
                         if log_changes_only:
                             changed = []
-                            for r in rows:
-                                key = (slug(leaf["path"]), r["name"])
+                            for r, sfx in zip(rows, suffixes):
+                                key = (slug(leaf["path"]), r["name"] + sfx)
                                 val = r["value"]
                                 if prev.get(key) != val:
                                     changed.append(r)
@@ -496,11 +530,12 @@ async def run(
                                 print_table(title, changed, leaf["path"])
                         else:
                             print_table(title, rows, leaf["path"])
-                            for r in rows:
-                                prev[(slug(leaf["path"]), r["name"])] = r["value"]
+                            for r, sfx in zip(rows, suffixes):
+                                prev[(slug(leaf["path"]), r["name"] + sfx)] = r["value"]
 
                 except Exception as e:
                     print(f"[page {leaf['path']}] {e}", flush=True)
+                    cycle_complete = False
                     failures += 1
                     # a connection that died without a close frame only shows up as timeouts
                     if is_ws_close_error(e) or failures >= MAX_PAGE_FAILURES:
@@ -510,7 +545,11 @@ async def run(
 
                 await asyncio.sleep(0.15)
 
-            await asyncio.sleep(int(poll_interval))
+            # only clean up after a full cycle, so a missing page never deletes its entities
+            if cycle_complete and mqttb.cleanup_discovery and not mqttb.cleanup_done and mqttb.client.is_connected():
+                mqttb.cleanup_stale()
+
+            await asyncio.sleep(poll_interval)
 
     except asyncio.CancelledError:
         print("[main] stopping", flush=True)
@@ -518,52 +557,30 @@ async def run(
         await cta.close()
         mqttb.stop()
 
-def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument("--host", required=True)
-    p.add_argument("--port", type=int, default=8214)
-    p.add_argument("--password", required=True)
-    p.add_argument("--mqtt-host", default="")
-    p.add_argument("--mqtt-port", type=int, default=1883)
-    p.add_argument("--mqtt-user", default="")
-    p.add_argument("--mqtt-pass", default="")
-    p.add_argument("--poll-interval", type=int, default=30)
-    p.add_argument("--discovery-prefix", default="homeassistant")
-    p.add_argument("--state-base-topic", default="cta_cs19i")
-    p.add_argument("--log-pages", action="store_true")
-    p.add_argument("--log-changes-only", action="store_true")
-    p.add_argument("--nav-refresh-seconds", type=int, default=3600)
-    p.add_argument("--skip-path-prefixes", default="Zugang:")
-
-    p.add_argument("--cleanup-discovery", action="store_true")
-    p.add_argument("--cleanup-prefixes", default="")
-    return p.parse_args()
-
-if __name__ == "__main__":
-    args = parse_args()
-    skip_prefixes = [s.strip() for s in (args.skip_path_prefixes or "").split(",") if s.strip()]
-    cleanup_prefixes = [s.strip() for s in (args.cleanup_prefixes or "").split(",") if s.strip()]
-
-    mqtt_host, mqtt_port = args.mqtt_host, args.mqtt_port
-    mqtt_user, mqtt_pass = args.mqtt_user, args.mqtt_pass
-    if not mqtt_user:
+def mqtt_settings(opts: dict) -> dict:
+    cfg = {
+        "host": opts.get("mqtt_host") or "",
+        "port": int(opts.get("mqtt_port") or 1883),
+        "username": opts.get("mqtt_username") or "",
+        "password": opts.get("mqtt_password") or "",
+    }
+    if not cfg["username"]:
         svc = supervisor_mqtt()
         if svc:
             print("[mqtt] using MQTT credentials from the Supervisor", flush=True)
-            mqtt_host = svc.get("host") or mqtt_host
-            mqtt_port = int(svc.get("port") or mqtt_port)
-            mqtt_user, mqtt_pass = svc.get("username", ""), svc.get("password", "")
-    if not mqtt_host:
-        mqtt_host = "core-mosquitto"
-    print(f"[startup] MQTT -> host={mqtt_host} port={mqtt_port} user={mqtt_user or '-'}", flush=True)
+            cfg["host"] = svc.get("host") or cfg["host"]
+            cfg["port"] = int(svc.get("port") or cfg["port"])
+            cfg["username"] = svc.get("username", "")
+            cfg["password"] = svc.get("password", "")
+    if not cfg["host"]:
+        cfg["host"] = "core-mosquitto"
+    return cfg
 
-    asyncio.run(run(
-        args.host, args.port, args.password,
-        mqtt_host, mqtt_port, mqtt_user, mqtt_pass,
-        args.poll_interval, args.discovery_prefix, args.state_base_topic,
-        args.log_pages, args.log_changes_only,
-        args.nav_refresh_seconds,
-        skip_prefixes,
-        args.cleanup_discovery,
-        cleanup_prefixes,
-    ))
+if __name__ == "__main__":
+    path = sys.argv[1] if len(sys.argv) > 1 else OPTIONS_PATH
+    with open(path, "r", encoding="utf-8") as f:
+        opts = json.load(f)
+    mqtt_cfg = mqtt_settings(opts)
+    print(f"[startup] Controller -> {opts['hostname']}:{opts.get('controller_port', 8214)}", flush=True)
+    print(f"[startup] MQTT -> host={mqtt_cfg['host']} port={mqtt_cfg['port']} user={mqtt_cfg['username'] or '-'}", flush=True)
+    asyncio.run(run(opts, mqtt_cfg))
