@@ -381,14 +381,33 @@ def mqtt_connect(cfg: MqttCfg) -> Optional['mqtt.Client']:
 
 def mqtt_publish(client: Optional['mqtt.Client'], topic: str, payload: str, retain: bool=False):
     if client is None:
-        return
+        return None
     try:
-        client.publish(topic, payload, qos=0, retain=retain)
+        return client.publish(topic, payload, qos=0, retain=retain)
+    except Exception:
+        return None
+
+
+def mqtt_flush_and_close(client: Optional['mqtt.Client'], infos: List[Any], timeout: float = 5.0):
+    # Wait until queued messages have left the client before stopping the network
+    # loop; otherwise loop_stop()/disconnect() can drop unsent messages.
+    if client is None:
+        return
+    for info in infos:
+        if info is None:
+            continue
+        try:
+            info.wait_for_publish(timeout=timeout)
+        except Exception:
+            pass
+    try:
+        client.disconnect()
     except Exception:
         pass
+    client.loop_stop()
 
 
-def mqtt_connect_with_fallback(cfg: MqttCfg):
+def mqtt_connect_with_fallback(cfg: MqttCfg, verbose: bool = False):
     # Try host as-given, then common fallbacks for HA add-on host_network
     candidates = []
     if cfg.host:
@@ -402,11 +421,26 @@ def mqtt_connect_with_fallback(cfg: MqttCfg):
         c = MqttCfg(h, cfg.port, cfg.username, cfg.password, cfg.discovery_prefix, cfg.state_base)
         client = mqtt_connect(c)
         if client:
-            print(f"[DIAG ] MQTT connected to {h}:{cfg.port}")
+            if verbose:
+                print(f"[DIAG ] MQTT connected to {h}:{cfg.port}")
             return client, h
         else:
             print(f"[DIAG ] MQTT connect failed to {h}:{cfg.port}")
     return None, None
+
+def build_mqtt_cfg(args) -> Optional[MqttCfg]:
+    if not getattr(args, "mqtt_host", None):
+        return None
+    host_only = re.sub(r"^mqtts?://", "", args.mqtt_host or "", flags=re.I)
+    return MqttCfg(
+        host=host_only or "127.0.0.1",
+        port=getattr(args, "mqtt_port", 1883),
+        username=getattr(args, "mqtt_username", None),
+        password=getattr(args, "mqtt_password", None),
+        discovery_prefix=(getattr(args, "discovery_prefix", "homeassistant") or "homeassistant").strip().strip("/"),
+        state_base=(getattr(args, "state_base_topic", "atlas_copco") or "atlas_copco").strip().strip("/"),
+    )
+
 # --- Main --------------------------------------------------------------------
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -432,6 +466,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--mqtt-password", default=None)
     parser.add_argument("--discovery-prefix", default="homeassistant")
     parser.add_argument("--state-base-topic", default="atlas_copco")
+    parser.add_argument("--interval", type=int, default=10,
+                        help="Poll interval in seconds (used to expire stale sensors in HA)")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Print the full value table and per-topic MQTT diagnostics")
     opts = load_addon_options()
     # Prefer CLI > env > options.json > defaults
     # Fill parser defaults from options
@@ -478,10 +516,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     question_hex = re.sub(r"\s+", "", question_hex)
     keys = expand_keys_from_question(question_hex)
 
+    mqtt_cfg = build_mqtt_cfg(args)
+    availability_topic = (
+        f"{mqtt_cfg.state_base}/{slugify(device_name)}/availability" if mqtt_cfg else None
+    )
+
     try:
         answer_raw = post_question(host, question_hex, args.timeout)
     except Exception as e:
         print(f"Error contacting controller at {host}: {e}", file=sys.stderr)
+        if mqtt_cfg:
+            client, _ = mqtt_connect_with_fallback(mqtt_cfg, args.verbose)
+            if client:
+                info = mqtt_publish(client, availability_topic, "offline", retain=True)
+                mqtt_flush_and_close(client, [info])
         return 3
 
     ans_hex = hex_sanitize(answer_raw)
@@ -560,19 +608,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     rows_to_print = [r for r in rows if r.get("Name") and r.get("Name") != "?"]
 
     # --- MQTT discovery + state ---
-    if getattr(args, "mqtt_host", None):
-        host_only = re.sub(r"^mqtts?://", "", args.mqtt_host or "", flags=re.I)
-        mqtt_cfg = MqttCfg(
-            host=host_only or "127.0.0.1",
-            port=getattr(args, "mqtt_port", 1883),
-            username=getattr(args, "mqtt_username", None),
-            password=getattr(args, "mqtt_password", None),
-            discovery_prefix=(getattr(args, "discovery_prefix", "homeassistant") or "homeassistant").strip().strip("/"),
-            state_base=(getattr(args, "state_base_topic", "atlas_copco") or "atlas_copco").strip().strip("/"),
-        )
-        client, connected_host = mqtt_connect_with_fallback(mqtt_cfg) if mqtt_cfg else (None, None)
+    published = 0
+    if mqtt_cfg:
+        client, connected_host = mqtt_connect_with_fallback(mqtt_cfg, args.verbose)
 
         if client:
+            infos: List[Any] = []
+            # Sensors go unavailable if the add-on stops updating them for 3 intervals
+            expire_after = max(3 * max(int(args.interval or 0), 1), 60)
             ha_device = {
                 "identifiers": [f"atlas_copco_{host}"],
                 "name": device_name,
@@ -601,6 +644,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "unique_id": unique_id,
                     "default_entity_id": f"sensor.{object_id}",
                     "state_topic": state_topic,
+                    "availability_topic": availability_topic,
+                    "expire_after": expire_after,
                     "device": ha_device,
                 }
 
@@ -613,17 +658,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if state_class:
                     cfg_payload["state_class"] = state_class
 
-                print(f"[DIAG ] MQTT DISCOVERY -> {config_topic}")
-                mqtt_publish(client, config_topic, json.dumps({k: v for k, v in cfg_payload.items() if v is not None}), retain=True)
+                if args.verbose:
+                    print(f"[DIAG ] MQTT DISCOVERY -> {config_topic}")
+                infos.append(mqtt_publish(client, config_topic, json.dumps({k: v for k, v in cfg_payload.items() if v is not None}), retain=True))
                 if value is not None:
-                    print(f"[DIAG ] MQTT STATE -> {state_topic} = {value}")
-                    mqtt_publish(client, state_topic, str(value), retain=True)
+                    if args.verbose:
+                        print(f"[DIAG ] MQTT STATE -> {state_topic} = {value}")
+                    infos.append(mqtt_publish(client, state_topic, str(value), retain=True))
+                    published += 1
 
-            client.loop_stop()
-            try:
-                client.disconnect()
-            except Exception:
-                pass
+            infos.append(mqtt_publish(client, availability_topic, "online", retain=True))
+            mqtt_flush_and_close(client, infos)
 
     cols = [
         "Device",
@@ -639,9 +684,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         "Value",
         "Unit",
     ]
-    print(format_table(rows_to_print, cols))
-    if unknown_keys:
-        print("\n[Info] Unknown keys encountered (no meta): " + ", ".join(sorted(unknown_keys)))
+    if args.verbose:
+        print(format_table(rows_to_print, cols))
+        if unknown_keys:
+            print("\n[Info] Unknown keys encountered (no meta): " + ", ".join(sorted(unknown_keys)))
+    else:
+        print(f"[INFO ] {len(rows_to_print)} metrics decoded, {published} states published via MQTT")
     return 0
 
 
