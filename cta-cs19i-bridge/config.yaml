@@ -1,5 +1,5 @@
 name: CTA CS19i Bridge
-version: "0.2.1"
+version: "0.2.2"
 slug: cta_cs19i_bridge
 description: CTA CS19i → MQTT bridge with Home Assistant discovery
 arch:
@@ -38,6 +38,7 @@ options:
   climate_temperature_setting: ""
   climate_current_temperature: ""
   luxtronik_port: 8889
+  debug: false
   writable_path_prefixes: ""
 
 schema:
@@ -66,6 +67,7 @@ schema:
   climate_temperature_setting: str?
   climate_current_temperature: str?
   luxtronik_port: int
+  debug: bool
   writable_path_prefixes: str?
 
 services:
