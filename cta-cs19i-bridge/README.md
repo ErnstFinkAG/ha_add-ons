@@ -30,6 +30,28 @@ To pick others, set `climate_mode_setting`, `climate_temperature_setting` or
 `climate_current_temperature` to `Page path/Row name`, e.g. `Einstellungen/Betriebsart/Heizkreis`.
 Changes need a `controller_password` that is allowed to change these settings.
 
+## Room temperature control
+
+The CS19i has no room sensor, so it heats by outdoor temperature only. Set
+`room_temperature_entities` to one or more Home Assistant temperature sensors
+(comma-separated, e.g. `sensor.wohnzimmer_temperatur,sensor.kueche_temperatur`) and the
+bridge regulates the room temperature itself:
+
+- The thermostat's target and current temperature become the **room** setpoint and the
+  average of those sensors. The dial sets the room temperature (15 to 26 °C).
+- Every cycle a PI controller turns the difference into a heating curve shift (−5 to +5 °C,
+  0.5 steps) and writes it through the parameter interface (`luxtronik_port`). It writes at
+  most every `room_control_min_interval` seconds (default 600), because the house reacts slowly.
+- It pauses (keeps the last shift) when the mode is Aus or Ferien, or when no sensor has a value.
+- Two sensors show what it does: "Raumregelung: Raumtemperatur" and
+  "Raumregelung: Heizkurve Verschiebung". The log prints `[room] ...` on each change.
+- `room_control_kp` (default 1.0): shift in °C per °C the room is too cold.
+  `room_control_ki` (default 0.5): extra shift per °C and hour that the error lasts.
+  Lower them if the temperature swings, raise them if it gets to the target too slowly.
+- The setpoint and controller state are kept in `/data`, so they survive restarts.
+
+Leave `room_temperature_entities` empty to use the dial as the plain heating curve shift.
+
 ## Options
 
 - `mqtt_username` / `mqtt_password`: leave empty to use the Mosquitto add-on login from the Supervisor

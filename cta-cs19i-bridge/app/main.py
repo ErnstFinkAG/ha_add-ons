@@ -617,6 +617,67 @@ def supervisor_mqtt():
         print(f"[mqtt] no MQTT service from the Supervisor ({e})", flush=True)
         return None
 
+def ha_temperature(entity_id: str):
+    """Numeric state of a Home Assistant sensor through the Supervisor's Core API proxy, or None."""
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    base = os.environ.get("HA_API_URL", "http://supervisor/core/api")
+    req = urllib.request.Request(f"{base}/states/{entity_id}", headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        state = json.load(resp).get("state")
+    try:
+        return float(state)
+    except (TypeError, ValueError):
+        return None
+
+class RoomController:
+    """PI controller: room temperature error -> heating curve shift (°C, -5..5 in 0.5 steps)."""
+    LIMIT = 5.0
+
+    def __init__(self, path: str, target: float, kp: float, ki: float, min_interval: float):
+        self.path, self.kp, self.ki, self.min_interval = path, kp, ki, min_interval
+        self.target, self.integral = target, None
+        self.last_ts = None
+        self.last_write = 0.0
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            self.target = float(saved.get("target", target))
+            if saved.get("integral") is not None:
+                self.integral = float(saved["integral"])
+        except (OSError, ValueError):
+            pass
+
+    def save(self):
+        try:
+            with open(self.path, "w", encoding="utf-8") as f:
+                json.dump({"target": self.target, "integral": self.integral}, f)
+        except OSError as e:
+            print(f"[room] could not save state: {e}", flush=True)
+
+    def step(self, temp: float, offset: float, now: float):
+        """New offset, or None to leave it. offset is what the controller has now."""
+        err = self.target - temp
+        if self.integral is None:
+            # start from the shift the controller has now
+            self.integral = max(-self.LIMIT, min(self.LIMIT, offset))
+        dt_h = 0.0 if self.last_ts is None else min(now - self.last_ts, 3600) / 3600
+        self.last_ts = now
+        new_i = self.integral + self.ki * err * dt_h
+        out = self.kp * err + new_i
+        # anti-windup: stop integrating while the output is pinned in the same direction
+        if abs(out) <= self.LIMIT or (out > 0) != (err > 0):
+            self.integral = max(-self.LIMIT, min(self.LIMIT, new_i))
+        out = max(-self.LIMIT, min(self.LIMIT, self.kp * err + self.integral))
+        desired = round(out * 2) / 2
+        dbg(f"room err={err:.2f} integral={self.integral:.2f} out={out:.2f} desired={desired} offset={offset}")
+        if abs(desired - offset) < 0.5 or now - self.last_write < self.min_interval:
+            return None
+        self.last_write = now
+        return desired
+
+    def pause(self):
+        self.last_ts = None
+
 def split_list(s: str) -> list[str]:
     return [p.strip() for p in (s or "").split(",") if p.strip()]
 
@@ -644,6 +705,17 @@ async def run(opts: dict, mqtt_cfg: dict):
         "target": (opts.get("climate_temperature_setting") or "").strip(),
         "current": (opts.get("climate_current_temperature") or "").strip(),
     }
+    room_entities = split_list(opts.get("room_temperature_entities", ""))
+    room = None
+    if room_entities and climate_enabled and lux:
+        room = RoomController(os.environ.get("ROOM_STATE_PATH", "/data/room_control.json"),
+                              float(opts.get("room_target_default", 21.0)),
+                              float(opts.get("room_control_kp", 1.0)), float(opts.get("room_control_ki", 0.5)),
+                              float(opts.get("room_control_min_interval", 600)))
+        print(f"[room] room control from {', '.join(room_entities)}, target {room.target} °C", flush=True)
+    elif room_entities:
+        print("[room] room_temperature_entities needs climate on and luxtronik_port set; room control is off", flush=True)
+    room_state = {"temp": None, "warned": set()}
 
     prev = {}
     mqttb = MqttBridge(mqtt_cfg["host"], mqtt_cfg["port"], mqtt_cfg["username"], mqtt_cfg["password"],
@@ -753,8 +825,65 @@ async def run(opts: dict, mqtt_cfg: dict):
             lux_state["ok"] = False
 
     def publish_climate():
-        if climate_enabled and (climate["mode"] or climate["target"]):
+        if not (climate_enabled and (climate["mode"] or climate["target"])):
+            return
+        if room:
+            # the dial shows and sets the room temperature; the offset follows from the controller
+            target = {"scale": 10, "min": 150.0, "max": 260.0, "row": {"raw": str(round(room.target * 10)), "step": "5"}}
+            t = room_state["temp"]
+            current = {"row": {"value": f"{t:.1f} °C" if t is not None else ""}}
+            mqttb.pub_climate(climate["mode"], target, current)
+        else:
             mqttb.pub_climate(climate["mode"], climate["target"], climate["current"])
+
+    def current_offset():
+        info = climate["target"]
+        if info and info.get("lux") and info.get("row"):
+            return float(info["row"]["raw"]) / 10
+        return None
+
+    async def room_step():
+        temps = []
+        for ent in room_entities:
+            try:
+                t = await asyncio.to_thread(ha_temperature, ent)
+            except Exception as e:
+                t = None
+                if ent not in room_state["warned"]:
+                    print(f"[room] cannot read {ent}: {e}", flush=True)
+                room_state["warned"].add(ent)
+            if t is None:
+                if ent not in room_state["warned"]:
+                    print(f"[room] {ent} has no temperature value", flush=True)
+                room_state["warned"].add(ent)
+            else:
+                if ent in room_state["warned"]:
+                    print(f"[room] {ent} = {t} °C", flush=True)
+                room_state["warned"].discard(ent)
+                temps.append(t)
+        room_state["temp"] = round(sum(temps) / len(temps), 2) if temps else None
+        offset = current_offset()
+        if room_state["temp"] is not None:
+            mqttb.pub_sensor("Raumregelung", {"name": "Raumtemperatur", "value": f"{room_state['temp']} °C"}, "raumregelung")
+        if offset is not None:
+            mqttb.pub_sensor("Raumregelung", {"name": "Heizkurve Verschiebung", "value": f"{offset} K"}, "raumregelung")
+
+        mode = climate["mode"]["row"]["value"] if climate["mode"] else ""
+        if room_state["temp"] is None or offset is None or not lux_state["ok"] or hvac_for(mode) == "off" \
+                or "ferien" in mode.lower():
+            # no reading, no parameter access, or heating is off: hold the offset and the integral
+            room.pause()
+            return
+        desired = room.step(room_state["temp"], offset, time.time())
+        room.save()
+        if desired is None:
+            return
+        await lux.write_parameter(LuxParamClient.HEATING_OFFSET, round(desired * 10))
+        await asyncio.sleep(1)
+        params = await lux.read_parameters()
+        apply_lux_params(params)
+        print(f"[room] room {room_state['temp']} °C, target {room.target} °C: heating curve shift {offset} -> "
+              f"{params[LuxParamClient.HEATING_OFFSET] / 10}", flush=True)
 
     cached_leaves = None
     cached_at = 0.0
@@ -835,6 +964,17 @@ async def run(opts: dict, mqtt_cfg: dict):
         return title, rows, suffixes
 
     async def apply_command(uniq, payload):
+        if uniq == "climate_target" and room:
+            try:
+                value = round(float(payload.replace(",", ".")) * 2) / 2
+            except ValueError:
+                print(f"[write] room target: {payload!r} is not a number", flush=True)
+                return
+            room.target = max(15.0, min(26.0, value))
+            room.save()
+            print(f"[room] target room temperature = {room.target} °C", flush=True)
+            publish_climate()
+            return
         ctl = controls.get(uniq)
         if not ctl:
             if uniq.startswith("climate_"):
@@ -992,6 +1132,11 @@ async def run(opts: dict, mqtt_cfg: dict):
                 await asyncio.sleep(0.15)
 
             await refresh_lux_target()
+            if room:
+                try:
+                    await room_step()
+                except Exception as e:
+                    print(f"[room] {e!r}", flush=True)
             publish_climate()
             for uniq in [u for u in pending if u in controls]:
                 commands.put_nowait((uniq, pending.pop(uniq)))
