@@ -1,6 +1,9 @@
-# Home Assistant add-on base image (Alpine)
-ARG BUILD_FROM=ghcr.io/home-assistant/{arch}-base:latest
-FROM $BUILD_FROM
+# Home Assistant add-on base image (Alpine).
+# Newer Supervisor versions only pass BUILD_ARCH, not BUILD_FROM, so derive the
+# base image from the architecture here.
+ARG BUILD_ARCH=amd64
+ARG BUILD_FROM=ghcr.io/home-assistant/${BUILD_ARCH}-base:latest
+FROM ${BUILD_FROM}
 
 # Install Python and needed libs via Alpine packages (no pip3 required)
 RUN apk add --no-cache python3 py3-requests py3-paho-mqtt
