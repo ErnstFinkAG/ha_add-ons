@@ -1,5 +1,5 @@
 name: CTA CS19i Bridge
-version: "0.2.3"
+version: "0.3.0"
 slug: cta_cs19i_bridge
 description: CTA CS19i → MQTT bridge with Home Assistant discovery
 arch:
@@ -10,6 +10,7 @@ arch:
 startup: services
 boot: auto
 init: false
+homeassistant_api: true
 
 options:
   hostname: 10.80.23.11
@@ -41,6 +42,12 @@ options:
   debug: false
   writable_path_prefixes: ""
 
+  room_temperature_entities: ""
+  room_target_default: 21.0
+  room_control_kp: 1.0
+  room_control_ki: 0.5
+  room_control_min_interval: 600
+
 schema:
   hostname: str
   controller_port: int
@@ -69,6 +76,12 @@ schema:
   luxtronik_port: int
   debug: bool
   writable_path_prefixes: str?
+
+  room_temperature_entities: str?
+  room_target_default: float(15,26)
+  room_control_kp: float(0,5)
+  room_control_ki: float(0,5)
+  room_control_min_interval: int(60,7200)
 
 services:
   - mqtt:need
