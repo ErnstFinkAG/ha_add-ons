@@ -1,4 +1,4 @@
-import asyncio, json, re, argparse, time, unicodedata
+import asyncio, json, os, re, argparse, signal, time, unicodedata, urllib.request
 import websockets
 from websockets.exceptions import ConnectionClosed
 import xml.etree.ElementTree as ET
@@ -126,26 +126,25 @@ class MqttBridge:
         self.client = mqtt.Client(client_id=client_id)
         if user:
             self.client.username_pw_set(user, pw)
-        self.on_press_start = None
+        # Broker marks us offline if the add-on dies without a clean disconnect
+        self.client.will_set(f"{self.state_base}/status", "offline", retain=True)
+        self.client.reconnect_delay_set(min_delay=1, max_delay=60)
 
         def on_connect(c, u, flags, rc):
-            print(f"[mqtt] on_connect rc={rc}", flush=True)
+            if rc != 0:
+                print(f"[mqtt] connect refused rc={rc} ({mqtt.connack_string(rc)})", flush=True)
+                return
+            print("[mqtt] connected", flush=True)
             c.publish(f"{self.state_base}/status", "online", retain=True)
-            c.subscribe(f"{self.state_base}/command/start_heating")
 
             # one-time cleanup of old retained discovery topics
             if self.cleanup_discovery:
                 self.cleanup_retained_discovery()
 
-            # publish button discovery (NOT retained)
-            self.pub_button_start()
-
-        def on_message(c, u, msg):
-            if msg.topic.endswith("/command/start_heating") and self.on_press_start:
-                asyncio.get_event_loop().create_task(self.on_press_start())
+            # remove the old "Start Heating" button, it was never functional
+            c.publish(f"{self.discovery}/button/{self.state_base}_start_heating/config", b"", retain=False)
 
         self.client.on_connect = on_connect
-        self.client.on_message = on_message
         self.host, self.port = host, int(port)
 
     def connect_async(self):
@@ -154,9 +153,13 @@ class MqttBridge:
 
     def stop(self):
         try:
-            self.client.publish(f"{self.state_base}/status", "offline", retain=True)
-            self.client.loop_stop()
+            info = self.client.publish(f"{self.state_base}/status", "offline", retain=True)
+            info.wait_for_publish(timeout=2)
+        except Exception:
+            pass
+        try:
             self.client.disconnect()
+            self.client.loop_stop()
         except Exception:
             pass
 
@@ -251,20 +254,6 @@ class MqttBridge:
         # IMPORTANT: discovery configs NOT retained
         self.client.publish(cfg_topic, json.dumps(payload), retain=False)
         self.client.publish(st_topic, state_payload, retain=False)
-
-    def pub_button_start(self):
-        uniq = f"{self.state_base}_start_heating"
-        cfg_topic = f"{self.discovery}/button/{uniq}/config"
-        payload = {
-            "name": "CTA Start Heating",
-            "unique_id": uniq,
-            "default_entity_id": f"button.{uniq}",
-            "command_topic": f"{self.state_base}/command/start_heating",
-            "payload_press": "PRESS",
-            "availability_topic": f"{self.state_base}/status",
-            "device": self.device(),
-        }
-        self.client.publish(cfg_topic, json.dumps(payload), retain=False)
 
     def _pub_log_latest(self, kind: str, title: str, rows: list, keep_last: int = 50):
         entries = []
@@ -386,23 +375,42 @@ class CTAClient:
 
         raise RuntimeError(f"Timed out waiting for Content of {title} ({page_id}). Last:\n{last}")
 
+def supervisor_mqtt():
+    """MQTT service (Mosquitto add-on) credentials from the Supervisor, if any."""
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return None
+    req = urllib.request.Request("http://supervisor/services/mqtt", headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.load(resp).get("data") or None
+    except Exception as e:
+        print(f"[mqtt] no MQTT service from the Supervisor ({e})", flush=True)
+        return None
+
+# consecutive page failures before the controller connection is treated as dead
+MAX_PAGE_FAILURES = 3
+
 async def run(
     host, port, password,
     mqtt_host, mqtt_port, mqtt_user, mqtt_pass,
-    poll_interval, delta_c, discovery_prefix, state_base_topic,
+    poll_interval, discovery_prefix, state_base_topic,
     log_pages, log_changes_only,
     nav_refresh_seconds: int,
     skip_path_prefixes: list[str],
     cleanup_discovery: bool,
     cleanup_prefixes: list[str],
 ):
+    # Supervisor stops the add-on with SIGTERM: cancel so the finally block runs
+    main_task = asyncio.current_task()
+    asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, main_task.cancel)
+
     prev = {}
     mqttb = MqttBridge(mqtt_host, mqtt_port, mqtt_user, mqtt_pass, discovery_prefix, state_base_topic,
                       cleanup_discovery=cleanup_discovery, cleanup_prefixes=cleanup_prefixes)
     mqttb.connect_async()
 
     cta = CTAClient(host, port, password)
-    await cta.connect()
 
     cached_leaves = None
     cached_at = 0.0
@@ -431,34 +439,39 @@ async def run(
         return leaves
 
     async def reconnect():
+        # retry until the controller answers; it may be off or rebooting
         nonlocal cached_leaves, cached_at
-        try:
+        delay = 5
+        while True:
             await cta.close()
-        except Exception:
-            pass
-        await asyncio.sleep(1)
-        await cta.connect()
-        cached_leaves = None
-        cached_at = 0.0
-        await refresh_nav(force=True)
+            cached_leaves = None
+            cached_at = 0.0
+            try:
+                await cta.connect()
+                await refresh_nav(force=True)
+                print(f"[cta] connected to {host}:{port}", flush=True)
+                return
+            except Exception as e:
+                print(f"[cta] connect failed: {e}; retrying in {delay}s", flush=True)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 300)
 
     try:
-        await refresh_nav(force=True)
+        await reconnect()
 
+        failures = 0
         while True:
             try:
                 leaves = await refresh_nav(force=False)
             except Exception as e:
                 print(f"[nav] {e}", flush=True)
-                if is_ws_close_error(e):
-                    await reconnect()
-                    continue
-                await asyncio.sleep(2)
+                await reconnect()
                 continue
 
             for leaf in leaves:
                 try:
                     page = await cta.get_page(leaf["id"], leaf["name"])
+                    failures = 0
                     title, rows = parse_content(page)
 
                     p = leaf["path"].lower()
@@ -488,14 +501,19 @@ async def run(
 
                 except Exception as e:
                     print(f"[page {leaf['path']}] {e}", flush=True)
-                    if is_ws_close_error(e):
+                    failures += 1
+                    # a connection that died without a close frame only shows up as timeouts
+                    if is_ws_close_error(e) or failures >= MAX_PAGE_FAILURES:
                         await reconnect()
+                        failures = 0
                         break
 
                 await asyncio.sleep(0.15)
 
             await asyncio.sleep(int(poll_interval))
 
+    except asyncio.CancelledError:
+        print("[main] stopping", flush=True)
     finally:
         await cta.close()
         mqttb.stop()
@@ -505,12 +523,11 @@ def parse_args():
     p.add_argument("--host", required=True)
     p.add_argument("--port", type=int, default=8214)
     p.add_argument("--password", required=True)
-    p.add_argument("--mqtt-host", required=True)
+    p.add_argument("--mqtt-host", default="")
     p.add_argument("--mqtt-port", type=int, default=1883)
     p.add_argument("--mqtt-user", default="")
     p.add_argument("--mqtt-pass", default="")
     p.add_argument("--poll-interval", type=int, default=30)
-    p.add_argument("--demand-delta", type=float, default=5.0)
     p.add_argument("--discovery-prefix", default="homeassistant")
     p.add_argument("--state-base-topic", default="cta_cs19i")
     p.add_argument("--log-pages", action="store_true")
@@ -526,16 +543,27 @@ if __name__ == "__main__":
     args = parse_args()
     skip_prefixes = [s.strip() for s in (args.skip_path_prefixes or "").split(",") if s.strip()]
     cleanup_prefixes = [s.strip() for s in (args.cleanup_prefixes or "").split(",") if s.strip()]
-    try:
-        asyncio.run(run(
-            args.host, args.port, args.password,
-            args.mqtt_host, args.mqtt_port, args.mqtt_user, args.mqtt_pass,
-            args.poll_interval, args.demand_delta, args.discovery_prefix, args.state_base_topic,
-            args.log_pages, args.log_changes_only,
-            args.nav_refresh_seconds,
-            skip_prefixes,
-            args.cleanup_discovery,
-            cleanup_prefixes,
-        ))
-    except KeyboardInterrupt:
-        pass
+
+    mqtt_host, mqtt_port = args.mqtt_host, args.mqtt_port
+    mqtt_user, mqtt_pass = args.mqtt_user, args.mqtt_pass
+    if not mqtt_user:
+        svc = supervisor_mqtt()
+        if svc:
+            print("[mqtt] using MQTT credentials from the Supervisor", flush=True)
+            mqtt_host = svc.get("host") or mqtt_host
+            mqtt_port = int(svc.get("port") or mqtt_port)
+            mqtt_user, mqtt_pass = svc.get("username", ""), svc.get("password", "")
+    if not mqtt_host:
+        mqtt_host = "core-mosquitto"
+    print(f"[startup] MQTT -> host={mqtt_host} port={mqtt_port} user={mqtt_user or '-'}", flush=True)
+
+    asyncio.run(run(
+        args.host, args.port, args.password,
+        mqtt_host, mqtt_port, mqtt_user, mqtt_pass,
+        args.poll_interval, args.discovery_prefix, args.state_base_topic,
+        args.log_pages, args.log_changes_only,
+        args.nav_refresh_seconds,
+        skip_prefixes,
+        args.cleanup_discovery,
+        cleanup_prefixes,
+    ))

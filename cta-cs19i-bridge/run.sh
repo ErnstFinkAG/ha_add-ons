@@ -25,10 +25,6 @@ MQTTHOST="$(jget mqtt_host)"
 MQTTPORT="$(jget mqtt_port)"
 STATEBASE="$(jget state_base_topic)"
 
-DELTA="$(jget demand_delta_c)"
-if [ -z "${DELTA}" ]; then DELTA="$(jget demand_delta)"; fi
-if [ -z "${DELTA}" ]; then DELTA="5.0"; fi
-
 MQTTUSER="$(jget mqtt_username)"
 MQTTPASS="$(jget mqtt_password)"
 if [ -z "${MQTTUSER}" ]; then MQTTUSER="$(jget mqtt_user)"; fi
@@ -42,7 +38,6 @@ SKIP="$(jget skip_path_prefixes)"
 CLEAN="$(jget cleanup_discovery)"
 CLEANP="$(jget cleanup_prefixes)"
 
-echo "[startup] MQTT -> host=${MQTTHOST} port=${MQTTPORT} user=${MQTTUSER}"
 echo "[startup] Controller -> ${HOSTNAME}:${CTRLP}"
 
 ARGS=(
@@ -51,7 +46,7 @@ ARGS=(
   --mqtt-user "$MQTTUSER" --mqtt-pass "$MQTTPASS"
   --discovery-prefix "$DISCOVERY"
   --state-base-topic "$STATEBASE"
-  --poll-interval "$POLL" --demand-delta "$DELTA"
+  --poll-interval "$POLL"
   --nav-refresh-seconds "${NAVREF:-3600}"
   --skip-path-prefixes "${SKIP:-Zugang:}"
   --cleanup-prefixes "${CLEANP:-}"
