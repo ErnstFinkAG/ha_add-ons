@@ -573,6 +573,8 @@ class LuxParamClient:
     curve shift ("Temperatur +-", parameter 1, tenths of °C) is reachable here.
     """
     HEATING_OFFSET = 1
+    # heating operating mode: 0 Automatik, 1 Zus. Wärmeerz, 2 Party, 3 Ferien, 4 Aus
+    HEATING_MODE = 3
 
     def __init__(self, host, port):
         self.host, self.port = host, int(port)
@@ -635,6 +637,8 @@ async def run(opts: dict, mqtt_cfg: dict):
     lux_port = int(opts.get("luxtronik_port", 8889) or 0)
     lux = LuxParamClient(host, lux_port) if lux_port else None
     lux_state = {"ok": None}
+    # climate commands that arrived before the setting was found (e.g. right after start)
+    pending = {}
     climate_cfg = {
         "mode": (opts.get("climate_mode_setting") or "").strip(),
         "target": (opts.get("climate_temperature_setting") or "").strip(),
@@ -720,12 +724,26 @@ async def run(opts: dict, mqtt_cfg: dict):
             print(f"[climate] using heating curve shift from {info['key']} as target", flush=True)
         info["row"] = {"raw": str(raw), "step": "5"}
 
+    def set_lux_mode(raw: int):
+        # the parameter interface is the source of truth for the mode; the web page can lag behind
+        info = climate["mode"]
+        if not info:
+            return
+        text = next((t for t, v in info["options"].items() if str(v) == str(raw)), None)
+        if text is not None:
+            info["row"] = dict(info["row"], value=text, raw=str(raw))
+
+    def apply_lux_params(params):
+        if not (climate["target"] and not climate["target"].get("lux")):
+            set_lux_target(params[LuxParamClient.HEATING_OFFSET])
+        set_lux_mode(params[LuxParamClient.HEATING_MODE])
+
     async def refresh_lux_target():
-        if not (climate_enabled and lux) or (climate["target"] and not climate["target"].get("lux")):
+        if not (climate_enabled and lux):
             return
         try:
             params = await lux.read_parameters()
-            set_lux_target(params[LuxParamClient.HEATING_OFFSET])
+            apply_lux_params(params)
             if lux_state["ok"] is not True:
                 print(f"[lux] read {len(params)} parameters from port {lux_port}", flush=True)
             lux_state["ok"] = True
@@ -819,7 +837,11 @@ async def run(opts: dict, mqtt_cfg: dict):
     async def apply_command(uniq, payload):
         ctl = controls.get(uniq)
         if not ctl:
-            print(f"[write] ignored command for unknown setting {uniq}", flush=True)
+            if uniq.startswith("climate_"):
+                pending[uniq] = payload
+                print(f"[write] {uniq} = {payload}: setting not found yet, will apply after the first full read", flush=True)
+            else:
+                print(f"[write] ignored command for unknown setting {uniq}", flush=True)
             return
         if uniq == "climate_mode":
             # HA hvac mode -> controller option text
@@ -842,11 +864,24 @@ async def run(opts: dict, mqtt_cfg: dict):
                 return
             raw = str(raw_num)
 
+        if uniq in ("climate_mode", "climate_preset") and lux and lux_state["ok"]:
+            await lux.write_parameter(LuxParamClient.HEATING_MODE, int(raw))
+            await asyncio.sleep(1)
+            params = await lux.read_parameters()
+            apply_lux_params(params)
+            publish_climate()
+            got = params[LuxParamClient.HEATING_MODE]
+            if str(got) == str(raw):
+                print(f"[write] heating mode = {payload} (raw {raw}, port {lux_port})", flush=True)
+            else:
+                print(f"[write] heating mode: controller kept raw {got} instead of {raw} ({payload})", flush=True)
+            return
+
         if ctl.get("lux"):
             await lux.write_parameter(LuxParamClient.HEATING_OFFSET, int(raw))
             await asyncio.sleep(1)
             params = await lux.read_parameters()
-            set_lux_target(params[LuxParamClient.HEATING_OFFSET])
+            apply_lux_params(params)
             publish_climate()
             if str(params[LuxParamClient.HEATING_OFFSET]) == raw:
                 print(f"[write] heating curve shift = {payload} (raw {raw})", flush=True)
@@ -909,6 +944,7 @@ async def run(opts: dict, mqtt_cfg: dict):
 
     try:
         await reconnect()
+        await refresh_lux_target()
 
         failures = 0
         while True:
@@ -957,6 +993,8 @@ async def run(opts: dict, mqtt_cfg: dict):
 
             await refresh_lux_target()
             publish_climate()
+            for uniq in [u for u in pending if u in controls]:
+                commands.put_nowait((uniq, pending.pop(uniq)))
 
             # only clean up after a full cycle, so a missing page never deletes its entities
             if cycle_complete and mqttb.cleanup_discovery and not mqttb.cleanup_done and mqttb.client.is_connected():
