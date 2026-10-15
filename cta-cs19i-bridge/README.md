@@ -39,5 +39,6 @@ Changes need a `controller_password` that is allowed to change these settings.
 - `climate`: create the thermostat entity (default on)
 - `writable_path_prefixes`: comma-separated settings pages whose values become HA selects/numbers
   you can change (empty = none). The log lists pages that have changeable values.
+- `debug`: log controller traffic, MQTT commands, writes and thermostat states (turn off again when done)
 - `cleanup_discovery`: after the first complete cycle, remove retained discovery configs of this bridge
   that no longer match a current value (e.g. per-entry log entities from old versions)

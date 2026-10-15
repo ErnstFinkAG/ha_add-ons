@@ -17,6 +17,17 @@ except Exception:
 # consecutive page failures before the controller connection is treated as dead
 MAX_PAGE_FAILURES = 3
 
+# set from the "debug" option: log controller traffic, MQTT commands and writes
+DEBUG = False
+
+def dbg(msg: str):
+    if DEBUG:
+        print(f"[debug {datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+def short(text, limit: int = 300) -> str:
+    text = str(text).replace("\n", " ")
+    return text if len(text) <= limit else f"{text[:limit]}... ({len(text)} chars)"
+
 # unit as shown by the controller -> (device_class, state_class, unit for HA)
 UNIT_CLASSES = {
     "°C": ("temperature", "measurement", "°C"),
@@ -227,6 +238,7 @@ class MqttBridge:
 
         def on_message(c, u, msg):
             if msg.topic.startswith(f"{self.state_base}/set/"):
+                dbg(f"mqtt command {msg.topic} = {msg.payload!r}")
                 if self.on_command:
                     self.on_command(msg.topic.rsplit("/", 1)[-1], msg.payload.decode("utf-8", "replace"))
                 return
@@ -425,6 +437,7 @@ class MqttBridge:
             states[f"{base}/current"] = f"{num}" if num is not None else "None"
 
         self._announce(f"{self.discovery}/climate/{uniq}/config", payload)
+        dbg(f"climate states {states}")
         for topic, value in states.items():
             self.client.publish(topic, value, retain=True)
 
@@ -496,6 +509,8 @@ class CTAClient:
     async def send(self, text: str):
         if self.ws is None:
             raise RuntimeError("WS not connected")
+        if text != "REFRESH":
+            dbg(f"ws > {'LOGIN;***' if text.startswith('LOGIN;') else text}")
         try:
             await self.ws.send(text)
         except ConnectionClosed as e:
@@ -506,8 +521,11 @@ class CTAClient:
         if self.ws is None:
             raise RuntimeError("WS not connected")
         try:
-            return await asyncio.wait_for(self.ws.recv(), timeout=timeout)
+            txt = await asyncio.wait_for(self.ws.recv(), timeout=timeout)
+            dbg(f"ws < {short(txt)}")
+            return txt
         except asyncio.TimeoutError:
+            dbg(f"ws < (nothing within {timeout}s)")
             return None
         except ConnectionClosed as e:
             self.ws = None
@@ -568,7 +586,11 @@ class LuxParamClient:
             if reply_words is None:
                 count = head[1]
                 body = await asyncio.wait_for(reader.readexactly(4 * count), 10)
-                return struct.unpack(f">{count}i", body)
+                values = struct.unpack(f">{count}i", body)
+                dbg(f"lux < {count} parameters; [1] heating offset={values[1] if count > 1 else '-'} "
+                    f"[3] heating mode={values[3] if count > 3 else '-'}")
+                return values
+            dbg(f"lux < reply {head}")
             return head
         finally:
             writer.close()
@@ -577,6 +599,7 @@ class LuxParamClient:
         return await self._session(struct.pack(">ii", 3003, 0))
 
     async def write_parameter(self, index: int, value: int):
+        dbg(f"lux > write parameter {index} = {value}")
         await self._session(struct.pack(">iii", 3002, index, value), reply_words=2)
 
 def supervisor_mqtt():
@@ -846,6 +869,7 @@ async def run(opts: dict, mqtt_cfg: dict):
         if row is None:
             print(f"[write] {leaf['path']}/{ctl['name']}: setting not found on the page any more", flush=True)
             return
+        dbg(f"write {leaf['path']}/{ctl['name']}: current row {row}, new raw {raw}")
         if row["raw"] == raw:
             print(f"[write] {leaf['path']}/{ctl['name']}: already {raw}", flush=True)
             return
@@ -969,6 +993,7 @@ if __name__ == "__main__":
     path = sys.argv[1] if len(sys.argv) > 1 else OPTIONS_PATH
     with open(path, "r", encoding="utf-8") as f:
         opts = json.load(f)
+    DEBUG = bool(opts.get("debug", False))
     mqtt_cfg = mqtt_settings(opts)
     print(f"[startup] Controller -> {opts['hostname']}:{opts.get('controller_port', 8214)}", flush=True)
     print(f"[startup] MQTT -> host={mqtt_cfg['host']} port={mqtt_cfg['port']} user={mqtt_cfg['username'] or '-'}", flush=True)
