@@ -1,4 +1,7 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/{arch}-base:latest
+# Newer Supervisor versions only pass BUILD_ARCH, not BUILD_FROM, so derive the
+# base image from the architecture here.
+ARG BUILD_ARCH=amd64
+ARG BUILD_FROM=ghcr.io/home-assistant/${BUILD_ARCH}-base:latest
 FROM ${BUILD_FROM}
 
 ENV PYTHONUNBUFFERED=1     PIP_NO_CACHE_DIR=1     PYTHONDONTWRITEBYTECODE=1     PATH="/opt/venv/bin:$PATH"
@@ -15,6 +18,6 @@ COPY app /app
 COPY run.sh /run.sh
 RUN chmod a+x /run.sh
 
-LABEL io.hass.version="0.2.3" io.hass.type="addon"
+LABEL io.hass.type="addon"
 
 CMD [ "/run.sh" ]

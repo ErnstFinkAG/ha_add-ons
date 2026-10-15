@@ -1,7 +1,7 @@
 name: CTA CS19i Bridge
-version: "0.0.12"
+version: "0.1.0"
 slug: cta_cs19i_bridge
-description: CTA CS19i → MQTT bridge (non-retained discovery + log aggregation + cleanup)
+description: CTA CS19i → MQTT bridge with Home Assistant discovery
 arch:
   - aarch64
   - amd64
@@ -10,7 +10,6 @@ arch:
 startup: services
 boot: auto
 init: false
-homeassistant: true
 
 options:
   hostname: 10.80.23.11
@@ -18,54 +17,42 @@ options:
   controller_password: "999990"
   poll_interval: 30
 
-  demand_delta_c: 5.0
-  demand_delta: 5.0
-
   discovery_prefix: homeassistant
   mqtt_host: core-mosquitto
   mqtt_port: 1883
-
-  mqtt_username: "mqtt_user"
-  mqtt_password: "mqtt_password"
-  mqtt_user: "mqtt_user"
-  mqtt_pass: "mqtt_password"
+  mqtt_username: ""
+  mqtt_password: ""
 
   state_base_topic: cta_cs19i
   log_pages: true
-  log_changes_only: false
+  log_changes_only: true
 
   nav_refresh_seconds: 3600
   skip_path_prefixes: "Zugang:"
+  include_path_prefixes: ""
 
   cleanup_discovery: true
-  cleanup_prefixes: ""
 
 schema:
   hostname: str
   controller_port: int
-  controller_password: str
+  controller_password: password
   poll_interval: int
-
-  demand_delta_c: float?
-  demand_delta: float?
 
   discovery_prefix: str
   mqtt_host: str
   mqtt_port: int
-
   mqtt_username: str?
   mqtt_password: password?
-  mqtt_user: str?
-  mqtt_pass: password?
 
   state_base_topic: str
   log_pages: bool
   log_changes_only: bool
   nav_refresh_seconds: int
   skip_path_prefixes: str
+  include_path_prefixes: str?
 
   cleanup_discovery: bool
-  cleanup_prefixes: str
 
 services:
   - mqtt:need
