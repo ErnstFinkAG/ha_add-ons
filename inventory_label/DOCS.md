@@ -2,46 +2,6 @@
 
 Home Assistant add-on for printing large QR-code labels to a networked Zebra ZT420/ZT421.
 
-## What changed in v0.1.90
-
-This version keeps required-field validation for print, but preview no longer fails when required printed fields are still empty.
-
-- preview and preview PNG now ignore required-field empties
-- print and API print remain strict
-
-
-This version speeds up printing from the web UI by sending print actions without reloading the full page.
-
-
-This version mirrors the right text-box margin to the left side when no QR code is rendered, so the text block stays centered when left/right margins differ.
-
-- the QR-code selection is now integrated into each configured field card next to the print checkbox
-
-- configured fields section now appears above QR field selection in the main UI
-This version replaces the separate QR/text gap profile setting with configurable text box side margins.
-
-- each label profile now supports `text_box_margin_left_mm` and `text_box_margin_right_mm`
-- the previous `qr_text_gap_mm` profile setting was removed
-- text box side margins are used in both preview and print
-- on rotated labels with QR, the left text box margin also acts as the gap between the QR block and the text box
-- footer logo/text gap per field remains available in the field editor
-- print shift X/Y per profile remains available for print-only positioning
-
-It keeps the recent behavior changes:
-
-- fields can switch render order inside the body or footer text block
-- footer fields can render logos and text together, with text below the logos
-- `qr_size_mm: 0` disables QR generation completely for that label profile
-- there are no built-in default label profiles or fields anymore
-- clicking a preview image prints that exact profile using the selected copy count
-
-This version adds an add-on setting to show or hide the global field configuration section in the web UI.
-
-- new `show_global_field_config` add-on option
-- when disabled, the global field manager card is hidden from the web UI
-- field edit endpoints are also blocked when the option is disabled
-- existing global fields still remain active for preview, print, and API usage
-
 ## Add-on config
 
 Configure one or more label profiles in the add-on **Configuration** tab. On a fresh install, add your first profile there before you start using the web UI. Set `qr_size_mm: 0` on a profile when that label should not generate a QR code at all. Use `print_shift_x_mm` and `print_shift_y_mm` to move only the printed output in mm without changing preview. Use `text_box_margin_left_mm` and `text_box_margin_right_mm` to control the text box side margins. On rotated labels with QR, the left text box margin also acts as the gap between the QR block and the text box.
@@ -51,6 +11,7 @@ Example:
 ```yaml
 ui_language: de
 show_global_field_config: true
+field_editors: []
 label_profiles:
   - id: standard
     name: Standard
@@ -94,6 +55,14 @@ label_profiles:
 The add-on now starts with an empty `label_profiles` list by default, so nothing is pre-created for you.
 
 `show_global_field_config` defaults to `true`. Set it to `false` when users should still print with the shared global fields but should not see or edit the field manager in the web UI.
+
+`field_editors` limits the field manager to some users. List Home Assistant user names (login name or display name, not case sensitive). When the list is empty, every user who can open the panel can edit fields. Users not on the list can still print.
+
+```yaml
+field_editors:
+  - localadmin
+  - nino
+```
 
 ## Field management in the web UI
 
@@ -175,3 +144,17 @@ Example payload:
   }
 }
 ```
+
+Home Assistant can call this endpoint directly, for example with a `rest_command`. Use the add-on hostname shown on the add-on's **Info** page (the part before `:8099` in the URL, it looks like `xxxxxxxx-inventory-label`):
+
+```yaml
+rest_command:
+  print_inventory_label:
+    url: "http://xxxxxxxx-inventory-label:8099/api/print"
+    method: POST
+    content_type: "application/json"
+    payload: >-
+      {"profile_id": "standard", "qr_field_ids": ["project_no"], "field_values": {"project_no": "{{ project_no }}"}}
+```
+
+Only Home Assistant itself (and the ingress panel) can reach the add-on; other add-ons and other devices get 403.

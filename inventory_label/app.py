@@ -5,10 +5,12 @@ import logging
 import os
 import re
 import socket
+import tempfile
+import threading
 import zlib
 from copy import deepcopy
-from datetime import datetime
-from functools import lru_cache
+from datetime import datetime, timezone
+from functools import lru_cache, wraps
 from io import BytesIO
 from typing import Dict, List, Tuple
 from uuid import uuid4
@@ -17,8 +19,8 @@ from zoneinfo import ZoneInfo
 
 import qrcode
 import yaml
-from flask import Flask, Response, jsonify, render_template_string, request, send_file
-from PIL import Image, ImageDraw, ImageFont
+from flask import Flask, Response, abort, jsonify, render_template_string, request, send_file
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 root_logger = logging.getLogger()
@@ -40,9 +42,14 @@ APP.logger.propagate = True
 DEFAULT_PRINTER_DPI = 203
 PRINTER_MAX_WIDTH_MM = 168.0
 INGRESS_ALLOWED_IP = "172.30.32.2"
+# Home Assistant Core reaches add-ons from the hassio bridge gateway (rest_command, scripts).
+HA_CORE_IP = "172.30.32.1"
+HA_CORE_ALLOWED_PATHS = {"/api/print"}
 LOCAL_ALLOWED_IPS = {"127.0.0.1", "::1", None}
 OPTIONS_PATH = "/data/options.json"
 FIELD_STORE_PATH = "/data/label_fields.json"
+# Serializes read-modify-write of the field store across waitress threads.
+FIELD_STORE_LOCK = threading.RLock()
 ASSET_ROOT_PATH = "/data/field_assets"
 LOGO_ASSET_PATH = os.path.join(ASSET_ROOT_PATH, "logos")
 DEFAULT_TEXTBOX_MARGIN_LEFT_MM = 8.0
@@ -65,6 +72,7 @@ ALLOWED_QUICK_FIELD_SETTINGS = {"print_by_default", "always_use_for_qr"}
 DEFAULT_OPTIONS = {
     "ui_language": "de",
     "show_global_field_config": True,
+    "field_editors": [],
     "label_profiles": [],
 }
 
@@ -1368,6 +1376,25 @@ def parse_legacy_profiles_yaml(raw: object) -> Tuple[List[Dict], Dict[str, List[
     return profiles, field_store
 
 
+def normalize_field_editors(value: object) -> List[str]:
+    if isinstance(value, str):
+        value = value.split(",")
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip().lower() for item in value if str(item or "").strip()]
+
+
+def current_user_may_edit_fields(editors: List[str]) -> bool:
+    if not editors:
+        return True
+    names = {
+        (request.headers.get("X-Remote-User-Name") or "").strip().lower(),
+        (request.headers.get("X-Remote-User-Display-Name") or "").strip().lower(),
+    }
+    names.discard("")
+    return bool(names & set(editors))
+
+
 def load_options() -> Tuple[Dict, Dict[str, List[Dict]], str | None]:
     options = dict(DEFAULT_OPTIONS)
     raw = {}
@@ -1383,6 +1410,7 @@ def load_options() -> Tuple[Dict, Dict[str, List[Dict]], str | None]:
 
     options["ui_language"] = normalize_ui_language(raw.get("ui_language"), DEFAULT_OPTIONS["ui_language"])
     options["show_global_field_config"] = normalize_bool(raw.get("show_global_field_config"), DEFAULT_OPTIONS["show_global_field_config"])
+    options["field_editors"] = normalize_field_editors(raw.get("field_editors"))
 
     legacy_field_store: Dict[str, List[Dict]] = {}
     if isinstance(raw.get("label_profiles"), list):
@@ -1398,6 +1426,14 @@ def load_options() -> Tuple[Dict, Dict[str, List[Dict]], str | None]:
 
     options["label_profiles"] = profiles
     return options, legacy_field_store, migrated_notice
+
+
+def with_field_store_lock(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        with FIELD_STORE_LOCK:
+            return func(*args, **kwargs)
+    return wrapper
 
 
 def merge_field_lists(*field_lists: object) -> List[Dict]:
@@ -1425,6 +1461,7 @@ def merge_field_lists(*field_lists: object) -> List[Dict]:
     return sort_fields_by_order(merged)
 
 
+@with_field_store_lock
 def load_field_store(profiles: List[Dict], legacy_seed: Dict[str, List[Dict]] | None = None) -> List[Dict]:
     store: List[Dict] = []
     wrote_file = False
@@ -1449,8 +1486,20 @@ def load_field_store(profiles: List[Dict], legacy_seed: Dict[str, List[Dict]] | 
 def save_field_store(store: List[Dict]) -> None:
     ordered = sort_fields_by_order([normalize_profile_field(field, idx) for idx, field in enumerate(store, start=1)])
     serializable = [normalize_profile_field(field, idx) for idx, field in enumerate(ordered, start=1)]
-    with open(FIELD_STORE_PATH, "w", encoding="utf-8") as handle:
-        json.dump(serializable, handle, ensure_ascii=False, indent=2)
+    directory = os.path.dirname(FIELD_STORE_PATH) or "."
+    fd, tmp_path = tempfile.mkstemp(prefix=".label_fields.", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(serializable, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, FIELD_STORE_PATH)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def select_profile(profiles: List[Dict], requested_profile_id: str | None = None) -> Dict | None:
@@ -1479,6 +1528,8 @@ def load_runtime_options(profile_id: str | None = None) -> Dict:
     opts["requested_profile_id"] = requested_profile["id"] if requested_profile else ""
     opts["requested_profile_name"] = requested_profile["name"] if requested_profile else ""
     opts["migration_notice"] = migration_notice
+    if not current_user_may_edit_fields(opts.get("field_editors", [])):
+        opts["show_global_field_config"] = False
     return opts
 
 
@@ -1748,7 +1799,7 @@ def require_requested_profile(opts: Dict) -> Dict:
 
 def ensure_field_manager_enabled(opts: Dict) -> None:
     if not normalize_bool(opts.get("show_global_field_config"), True):
-        raise ValueError(ui_text(opts, "field_manager_disabled_message"))
+        abort(403, description=ui_text(opts, "field_manager_disabled_message"))
 
 
 def validate_field_forms(field_forms: List[Dict], language: str, strict_required: bool = True) -> List[Dict]:
@@ -1922,13 +1973,23 @@ def build_qr_image(data: str, size_dots: int, profile: Dict) -> Image.Image:
     qr = qrcode.QRCode(
         version=None,
         error_correction=qr_error_correction_constant(profile),
-        box_size=10,
+        box_size=1,
         border=normalize_int(profile.get("qr_quiet_zone_modules"), 3, 0, 20),
     )
     qr.add_data(data)
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white").convert("1")
-    return img.resize((size_dots, size_dots), Image.Resampling.NEAREST)
+    modules = img.size[0]
+    # Use a whole number of dots per module so every module prints the same size,
+    # then center it on a white square of the requested size.
+    module_dots = size_dots // modules
+    if module_dots < 1:
+        return img.resize((size_dots, size_dots), Image.Resampling.NEAREST)
+    scaled = img.resize((modules * module_dots, modules * module_dots), Image.Resampling.NEAREST)
+    canvas = Image.new("1", (size_dots, size_dots), 1)
+    offset = (size_dots - scaled.size[0]) // 2
+    canvas.paste(scaled, (offset, offset))
+    return canvas
 
 
 def image_to_graphic_bytes(img: Image.Image) -> Tuple[int, int, bytes]:
@@ -1937,18 +1998,9 @@ def image_to_graphic_bytes(img: Image.Image) -> Tuple[int, int, bytes]:
     width, height = img.size
     bytes_per_row = (width + 7) // 8
     total_bytes = bytes_per_row * height
-    pixels = img.load()
-    payload = bytearray()
-    for y in range(height):
-        for byte_idx in range(bytes_per_row):
-            value = 0
-            for bit in range(8):
-                x = (byte_idx * 8) + bit
-                value <<= 1
-                if x < width and pixels[x, y] == 0:
-                    value |= 1
-            payload.append(value)
-    return total_bytes, bytes_per_row, bytes(payload)
+    # Mode "1" packs 8 pixels per byte MSB first with 1 = white; ZPL wants 1 = black.
+    payload = ImageChops.invert(img).tobytes()
+    return total_bytes, bytes_per_row, payload
 
 
 def image_to_gfa(img: Image.Image) -> Tuple[int, int, str]:
@@ -2530,7 +2582,7 @@ def save_uploaded_logo_options(files: List[object], language: str) -> Tuple[List
             raise
         except Exception as exc:
             raise ValueError(ui_text(language, 'logo_upload_invalid', error=exc)) from exc
-        storage_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{uuid4().hex}.png"
+        storage_name = f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid4().hex}.png"
         rendered.save(logo_asset_path(storage_name), format='PNG', optimize=True)
         option = {
             'id': sanitize_id(os.path.splitext(filename)[0], f'logo_{idx}'),
@@ -2565,6 +2617,7 @@ def resolve_logo_options_for_save(profile: Dict, source: object, files: object, 
     return merged, created_with_order
 
 
+@with_field_store_lock
 def save_global_field(original_field_id: str, field: Dict, language: str) -> None:
     opts, _, _ = load_options()
     profiles = parse_label_profiles(opts.get("label_profiles"))
@@ -2590,6 +2643,7 @@ def save_global_field(original_field_id: str, field: Dict, language: str) -> Non
     LOGGER.info("Saved global field %s", field["id"])
 
 
+@with_field_store_lock
 def delete_global_field(field_id: str) -> bool:
     opts, _, _ = load_options()
     profiles = parse_label_profiles(opts.get("label_profiles"))
@@ -2605,6 +2659,7 @@ def delete_global_field(field_id: str) -> bool:
     return changed
 
 
+@with_field_store_lock
 def move_global_field(field_id: str, direction: str) -> Dict | None:
     opts, _, _ = load_options()
     profiles = parse_label_profiles(opts.get("label_profiles"))
@@ -2641,6 +2696,7 @@ def move_global_field(field_id: str, direction: str) -> Dict | None:
     return next((field for field in rewritten if field.get("id") == field_id), selected)
 
 
+@with_field_store_lock
 def update_global_field_setting(field_id: str, setting: str, value: bool) -> Dict:
     if setting not in ALLOWED_QUICK_FIELD_SETTINGS:
         raise ValueError(f"Unsupported field setting: {setting}")
@@ -2773,12 +2829,14 @@ def api_field_forms_from_payload(fields: List[Dict], payload: Dict) -> List[Dict
 
 @APP.before_request
 def restrict_ingress():
+    # Only trust the source address: headers such as X-Ingress-Path can be sent by
+    # any container on the hassio network.
     remote = request.remote_addr
-    if request.headers.get("X-Ingress-Path"):
+    if remote in LOCAL_ALLOWED_IPS or remote == INGRESS_ALLOWED_IP:
         return None
-    if remote not in LOCAL_ALLOWED_IPS and remote != INGRESS_ALLOWED_IP:
-        return Response("Forbidden", status=403)
-    return None
+    if remote == HA_CORE_IP and request.path in HA_CORE_ALLOWED_PATHS:
+        return None
+    return Response("Forbidden", status=403)
 
 
 @APP.route("/", methods=["GET"])
@@ -2960,7 +3018,7 @@ def preview():
         qr_value = safe_qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
         copies = max(1, min(50, int(form.get("copies", "1"))))
         zpl = build_zpl(qr_value, bind_field_forms_to_profile(field_forms, profile), copies, profile)
-        LOGGER.info("Generated ZPL preview for profile=%s copies=%s", profile.get("id"), copies)
+        LOGGER.debug("Generated ZPL preview for profile=%s copies=%s", profile.get("id"), copies)
         return Response(zpl, mimetype="text/plain; charset=utf-8")
     except Exception as exc:
         LOGGER.exception("ZPL preview failed")
@@ -2975,7 +3033,7 @@ def preview_png():
         profile = require_requested_profile(opts)
         field_forms = validate_field_forms(field_forms, opts["ui_language"], strict_required=False)
         qr_value = safe_qr_payload_from_field_forms(field_forms, normalize_qr_field_ids(form.get("qr_field_ids", [])))
-        LOGGER.info("Generating PNG preview for profile=%s qr_value=%r", opts.get("requested_profile_id"), qr_value)
+        LOGGER.debug("Generating PNG preview for profile=%s qr_value=%r", opts.get("requested_profile_id"), qr_value)
         img = render_label_image(qr_value, bind_field_forms_to_profile(field_forms, profile), profile, preview=True)
         bio = BytesIO()
         current_dpi = printer_dpi(profile)
