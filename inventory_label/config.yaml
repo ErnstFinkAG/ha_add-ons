@@ -1,5 +1,5 @@
 name: "Inventory Label"
-version: "0.1.91"
+version: "0.2.0"
 slug: "inventory_label"
 description: >-
   Print large QR-code labels to a networked Zebra ZT420/ZT421 with live PNG preview,
@@ -18,22 +18,17 @@ panel_admin: false
 arch:
   - aarch64
   - amd64
-  - armhf
-  - armv7
-  - i386
-build_from:
-  aarch64: "ghcr.io/home-assistant/aarch64-base:3.21"
-  amd64: "ghcr.io/home-assistant/amd64-base:3.21"
-  armhf: "ghcr.io/home-assistant/armhf-base:3.21"
-  armv7: "ghcr.io/home-assistant/armv7-base:3.21"
-  i386: "ghcr.io/home-assistant/i386-base:3.21"
+watchdog: "tcp://[HOST]:[PORT:8099]"
 options:
   ui_language: "de"
   show_global_field_config: true
+  field_editors: []
   label_profiles: []
 schema:
   ui_language: "list(de|en)"
   show_global_field_config: bool
+  field_editors:
+    - str
   label_profiles:
     - id: str
       name: str

@@ -1,4 +1,7 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.21
+# Newer Supervisor versions only pass BUILD_ARCH, not BUILD_FROM, so derive the
+# base image from the architecture here.
+ARG BUILD_ARCH=amd64
+ARG BUILD_FROM=ghcr.io/home-assistant/${BUILD_ARCH}-base:3.21
 FROM ${BUILD_FROM}
 
 RUN apk add --no-cache \
