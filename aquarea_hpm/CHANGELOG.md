@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.1
+
+- Reads the values on the WEB-FB parameter menus (rows like `Reglertemp   31 °C`), using
+  the HPM's own menu numbers as ids (e.g. 1.3.1.2), and polls them every
+  `parameter_interval`. They are read-only for now.
+- Checks the menu position with the "Menü 1.3.4.x" number on each page instead of the
+  menu name, so the walk no longer retries every page (and is about three times faster).
+- Never opens the Strukturierung / WEB menu and never publishes rows like "Niveau" or
+  "Benutzer", so web login codes stay out of Home Assistant and out of the debug zip.
+- Empty rows (unused slots, empty fault texts) are skipped.
+- New optional `max_menu_pages` (default 500) limits the menu walk separately.
+
 ## 0.4.0
 
 - The WEB-FB menus are now walked step by step the way a person clicks through them

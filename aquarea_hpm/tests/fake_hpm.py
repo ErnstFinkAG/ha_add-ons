@@ -18,9 +18,6 @@ VALUES = {
     "33:6.1.1": ["", "-3.5", "°C", None],
     "34:6.1.2": ["", "Ein", "", None],
     "7:6.2.6": ["", "keine Störung", "", None],
-    "201:9.1.1": ["Komfort Raum", "21.0", "°C", ("number", 15, 28)],
-    "202:3.1.1": ["Vorlauf HK", "34.5", "°C", None],
-    "203:1.1.1.1": ["Störstatus", "keine", "", None],
 }
 PAGES = {
     "v0.rsp": ("Anlagenübersicht", ["33:6.1.1", "7:6.2.6", "34:6.1.2"]),
@@ -32,13 +29,17 @@ PAGES = {
 # the real HPM: menue.rsp?branchnr=B&level=L opens child B of the current menu (L = depth + 1)
 # or goes up to the ancestor at depth L; anything else just shows the current menu again.
 MENU = {
-    1: ("Globales", {1: ("Meldungen", {1: ("Störstatus", ["203:1.1.1.1"])}),
-                     3: ("Service", {1: ("Raumtemperaturen", ["201:9.1.1"]), 5: ("Zugriff", [])})}),
-    2: ("MSR-GLT", {1: ("Heizkreis", ["202:3.1.1"])}),
+    1: ("Globales", {1: ("Meldungen", {1: ("Störstatus", [["Heizkr.1", "0"], ["Wärmep.1", "0"]])}),
+                     3: ("Service", {1: ("Hardware", [["Reglertemp", "31 °C"], ["ProdNr", "011511100047"]]),
+                                     2: ("Raumtemperaturen", [["Komfort", "21.0 °C"]], 3),
+                                     5: ("Zugriff", [], 7)}, 4),
+                     5: ("Strukturierung", {2: ("WEB", [["Niveau 1", "11111111"]], 7)})}),
+    2: ("MSR-GLT", {1: ("Heizkreis", [["Vorlauf HK", "34.5 °C"], ["Jahreszeit: Sommer", None], ["Niveau 2", "22222222"],
+                                      ["FText", ""]])}),
     3: ("Zugriffscodes", []),
     5: ("Anlagenschemen", []),
 }
-NEVER_OPEN = {"Zugriffscodes", "Zugriff", "Anlagenschemen"}
+NEVER_OPEN = {"Zugriffscodes", "Zugriff", "Anlagenschemen", "WEB"}
 LOCKED = {"Raumtemperaturen"}
 MENU_POS = {}
 VIOLATIONS = []  # menus that were opened although they must not be
@@ -68,21 +69,22 @@ def wrap(title, body, sid):
 
 
 def menu_node(pos):
-    names, node = [], ("Hauptmenü", MENU)
+    names, numbers, node = [], [], ("Hauptmenü", MENU)
     for b in pos:
         node = node[1][b]
         names.append(node[0])
-    return names, node
+        numbers.append(node[2] if len(node) > 2 else b)  # the HPM's menu number can differ from branchnr
+    return names, numbers, node
 
 
 def menu(sid, branchnr, level):
     pos = MENU_POS.get(sid, ())
-    _, (_, children) = menu_node(pos)
+    children = menu_node(pos)[2][1]
     if level == len(pos) + 1 and isinstance(children, dict) and branchnr in children:
         pos = pos + (branchnr,)
     elif level <= len(pos) and (level == 0 or pos[level - 1] == branchnr):
         pos = pos[:level]
-    names, (name, children) = menu_node(pos)
+    names, numbers, (name, children, *_) = menu_node(pos)
     if name in NEVER_OPEN:
         VIOLATIONS.append(name)
     if name in LOCKED and sid not in UNLOCKED:
@@ -91,14 +93,18 @@ def menu(sid, branchnr, level):
     head = ""
     if pos:
         up = (pos[-2], len(pos) - 1) if len(pos) > 1 else (1, 0)
-        head = f'<tr><th><a href="menue.rsp?sessionid={sid}&branchnr={up[0]}&level={up[1]}">{"      ".join(names)}</a></th></tr>'
+        head = f'<tr><th><a href="menue.rsp?sessionid={sid}&branchnr={up[0]}&level={up[1]}">{"    ".join(n[:8] for n in names[-2:])}</a></th><th></th></tr>'
     if isinstance(children, dict):
         body = "".join(f'<tr><td><a href="menue.rsp?sessionid={sid}&branchnr={b}&level={len(pos) + 1}">{n}</a></td></tr>'
-                       for b, (n, _) in children.items())
-        values = []
-    else:
-        body, values = "", rows("menue.rsp", children, sid)
-    return wrap("WEB-FB", [f'<div id="mainpane"><table class="mentext">{head}{body}</table></div>'] + values, sid)
+                       for b, (n, *_) in children.items())
+    else:  # parameter rows, padded like on the real HPM
+        body = ""
+        for i, (label, value) in enumerate(children, 1):
+            text = label if value is None else f"{label}{' ' * max(2, 34 - len(label) - len(value))}{value}"
+            body += (f'<tr><td><a href="info.rsp?sessionid={sid}&branchnr={i}&level={len(pos) + 1}" id="{i}">{text}</a></td>'
+                     f'<td><a href="change.rsp?sessionid={sid}&branchnr={i}&level={len(pos) + 1}"><img src="modify.png" alt="ändern"></a></td></tr>')
+    number = f"<p>Menü {'.'.join(map(str, numbers))}.x</p>" if pos else ""
+    return wrap("WEB-FB", [f'<div id="mainpane">{number}<table class="mentext">{head}{body}</table></div>'], sid)
 
 
 def rows(key, ids, sid):

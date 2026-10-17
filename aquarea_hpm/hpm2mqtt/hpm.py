@@ -33,7 +33,10 @@ NUMBER_RE = re.compile(r"^(?:(?P<label>.*?)\s+)?(?P<value>[-+]?\d+(?:[.,]\d+)?)\
 # setgrvalue.rsp ...) either logs out, changes the layout or only shows detail.
 CRAWL_RE = re.compile(r"^/?(v\d+\.rsp)$", re.I)
 # WEB-FB menu nodes never opened: access codes, plant schema selection and action-like entries.
-MENU_SKIP_RE = re.compile(r"zugriff|passw|kennw|anlagenschem|werkseinst|reset|l(ö|oe)sch|quittier|neustart|test", re.I)
+MENU_SKIP_RE = re.compile(r"zugriff|passw|kennw|anlagenschem|werkseinst|reset|l(ö|oe)sch|quittier|neustart|test|^web$", re.I)
+# Menu rows that hold user names or access codes; never read into Home Assistant.
+SECRET_ROW_RE = re.compile(r"niveau|benutzer|passw|kennw|code|zugriff|pin\b", re.I)
+MENU_NUMBER_RE = re.compile(r"Men(ü|ue)\s+((?:\d+\.)+)x", re.I)
 RSP_REF_RE = re.compile(r"""([A-Za-z0-9_]+\.rsp(?:\?[^"'\s<>]*)?)""")
 # Menu branches never read: they show or change access codes.
 SKIP_TEXT_RE = re.compile(r"zugriff|passw|kennw|access", re.I)
@@ -328,6 +331,46 @@ def parse_editor(html: str) -> Optional[Editor]:
     return None
 
 
+def menu_number(html: str) -> tuple:
+    """The HPM's own number of a WEB-FB menu ("Menü 1.3.4.x" -> (1, 3, 4)); () for the main menu."""
+    match = MENU_NUMBER_RE.search(BeautifulSoup(html, "html.parser").get_text(" "))
+    return tuple(int(n) for n in match.group(2).strip(".").split(".")) if match else ()
+
+
+def _menu_row_value(text: str):
+    """Split a menu row like 'Reglertemp     31 °C' into (label, value, unit, decimals, raw)."""
+    text = text.replace("\xa0", " ").strip("\r\n")
+    parts = re.split(r"\s{2,}", text.strip(), maxsplit=1)
+    if len(parts) < 2 and ": " in text:
+        parts = text.strip().split(": ", 1)
+    label = parts[0].strip()
+    raw = parts[1].strip() if len(parts) == 2 else ""
+    if not raw or re.fullmatch(r"0\d+", raw):
+        return label, raw, None, 0, raw
+    _, value, unit, decimals = parse_value(raw)
+    return label, value, unit, decimals, raw
+
+
+def parse_menu_page(html: str, key: str, title: str) -> Page:
+    """Values listed on a WEB-FB parameter menu (rows linking to info.rsp)."""
+    soup = BeautifulSoup(html, "html.parser")
+    page = Page(key=key, title=title)
+    number = ".".join(map(str, menu_number(html)))
+    for row in soup.select("#mainpane table.mentext tr"):
+        links = row.select("td a[href]")
+        if not links or urlparse(links[0]["href"]).path.lstrip("/") != "info.rsp":
+            continue
+        query = dict(parse_qsl(urlparse(links[0]["href"]).query))
+        label, value, unit, decimals, raw = _menu_row_value(links[0].get_text())
+        if not label or SECRET_ROW_RE.search(label) or not query.get("branchnr", "").isdigit():
+            continue
+        page.datapoints.append(Datapoint(
+            id=f"menu:{number}.{query['branchnr']}" if number else f"menu:{key[5:]}.{query['branchnr']}",
+            label=label, raw=raw, value=value, unit=unit, decimals=decimals, page=key,
+            page_title=title.split(" / ")[-1] if title else "Menü"))
+    return page
+
+
 class HpmClient:
     def __init__(self, host: str, username: str = "", password: str = "", timeout: float = 10.0, request_delay: float = 0.3,
                  session_file: Optional[str] = None, access_code: str = ""):
@@ -587,7 +630,10 @@ class HpmClient:
         return html
 
     def _menu_goto(self, path: tuple, names: tuple, check: bool) -> str:
-        """Move like a person clicking: up via the header link to the common parent, then down."""
+        """Move like a person clicking: up via the menu header link to the common parent, then down.
+
+        Every page carries the HPM's menu number ("Menü 1.3.4.x"); with ``check`` each step is
+        verified against it (one level deeper/higher, same parent)."""
         pos = self._menu_pos
         html = self._menu_page if pos is not None else self._menu_reset()
         pos = self._menu_pos
@@ -598,16 +644,20 @@ class HpmClient:
             up, _ = self._menu_head(html)
             if up is None:
                 raise HpmError("no way up in the menu")
+            before = menu_number(html)
             html = self._menu_step(*up)
             pos = pos[:-1]
+            if check and menu_number(html) != before[:-1]:
+                raise HpmError(f"went up from {before} but landed on {menu_number(html)}")
             self._menu_pos, self._menu_page = pos, html
         for depth in range(common, len(path)):
+            before = menu_number(html)
             html = self._menu_step(path[depth], depth + 1)
+            if check:
+                now = menu_number(html)
+                if len(now) != depth + 1 or now[:-1] != before:
+                    raise HpmError(f"expected a sub-menu of {before}, got {now}")
             self._menu_pos, self._menu_page = path[:depth + 1], html
-            if check and depth < len(names) and names[depth]:
-                _, crumb = self._menu_head(html)
-                if crumb and _clean(names[depth]) not in crumb:
-                    raise HpmError(f"expected '{names[depth]}', got '{crumb}'")
         return html
 
     def get_menu(self, path: tuple, names: tuple = ()) -> str:
@@ -622,7 +672,7 @@ class HpmClient:
                         self.login()
                     if attempt:
                         self._menu_pos = None
-                    return self._menu_goto(tuple(path), tuple(names), check=attempt < 2)
+                    return self._menu_goto(tuple(path), tuple(names), check=True)
                 except (requests.RequestException, HpmError) as err:
                     _LOGGER.debug("Menu %s: %s (attempt %d)", path, err, attempt + 1)
                     self._menu_pos = None
@@ -668,10 +718,8 @@ class HpmClient:
                 key = "menu:" + "/".join(map(str, path))
                 if self.on_page:
                     self.on_page(key, html)
-                page = parse_page(html, key, title or "Menü")
-                page.title = title or "Menü"
-                for dp in page.datapoints:
-                    dp.page_title = names[-1] if names else "Menü"
+                page = parse_menu_page(html, key, title or "Menü")
+                page.datapoints = [dp for dp in page.datapoints if dp.raw]  # e.g. empty fault texts, unused slots
                 children = self.menu_children(html)
                 _LOGGER.debug("Menu %s (%s): %d values, %d sub-menus", key, page.title, len(page.datapoints), len(children))
                 if page.datapoints:

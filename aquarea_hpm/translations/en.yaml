@@ -25,7 +25,10 @@ configuration:
     description: How often the whole web interface is scanned again for new values.
   max_pages:
     name: Maximum pages
-    description: Upper limit of pages visited during a scan.
+    description: Upper limit of overview pages visited during a scan.
+  max_menu_pages:
+    name: Maximum menu pages
+    description: Upper limit of WEB-FB menu pages visited during a scan (default 500).
   enable_control:
     name: Enable control
     description: Create number/select entities for changeable values. Turn off for read-only sensors.

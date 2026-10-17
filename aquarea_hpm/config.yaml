@@ -1,5 +1,5 @@
 name: Aquarea HPM Bridge
-version: "0.4.0"
+version: "0.4.1"
 slug: aquarea_hpm
 description: Sensors and controls for the Panasonic Aquarea Heat Pump Manager (PAW-HPM) via MQTT discovery
 url: https://github.com/ErnstFinkAG/ha_add-ons/tree/main/aquarea_hpm
@@ -45,6 +45,7 @@ schema:
   parameter_interval: int(60,86400)
   rescan_hours: int(1,168)
   max_pages: int(1,1000)
+  max_menu_pages: int(1,5000)?
   enable_control: bool
   include_menus: bool
   menu_control: bool
