@@ -39,6 +39,44 @@ GENERIC_MENUS = {"msr-glt", "globales", "funktion", "service", "wärmeerzeuger",
                  "uhr kanalauswahl", "uhr status", "uhr service", "konfiguration", "schnittstellen"}
 
 
+# WEB-FB menu values worth having in Home Assistant: (menu path regex, row label regex, settable).
+# "settable" rows become number/select/text entities; everything else here is a read-only sensor.
+_USEFUL = [
+    # what the system is doing right now
+    (r"/ (Istwerte|Status)$", r".", False),
+    (r"(Wärmepumpe \d+|Pufferspeicher|Photovoltaik|Smart Grid) / Sollwerte$", r".", False),
+    (r"/ Uhr Status / ", r".", False),
+    (r"^Globales / (Meldungen / Störstatus|Fehler / System) / (Status|Texte)$", r".", False),
+    (r"^Globales / Service / (Hardware|Software)$", r"^(?!Sprache)", False),
+    # settings worth programming from Home Assistant
+    (r"Heizkreis \d+ / Sollwerte$", r"^(RaumNZ\d|RaumNN|RaumSNNZ|HK-Steilh|Hk-Exp)$", True),
+    (r"Heizkreis \d+ / Funktion / Sommerabschaltung$", r"^(Aktiv|AusTemp|EinTemp)", True),
+    (r"Heizkreis \d+ / Funktion / Sollwertbegrenzung$", r"^(minVL|maxVL)$", True),
+    (r"Heizkreis \d+ / Funktion / Frostgr", r"^AussenFrGr$", True),
+    (r"Heizkreis \d+ / Funktion / Ausl", r"^(AuslAT|GrAussen)$", True),
+    (r"Heizkreis \d+ / Funktion / Fernbed", r"^DauÜberstd$", True),
+    (r"Pufferspeicher / Sollwerte$", r"^ÜberhZ\d$", True),
+    (r"Pufferspeicher / Funktion / (Überhöhung|Pufferspeicher)$", r"^(Aktiv|Überh\.HK\d|maxTSpei|minAus)$", True),
+    (r"Wärmepumpe \d+ / Funktion / (Sollwertbegrenzung|Überhöhung|Bivalenz)$", r"^(maxSW|Aktiv|Überh\.HK|Grenze)$", True),
+    (r"/ Uhr Kanalauswahl / .+ / (Wochenprogramm|Sonder-Nichtn\.|Sonder-Nutzungsz\.)$", r".", True),
+    (r"^Globales / Systemuhr / (Uhrzeit|Datum|Mode)$", r"^(AktZeit|AktDatum|ArtSoWiUmsch)$", True),
+    (r"Photovoltaik / Funktion / (Temperaturen|Ablaufzeiten)$", r".", True),
+    (r"Smart Grid / Funktion / Betriebszustand \d$", r".", True),
+]
+_USEFUL = [(re.compile(t), re.compile(l), w) for t, l, w in _USEFUL]
+
+
+def menu_usefulness(title: str, label: str) -> Optional[str]:
+    """"set" for recommended settings, "read" for useful read-only values, None for the rest."""
+    found = None
+    for title_re, label_re, settable in _USEFUL:
+        if title_re.search(title) and label_re.search(label):
+            if settable:
+                return "set"
+            found = "read"
+    return found
+
+
 def menu_title(title: str) -> str:
     """Short, distinctive name for values of a menu, e.g. "Wärmepumpe 1 Überhöhung"."""
     names = [n for n in title.split(" / ") if n and n.lower() not in GENERIC_MENUS]
@@ -84,6 +122,8 @@ class Datapoint:
     form: Optional[dict] = None  # hidden fields of the setgrvalue form
     inline_editor: Optional["Editor"] = None  # selects shown directly on the page (e.g. BArtSchalter)
     long_name: Optional[str] = None  # descriptive name from the HPM's info/editor page
+    change: Optional[tuple] = None  # WEB-FB menu row with an edit link: (branchnr, level) of change.rsp
+    menu_title: str = ""  # full WEB-FB menu path, e.g. "MSR-GLT / Heizkreise / Heizkreis 1 / Sollwerte"
 
 
 @dataclass
@@ -371,12 +411,17 @@ def parse_menu_page(html: str, key: str, title: str) -> Page:
             continue
         query = dict(parse_qsl(urlparse(links[0]["href"]).query))
         label, value, unit, decimals, raw = _menu_row_value(links[0].get_text())
+        change = None
+        if len(links) > 1 and urlparse(links[1]["href"]).path.lstrip("/") == "change.rsp":
+            cq = dict(parse_qsl(urlparse(links[1]["href"]).query))
+            if cq.get("branchnr", "").isdigit() and cq.get("level", "").isdigit():
+                change = (int(cq["branchnr"]), int(cq["level"]))
         if not label or SECRET_ROW_RE.search(label) or not query.get("branchnr", "").isdigit():
             continue
         page.datapoints.append(Datapoint(
             id=f"menu:{number}.{query['branchnr']}" if number else f"menu:{key[5:]}.{query['branchnr']}",
             label=label, raw=raw, value=value, unit=unit, decimals=decimals, page=key,
-            page_title=menu_title(title)))
+            page_title=menu_title(title), writable=change is not None, change=change, menu_title=title))
     return page
 
 
@@ -744,6 +789,15 @@ class HpmClient:
 
     # -- writing -----------------------------------------------------------------------
     def _open_editor(self, dp: Datapoint) -> tuple[Optional[Editor], str]:
+        if dp.change is not None:  # WEB-FB menu row: go to its menu, then click the edit icon
+            path = tuple(int(b) for b in dp.page[5:].split("/") if b)
+            self.get_menu(path, tuple(dp.menu_title.split(" / ")))
+            branchnr, level = dp.change
+            try:
+                _, html = self._request("GET", self._with_session(f"change.rsp?branchnr={branchnr}&level={level}"))
+            finally:
+                self._menu_pos = None  # the editor leaves the menu position undefined
+            return parse_editor(html), html
         fields = dict(dp.form["fields"])
         fields["sessionid"] = self.sessionid or fields.get("sessionid", "")
         self._menu_pos = None  # the editor may leave the WEB-FB menu somewhere else
@@ -764,7 +818,7 @@ class HpmClient:
             editor, html = self._open_editor(dp)
             if editor is None and UNAVAILABLE_RE.search(html):
                 _LOGGER.info("%s is currently not available on the HPM", dp.id)
-            pv = dp.form["fields"].get("pv")
+            pv = (dp.form or {}).get("fields", {}).get("pv")
             if pv and not pv.startswith("menue"):  # leave the editor the way a browser user would
                 try:
                     self.get(pv)

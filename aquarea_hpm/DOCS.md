@@ -22,7 +22,9 @@ else becomes a `sensor`.
    in a browser, nothing is changed) to learn whether it is a list (select) or a number and
    its min/max.
 4. With `include_menus` (default on) it also walks the WEB-FB menu tree step by step. Those parameters
-   are read-only unless `menu_control` is on; access-code menus are never opened.
+   are filtered by `menu_values` (default: only useful values); the recommended settings can be
+   changed when `menu_settings` is on, all other menu values stay read-only. Access-code menus
+   are never opened.
 5. Overview pages are polled every `scan_interval`, menu/parameter pages every
    `parameter_interval`, and a full rescan runs every `rescan_hours` or when you press the
    **Rescan values** button.

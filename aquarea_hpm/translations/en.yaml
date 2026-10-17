@@ -34,10 +34,16 @@ configuration:
     description: Create number/select entities for changeable values. Turn off for read-only sensors.
   include_menus:
     name: Read WEB-FB menus
-    description: Also read the parameters in the HPM's WEB-FB menu tree (read-only). Access code menus are never read.
+    description: Also read the parameters in the HPM's WEB-FB menu tree. Access code menus are never read.
+  menu_values:
+    name: Menu values
+    description: "useful = only current values, status and the recommended settings (default); all = every menu value (several hundred, mostly installer settings, read-only); none = no menu values."
+  menu_settings:
+    name: Change recommended settings
+    description: Let Home Assistant change the recommended menu settings (room setpoints, heating curve, summer switch-off, flow limits, buffer, week programmes, clock). Installer settings always stay read-only.
   menu_control:
-    name: Control menu parameters
-    description: Make changeable WEB-FB menu parameters controllable from Home Assistant. Off by default because the menus contain installer settings.
+    name: (old option, no longer used)
+    description: Replaced by "Change recommended settings".
   extra_pages:
     name: Extra pages
     description: Additional page names to read, e.g. "v100100.rsp" or "menue.rsp?branchnr=2&level=3".

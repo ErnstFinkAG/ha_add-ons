@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0
+
+- New option `menu_values` (default `useful`): only the menu values worth having in Home
+  Assistant are published, i.e. current values (Istwerte), status, fault status and the
+  recommended settings. `all` publishes every menu value read-only, `none` skips the menus.
+- New option `menu_settings` (default on): these recommended menu settings can be changed
+  from Home Assistant:
+  - Heizkreis: room setpoints (RaumNZ1-4, RaumNN, RaumSNNZ), heating curve slope and
+    exponent (HK-Steilh, Hk-Exp), summer switch-off (Aktiv, Aus/EinTemp NZ/NN), min/max
+    flow temperature, frost limit, design outdoor temperature, remote override duration
+  - Pufferspeicher: boost (ÜberhZ1, Überhöhung), max storage temperature, min off time
+  - Wärmepumpe: max setpoint, boost, bivalence point
+  - Week programmes of HK1 and Quiet mode (start/end of NZ1/NZ2 per day), special periods
+  - HPM clock: time, date, summer/winter switching (the clock currently reads 28.05.10)
+  - Photovoltaik and Smart Grid temperatures and times
+  Installer settings (terminals, network, sensor correction, controller tuning, manual
+  overrides, acknowledgements, restarts) always stay read-only. Values are written through
+  the HPM's own edit page (`change.rsp`), the same as clicking the pencil icon.
+- `menu_control` is no longer used.
+
 ## 0.4.4
 
 - Skips the Trend menus (empty recording buffers, about 580 values) and the
