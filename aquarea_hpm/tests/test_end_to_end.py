@@ -71,8 +71,8 @@ assert "dp_menu_2_1_2" in menu_cfg  # "Jahreszeit: Sommer"
 assert not any("niveau" in c["name"].lower() for c in menu_cfg.values()), "access codes must never be published"
 assert "dp_menu_2_1_4" not in menu_cfg  # empty text
 wait(lambda: seen.get(f"{base}/dp_menu_2_1_1/state") == "34.5", "menu value state")
-assert seen[f"{base}/dp_menu_1_4_1_2/state"] == "011511100047"
-assert seen[f"{base}/dp_menu_2_1_2/state"] == "Sommer"
+wait(lambda: seen.get(f"{base}/dp_menu_1_4_1_2/state") == "011511100047", "ProdNr state")
+wait(lambda: seen.get(f"{base}/dp_menu_2_1_2/state") == "Sommer", "Jahreszeit state")
 assert not fake_hpm.VIOLATIONS, fake_hpm.VIOLATIONS
 assert num["name"] == "Brauchwasser Sollwert Nacht", num["name"]  # descriptive name from the editor page
 assert configs["homeassistant/sensor/hpm_800f22/dp_33_6_1_1/config"]["name"] == "Anlagenübersicht Aussentemperatur"
