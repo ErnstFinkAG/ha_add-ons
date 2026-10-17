@@ -8,6 +8,7 @@ import sys
 
 import requests
 
+from . import web
 from .bridge import Bridge
 
 
@@ -30,6 +31,8 @@ def main():
         options = json.load(handle)
     logging.basicConfig(level=getattr(logging, str(options.get("log_level", "info")).upper(), logging.INFO),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    log_buffer = web.LogBuffer()
+    logging.getLogger().addHandler(log_buffer)
     mqtt_conf = mqtt_from_supervisor()
     for key in ("host", "port", "username", "password"):
         if options.get(f"mqtt_{key}"):
@@ -45,6 +48,7 @@ def main():
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    web.start(bridge, log_buffer, int(os.environ.get("INGRESS_PORT", 8099)))
     bridge.run()
 
 
