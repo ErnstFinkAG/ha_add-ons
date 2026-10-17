@@ -4,10 +4,13 @@ configuration:
     description: IP address or host name of the Heat Pump Manager web interface.
   username:
     name: Username
-    description: Only needed if the HPM web login is enabled.
+    description: Only if the HPM login asks for a user name; leave empty otherwise.
   password:
     name: Password
-    description: Only needed if the HPM web login is enabled.
+    description: Password (code) of the HPM web login.
+  access_code:
+    name: Access code
+    description: Code for deeper menus that ask for one after login (e.g. the service level). Leave empty to skip those menus.
   device_name:
     name: Device name
     description: Name of the device in Home Assistant; also used in entity ids and MQTT topics.

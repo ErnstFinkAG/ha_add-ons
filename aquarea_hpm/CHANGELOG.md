@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2
+
+- New `access_code` option: entered automatically when a deeper menu asks for a code after
+  login. Menus that ask for a code without one configured are skipped instead of causing
+  re-logins.
+
 ## 0.1.1
 
 - Log out of the HPM when the add-on stops and re-use the previous session after a restart,

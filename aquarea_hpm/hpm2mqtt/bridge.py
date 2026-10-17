@@ -41,7 +41,8 @@ class Bridge:
         self.opt = options
         self.client = HpmClient(options["host"], options.get("username", ""), options.get("password", ""),
                                 request_delay=float(options.get("request_delay", 0.3)),
-                                session_file=options.get("session_file", "/data/hpm_session"))
+                                session_file=options.get("session_file", "/data/hpm_session"),
+                                access_code=options.get("access_code", ""))
         self.node = slug(options.get("device_name", "HPM-800F22")) or "hpm"
         self.base = f"{options.get('topic_prefix', 'hpm')}/{self.node}"
         self.disc_prefix = options.get("discovery_prefix", "homeassistant")
