@@ -92,6 +92,7 @@ fake_hpm.VALUES["37:6.4.7"][1] = "50.5"
 wait(lambda: seen.get(f"{base}/dp_37_6_4_7/state") == "50.5", "re-login after session expiry", 30)
 assert any(p.name.startswith("editor_") for p in (tmp / "dump").iterdir())
 assert (tmp / "dump" / "page_webfb.rsp.html").exists()
+assert any(sid in fake_hpm.UNLOCKED for sid in fake_hpm.SESSIONS) or fake_hpm.UNLOCKED, "access code was not entered"
 # Logout frees the session; a restart re-uses a stored session instead of opening a new one.
 bridge.client.logout()
 assert not (tmp / "session").exists()
