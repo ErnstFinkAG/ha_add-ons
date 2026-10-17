@@ -99,4 +99,15 @@ except HpmLocked:
 js = parse_page('<a onclick="location.href=\'v21.rsp?sessionid=AB12\'">WP</a><frame src="menue.rsp?sessionid=AB12&amp;branchnr=2">'
                 '<a href="leave.rsp?sessionid=AB12">x</a>', "v0.rsp")
 assert {k for k, _ in js.links} == {"v21.rsp", "menue.rsp?branchnr=2"}, js.links
+# Status page and debug zip
+import io, urllib.request, zipfile  # noqa: E401,E402
+from hpm2mqtt import web  # noqa: E402
+buf = web.LogBuffer()
+buf.lines.append("hello log")
+web.start(bridge, buf, 18100)
+page = urllib.request.urlopen("http://127.0.0.1:18100/api/hassio_ingress/abc/").read().decode()
+assert "SW-Spei" in page and "aquarea_hpm_debug.zip" in page, page[:500]
+data = urllib.request.urlopen("http://127.0.0.1:18100/api/hassio_ingress/abc/aquarea_hpm_debug.zip").read()
+names = zipfile.ZipFile(io.BytesIO(data)).namelist()
+assert "log.txt" in names and "values.tsv" in names and any(n.startswith("pages/editor_") for n in names), names
 print("ALL CHECKS PASSED")

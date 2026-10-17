@@ -30,8 +30,9 @@ the OK button. Numbers outside the min/max the HPM shows are refused.
 
 ## Troubleshooting
 
-Turn on `dump_html`, restart the add-on and look in `/share/aquarea_hpm/`: every page and
-editor the add-on read is saved there. If a value is missing or a changeable value shows only
+Turn on `dump_html` and restart the add-on, then open the add-on's web UI and press
+**Download debug zip**: it contains the log, the list of values and every page and editor the
+add-on read (also kept in `/share/aquarea_hpm/`). If a value is missing or a changeable value shows only
 as a sensor, those files show what the HPM sent.
 
 The HPM allows only a few parallel web sessions. Avoid very short poll intervals and close the

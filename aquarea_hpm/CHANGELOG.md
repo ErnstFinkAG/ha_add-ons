@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- Status page in Home Assistant (add-on → Open Web UI, or the sidebar) listing every value.
+- "Download debug zip" button with the log, the value list and the saved HPM pages, so no
+  Samba or file editor add-on is needed to share them.
+
 ## 0.1.2
 
 - New `access_code` option: entered automatically when a deeper menu asks for a code after
