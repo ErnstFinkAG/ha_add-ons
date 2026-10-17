@@ -31,7 +31,9 @@ SESSION_RE = re.compile(r"sessionid=([0-9A-Za-z]+)")
 NUMBER_RE = re.compile(r"^(?:(?P<label>.*?)\s+)?(?P<value>[-+]?\d+(?:[.,]\d+)?)\s*(?P<unit>[°%A-Za-zµ/][^\s]{0,7})?$")
 # Pages worth crawling. Everything else (leave.rsp, resize.rsp, webfb.rsp, vinfo.rsp,
 # setgrvalue.rsp ...) either logs out, changes the layout or only shows detail.
-CRAWL_RE = re.compile(r"^/?(v\d+\.rsp|menue\.rsp)$", re.I)
+CRAWL_RE = re.compile(r"^/?(v\d+\.rsp)$", re.I)
+# WEB-FB menu nodes never opened: access codes, plant schema selection and action-like entries.
+MENU_SKIP_RE = re.compile(r"zugriff|passw|kennw|anlagenschem|werkseinst|reset|l(ö|oe)sch|quittier|neustart|test", re.I)
 RSP_REF_RE = re.compile(r"""([A-Za-z0-9_]+\.rsp(?:\?[^"'\s<>]*)?)""")
 # Menu branches never read: they show or change access codes.
 SKIP_TEXT_RE = re.compile(r"zugriff|passw|kennw|access", re.I)
@@ -50,6 +52,10 @@ class HpmLocked(HpmError):
 
 class HpmBusy(HpmError):
     """The HPM answered with sorry.rsp: all of its web sessions are in use."""
+
+
+class MenuSessionLost(HpmError):
+    """A WEB-FB menu page came back without a session (expired or logged out)."""
 
 
 @dataclass
@@ -338,6 +344,8 @@ class HpmClient:
         self.session_file = session_file
         self.access_code = access_code
         self.code_entry_key: Optional[str] = None
+        self._menu_pos: Optional[tuple] = None  # current WEB-FB menu position (None = unknown)
+        self._menu_page: Optional[str] = None
 
     # -- low level ---------------------------------------------------------------------
     def _throttle(self):
@@ -439,6 +447,7 @@ class HpmClient:
 
     def login(self) -> tuple[str, str]:
         with self.lock:
+            self._menu_pos = None
             stored = self._stored_session() if self.sessionid is None else None
             if stored:
                 # The add-on was restarted without logging out: take the old session back
@@ -537,6 +546,7 @@ class HpmClient:
     def _enter_access_code(self, key: str):
         """Open the code entry page and submit access_code, unlocking deeper menu parameters."""
         self.code_entry_key = key
+        self._menu_pos = None
         try:
             url, html = self._request("GET", self._with_session(key))
             self._submit_password(url, html, self.access_code)
@@ -544,10 +554,142 @@ class HpmClient:
         except (requests.RequestException, StopIteration) as err:
             _LOGGER.warning("Could not enter the access code via %s: %s", key, err)
 
+    # -- WEB-FB menus --------------------------------------------------------------------
+    # Menu navigation is stateful: "menue.rsp?branchnr=B&level=L" selects child B at depth L
+    # *below the current position*. A menu page is therefore addressed by its path of branch
+    # numbers from the main menu, and reached by replaying that path.
+    def _menu_step(self, branchnr: int, level: int) -> str:
+        _, html = self._request("GET", self._with_session(f"menue.rsp?branchnr={branchnr}&level={level}"))
+        if self._needs_login(html) or "sessionid" not in html:
+            raise MenuSessionLost("session lost in WEB-FB menu")
+        return html
+
+    @staticmethod
+    def _menu_head(html: str) -> tuple[Optional[tuple], str]:
+        """The "up" link (branchnr, level) and breadcrumb text from a menu page header."""
+        soup = BeautifulSoup(html, "html.parser")
+        th = soup.select_one("#mainpane table.mentext th")
+        if th is None:
+            return None, ""
+        up = None
+        link = th.find("a", href=True)
+        if link:
+            query = dict(parse_qsl(urlparse(link["href"]).query))
+            if query.get("branchnr", "").isdigit() and query.get("level", "").isdigit():
+                up = (int(query["branchnr"]), int(query["level"]))
+        return up, _clean(th.get_text(" "))
+
+    def _menu_reset(self) -> str:
+        self._menu_pos = None
+        self._request("GET", self._with_session("webfb.rsp"))
+        html = self._menu_step(1, 0)  # Hauptmenü
+        self._menu_pos, self._menu_page = (), html
+        return html
+
+    def _menu_goto(self, path: tuple, names: tuple, check: bool) -> str:
+        """Move like a person clicking: up via the header link to the common parent, then down."""
+        pos = self._menu_pos
+        html = self._menu_page if pos is not None else self._menu_reset()
+        pos = self._menu_pos
+        common = 0
+        while common < min(len(pos), len(path)) and pos[common] == path[common]:
+            common += 1
+        while len(pos) > common:
+            up, _ = self._menu_head(html)
+            if up is None:
+                raise HpmError("no way up in the menu")
+            html = self._menu_step(*up)
+            pos = pos[:-1]
+            self._menu_pos, self._menu_page = pos, html
+        for depth in range(common, len(path)):
+            html = self._menu_step(path[depth], depth + 1)
+            self._menu_pos, self._menu_page = path[:depth + 1], html
+            if check and depth < len(names) and names[depth]:
+                _, crumb = self._menu_head(html)
+                if crumb and _clean(names[depth]) not in crumb:
+                    raise HpmError(f"expected '{names[depth]}', got '{crumb}'")
+        return html
+
+    def get_menu(self, path: tuple, names: tuple = ()) -> str:
+        """Fetch the menu page at ``path`` (branch numbers from the main menu).
+
+        ``names`` (menu titles along the path) are used to check the position; on a mismatch
+        the path is replayed from the main menu."""
+        with self.lock:
+            for attempt in range(3):
+                try:
+                    if self.sessionid is None:
+                        self.login()
+                    if attempt:
+                        self._menu_pos = None
+                    return self._menu_goto(tuple(path), tuple(names), check=attempt < 2)
+                except (requests.RequestException, HpmError) as err:
+                    _LOGGER.debug("Menu %s: %s (attempt %d)", path, err, attempt + 1)
+                    self._menu_pos = None
+                    if attempt == 2:
+                        raise HpmError(f"Menu {path} not reachable: {err}") from err
+                    if isinstance(err, (requests.RequestException, MenuSessionLost)):
+                        self.sessionid = None
+            raise HpmError(f"Menu {path} not reachable")
+
+    @staticmethod
+    def menu_children(html: str) -> list:
+        """Sub-menus listed on a WEB-FB menu page: [(branchnr, text)]."""
+        soup = BeautifulSoup(html, "html.parser")
+        children = []
+        for link in soup.select("#mainpane table.mentext td a[href]"):
+            query = dict(parse_qsl(urlparse(link["href"]).query))
+            if urlparse(link["href"]).path.lstrip("/") == "menue.rsp" and query.get("branchnr", "").isdigit():
+                children.append((int(query["branchnr"]), _clean(link.get_text(" "))))
+        return children
+
+    def walk_menus(self, max_pages: int = 150) -> dict[str, Page]:
+        """Depth-first walk through the WEB-FB menu tree (GET only). Returns pages with values."""
+        with self.lock:
+            if self.sessionid is None:
+                self.login()
+            _, html = self._request("GET", self._with_session("webfb.rsp"))
+            start = parse_page(html, "webfb.rsp")
+            if start.code_entry and self.access_code:
+                self._enter_access_code(start.code_entry)
+            self._menu_pos = None
+            pages: dict[str, Page] = {}
+            visited = 0
+            stack = [((), ())]
+            while stack and visited < max_pages:
+                path, names = stack.pop()
+                title = " / ".join(names)
+                try:
+                    html = self.get_menu(path, names)
+                except HpmError as err:
+                    _LOGGER.warning("Skipping menu %s: %s", title or "Hauptmenü", err)
+                    continue
+                visited += 1
+                key = "menu:" + "/".join(map(str, path))
+                if self.on_page:
+                    self.on_page(key, html)
+                page = parse_page(html, key, title or "Menü")
+                page.title = title or "Menü"
+                for dp in page.datapoints:
+                    dp.page_title = names[-1] if names else "Menü"
+                children = self.menu_children(html)
+                _LOGGER.debug("Menu %s (%s): %d values, %d sub-menus", key, page.title, len(page.datapoints), len(children))
+                if page.datapoints:
+                    pages[key] = page
+                for branchnr, text in reversed(children):
+                    if MENU_SKIP_RE.search(text):
+                        _LOGGER.debug("Not opening menu %s / %s", title, text)
+                        continue
+                    stack.append((path + (branchnr,), names + (text,)))
+            if stack:
+                _LOGGER.warning("Stopped the menu walk after max_pages=%d", max_pages)
+            return pages
+
     # -- writing -----------------------------------------------------------------------
     def _open_editor(self, dp: Datapoint) -> tuple[Optional[Editor], str]:
         fields = dict(dp.form["fields"])
         fields["sessionid"] = self.sessionid or fields.get("sessionid", "")
+        self._menu_pos = None  # the editor may leave the WEB-FB menu somewhere else
         _, html = self._request(dp.form["method"], dp.form["action"], fields)
         return parse_editor(html), html
 
@@ -566,7 +708,7 @@ class HpmClient:
             if editor is None and UNAVAILABLE_RE.search(html):
                 _LOGGER.info("%s is currently not available on the HPM", dp.id)
             pv = dp.form["fields"].get("pv")
-            if pv:  # leave the editor the way a browser user would
+            if pv and not pv.startswith("menue"):  # leave the editor the way a browser user would
                 try:
                     self.get(pv)
                 except HpmError:
@@ -608,5 +750,6 @@ class HpmClient:
                         value = value.replace(".", ",")
                 data[editor.value_field] = value
             _LOGGER.info("Writing %s (%s) = %s", dp.id, dp.label, data[editor.value_field])
+            self._menu_pos = None
             _, html = self._request(editor.method, editor.action, data)
             return html

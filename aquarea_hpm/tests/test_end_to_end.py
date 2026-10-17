@@ -23,7 +23,7 @@ server = fake_hpm.serve(18099)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 
 tmp = Path(tempfile.mkdtemp())
-options = {"host": "127.0.0.1:18099", "device_name": "HPM-800F22", "scan_interval": 10, "request_delay": 0,
+options = {"host": "127.0.0.1:18099", "device_name": "HPM-800F22", "scan_interval": 10, "parameter_interval": 10, "request_delay": 0,
            "dump_html": True, "dump_dir": str(tmp / "dump"), "state_file": str(tmp / "entities.json"),
            "session_file": str(tmp / "session"), "access_code": "5555",
            "menu_control": True}
@@ -62,6 +62,10 @@ assert (num["min"], num["max"], num["step"]) == (35.0, 60.0, 0.1), num
 sel = configs["homeassistant/select/hpm_800f22/dp_60_1_1_1/config"]
 assert sel["options"] == ["Aus", "Auto", "Heizen", "Kühlen"], sel
 assert configs["homeassistant/number/hpm_800f22/dp_201_9_1_1/config"]["entity_category"] == "config"
+assert configs["homeassistant/sensor/hpm_800f22/dp_202_3_1_1/config"]["entity_category"] == "diagnostic"
+assert "homeassistant/sensor/hpm_800f22/dp_203_1_1_1_1/config" in configs  # Globales / Meldungen / Störstatus
+assert seen[f"{base}/dp_202_3_1_1/state"] == "34.5"
+assert not fake_hpm.VIOLATIONS, fake_hpm.VIOLATIONS
 assert num["name"] == "Brauchwasser Sollwert Nacht", num["name"]  # descriptive name from the editor page
 assert configs["homeassistant/sensor/hpm_800f22/dp_33_6_1_1/config"]["name"] == "Anlagenübersicht Aussentemperatur"
 assert configs["homeassistant/sensor/hpm_800f22/dp_7_6_2_6/config"]["name"] == "Anlagenübersicht Störmeldung HK1"
@@ -89,9 +93,13 @@ assert fake_hpm.WRITES == [("55:6.4.3", "52.5"), ("60:1.1.1", "Heizen"), ("ms:MS
 # Session expiry: drop all sessions, the bridge must log in again on the next poll.
 fake_hpm.SESSIONS.clear()
 fake_hpm.VALUES["37:6.4.7"][1] = "50.5"
+fake_hpm.VALUES["202:3.1.1"][1] = "36.0"
 wait(lambda: seen.get(f"{base}/dp_37_6_4_7/state") == "50.5", "re-login after session expiry", 30)
+wait(lambda: seen.get(f"{base}/dp_202_3_1_1/state") == "36.0", "menu value poll after re-login", 30)
+wait(lambda: seen.get(f"{base}/dp_201_9_1_1/state") == "21.0", "locked menu value after re-login", 30)
+assert not fake_hpm.VIOLATIONS, fake_hpm.VIOLATIONS
 assert any(p.name.startswith("editor_") for p in (tmp / "dump").iterdir())
-assert (tmp / "dump" / "page_webfb.rsp.html").exists()
+assert (tmp / "dump" / "page_menu_1_3_1.html").exists()
 assert any(sid in fake_hpm.UNLOCKED for sid in fake_hpm.SESSIONS) or fake_hpm.UNLOCKED, "access code was not entered"
 # Logout frees the session; a restart re-uses a stored session instead of opening a new one.
 bridge.client.logout()
@@ -99,20 +107,24 @@ assert not (tmp / "session").exists()
 
 from hpm2mqtt.hpm import HpmClient, HpmLocked, parse_page  # noqa: E402
 locked = HpmClient("127.0.0.1:18099", request_delay=0)
+locked.get("menue.rsp?branchnr=1&level=1")
+locked.get("menue.rsp?branchnr=3&level=2")
 try:
-    locked.get("menue.rsp?branchnr=1&level=2")
+    locked.get("menue.rsp?branchnr=1&level=3")
     raise AssertionError("code-protected menu must not open without access_code")
 except HpmLocked:
     pass
 wrong = HpmClient("127.0.0.1:18099", request_delay=0, access_code="1234")
+wrong.get("menue.rsp?branchnr=1&level=1")
+wrong.get("menue.rsp?branchnr=3&level=2")
 try:
-    wrong.get("menue.rsp?branchnr=1&level=2")
+    wrong.get("menue.rsp?branchnr=1&level=3")
     raise AssertionError("wrong access code must be reported")
 except HpmLocked:
     pass
 js = parse_page('<a onclick="location.href=\'v21.rsp?sessionid=AB12\'">WP</a><frame src="menue.rsp?sessionid=AB12&amp;branchnr=2">'
                 '<a href="leave.rsp?sessionid=AB12">x</a>', "v0.rsp")
-assert {k for k, _ in js.links} == {"v21.rsp", "menue.rsp?branchnr=2"}, js.links
+assert {k for k, _ in js.links} == {"v21.rsp"}, js.links
 # Status page and debug zip
 import io, urllib.request, zipfile  # noqa: E401,E402
 from hpm2mqtt import web  # noqa: E402

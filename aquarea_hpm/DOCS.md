@@ -15,13 +15,13 @@ else becomes a `sensor`.
 1. Opens `http://<host>/`, which redirects to `v0.rsp?sessionid=…`, and keeps that session.
    If the web login is enabled, set `password` (and `username` only if the login asks for
    one). Deeper menus that ask for another code get `access_code`.
-2. Follows every `v*.rsp` page and `menue.rsp` menu link (never logout or layout links) and
+2. Follows every `v*.rsp` overview page link (never logout or layout links) and
    collects each value link (`vinfo.rsp?…&id=37:6.4.7`). The HPM id becomes the entity's
    unique id, so names can change without losing history.
 3. For values inside a `setgrvalue.rsp` form it opens the editor page (like clicking the value
    in a browser, nothing is changed) to learn whether it is a list (select) or a number and
    its min/max.
-4. With `include_menus` (default on) it also walks the WEB-FB menu tree. Those parameters
+4. With `include_menus` (default on) it also walks the WEB-FB menu tree step by step. Those parameters
    are read-only unless `menu_control` is on; access-code menus are never opened.
 5. Overview pages are polled every `scan_interval`, menu/parameter pages every
    `parameter_interval`, and a full rescan runs every `rescan_hours` or when you press the
