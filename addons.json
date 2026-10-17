@@ -1,5 +1,6 @@
 {
   "addons": [
+    "./aquarea_hpm",
     "./atlas_copco_mkv",
     "./cta-cs19i-bridge",
     "./panasonic-aquera-dashboard",
