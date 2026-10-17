@@ -19,15 +19,29 @@ VALUES = {
     "34:6.1.2": ["", "Ein", "", None],
     "7:6.2.6": ["", "keine Störung", "", None],
     "201:9.1.1": ["Komfort Raum", "21.0", "°C", ("number", 15, 28)],
+    "202:3.1.1": ["Vorlauf HK", "34.5", "°C", None],
+    "203:1.1.1.1": ["Störstatus", "keine", "", None],
 }
 PAGES = {
     "v0.rsp": ("Anlagenübersicht", ["33:6.1.1", "7:6.2.6", "34:6.1.2"]),
     "v21.rsp": ("Wärmepumpe 1", ["126:6.6.22", "102:2.2.1.4"]),
     "v107000.rsp": ("Brauchwasser", ["37:6.4.7", "55:6.4.3", "60:1.1.1"]),
     "v50.rsp": ("Heizkreis 1", ["17:6.2.1"]),
-    "menue.rsp?branchnr=1&level=1": ("Menü", []),
-    "menue.rsp?branchnr=1&level=2": ("Raumtemperaturen", ["201:9.1.1"]),
 }
+# WEB-FB menu tree: branchnr -> (name, children or value ids). Navigation is stateful like on
+# the real HPM: menue.rsp?branchnr=B&level=L opens child B of the current menu (L = depth + 1)
+# or goes up to the ancestor at depth L; anything else just shows the current menu again.
+MENU = {
+    1: ("Globales", {1: ("Meldungen", {1: ("Störstatus", ["203:1.1.1.1"])}),
+                     3: ("Service", {1: ("Raumtemperaturen", ["201:9.1.1"]), 5: ("Zugriff", [])})}),
+    2: ("MSR-GLT", {1: ("Heizkreis", ["202:3.1.1"])}),
+    3: ("Zugriffscodes", []),
+    5: ("Anlagenschemen", []),
+}
+NEVER_OPEN = {"Zugriffscodes", "Zugriff", "Anlagenschemen"}
+LOCKED = {"Raumtemperaturen"}
+MENU_POS = {}
+VIOLATIONS = []  # menus that were opened although they must not be
 NAMES = {"33:6.1.1": "Aussentemperatur", "7:6.2.6": "Störmeldung HK1", "55:6.4.3": "Sollwert Nacht"}
 MODE = {"value": 1}
 MODES = ["Aus", "Auto", "Sommer", "Ferien", "Dauer", "Hand"]
@@ -38,12 +52,56 @@ WRITES = []
 
 
 def nav(sid):
-    links = "".join(f'<a class="navlink" href="{k}{"&" if "?" in k else "?"}sessionid={sid}">{t}</a> ' for k, (t, _) in PAGES.items() if k != "menue.rsp?branchnr=1&level=2")
+    links = "".join(f'<a class="navlink" href="{k}?sessionid={sid}">{t}</a> ' for k, (t, _) in PAGES.items())
     return links + f'<a class="navlink" href="leave.rsp?sessionid={sid}">Abmelden</a>'
 
 
 def page(key, sid):
     title, ids = PAGES[key]
+    return wrap(title, rows(key, ids, sid), sid)
+
+
+def wrap(title, body, sid):
+    return (f'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"><html><head>'
+            f'<meta http-equiv="content-type" content="text/html;charset=ISO-8859-1"><title>{title}</title></head>'
+            f'<body><div class="nav">{nav(sid)}</div><h1>{title}</h1><table>{"".join(body)}</table></body></html>')
+
+
+def menu_node(pos):
+    names, node = [], ("Hauptmenü", MENU)
+    for b in pos:
+        node = node[1][b]
+        names.append(node[0])
+    return names, node
+
+
+def menu(sid, branchnr, level):
+    pos = MENU_POS.get(sid, ())
+    _, (_, children) = menu_node(pos)
+    if level == len(pos) + 1 and isinstance(children, dict) and branchnr in children:
+        pos = pos + (branchnr,)
+    elif level <= len(pos) and (level == 0 or pos[level - 1] == branchnr):
+        pos = pos[:level]
+    names, (name, children) = menu_node(pos)
+    if name in NEVER_OPEN:
+        VIOLATIONS.append(name)
+    if name in LOCKED and sid not in UNLOCKED:
+        return None
+    MENU_POS[sid] = pos
+    head = ""
+    if pos:
+        up = (pos[-2], len(pos) - 1) if len(pos) > 1 else (1, 0)
+        head = f'<tr><th><a href="menue.rsp?sessionid={sid}&branchnr={up[0]}&level={up[1]}">{"      ".join(names)}</a></th></tr>'
+    if isinstance(children, dict):
+        body = "".join(f'<tr><td><a href="menue.rsp?sessionid={sid}&branchnr={b}&level={len(pos) + 1}">{n}</a></td></tr>'
+                       for b, (n, _) in children.items())
+        values = []
+    else:
+        body, values = "", rows("menue.rsp", children, sid)
+    return wrap("WEB-FB", [f'<div id="mainpane"><table class="mentext">{head}{body}</table></div>'] + values, sid)
+
+
+def rows(key, ids, sid):
     body = []
     for dp in ids:
         label, value, unit, editor = VALUES[dp]
@@ -64,11 +122,7 @@ def page(key, sid):
         opts = "".join(f'<option value="{i}"{" selected" if i == MODE["value"] else ""}>{m}</option>' for i, m in enumerate(MODES))
         body.append(f'<div>BArtSchalter<br><form id="MS0Form" method="POST" action="ms.rsp"><select name="MS0">{opts}</select>'
                     f'<input type="submit" value="OK"><input type="hidden" name="sessionid" value="{sid}"></form></div>')
-    if key == "menue.rsp?branchnr=1&level=1":
-        body.append(f'<tr><td><a href="menue.rsp?sessionid={sid}&branchnr=1&level=2">Raumtemperaturen</a></td></tr>')
-    return (f'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"><html><head>'
-            f'<meta http-equiv="content-type" content="text/html;charset=ISO-8859-1"><title>{title}</title></head>'
-            f'<body><div class="nav">{nav(sid)}</div><h1>{title}</h1><table>{"".join(body)}</table></body></html>')
+    return body
 
 
 def editor(dp, sid, pv):
@@ -133,20 +187,21 @@ class Handler(BaseHTTPRequestHandler):
         key = url.path.lstrip("/") + ("?" + "&".join(f"{k}={v}" for k, v in q.items()) if q else "")
         if url.path == "/webfb.rsp":
             return self.send(f'<html><body><a href="v0.rsp?sessionid={sid}">Startbild</a>'
-                             f'<a href="menue.rsp?sessionid={sid}&branchnr=1&level=1">Globales</a>'
-                             f'<a href="menue.rsp?sessionid={sid}&branchnr=3&level=1">Zugriffscodes</a>'
+                             f'<a href="menue.rsp?sessionid={sid}&level=0&branchnr=1">Hauptmenü</a>'
                              f'<form action="code.rsp"><input type="hidden" name="sessionid" value="{sid}">'
                              f'<input type="submit" value="Zugriffscode eingeben"></form></body></html>')
         if url.path == "/code.rsp":
             return self.send(f'<html><body><form action="setcode.rsp" method="POST"><input type="hidden" name="sessionid" value="{sid}">'
                              f'Code: <input name="code" type="text"><input type="submit" value="OK"></form></body></html>')
-        if key == "menue.rsp?branchnr=3&level=1":
-            raise AssertionError("access code menu must never be opened")
         if url.path == "/vinfo.rsp":
             return self.send(info(q["id"], sid))
-        if key not in PAGES:
+        if url.path == "/menue.rsp":
+            html = menu(sid, int(q.get("branchnr", 0)), int(q.get("level", 99)))  # bare: current menu
+            if html:
+                return self.send(html)
+        elif key not in PAGES:
             return self.send("not found", 404)
-        if key == "menue.rsp?branchnr=1&level=2" and sid not in UNLOCKED:
+        if url.path == "/menue.rsp":
             return self.send(f'<html><body><form action="code.rsp" method="POST">Code: <input type="password" name="code">'
                              f'<input type="hidden" name="sessionid" value="{sid}"><input type="submit" value="OK"></form></body></html>')
         self.send(page(key, sid))
@@ -174,7 +229,7 @@ class Handler(BaseHTTPRequestHandler):
         kind, *spec = VALUES[dp][3]
         VALUES[dp][1] = spec[0][int(form["val"])] if kind == "select" else form["val"]
         WRITES.append((dp, VALUES[dp][1]))
-        self.send(page(pv, sid))
+        self.send(page(pv, sid) if pv in PAGES else menu(sid, 0, 99))
 
 
 def serve(port):

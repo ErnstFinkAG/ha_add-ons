@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0
+
+- The WEB-FB menus are now walked step by step the way a person clicks through them
+  (down into a sub-menu, back up via the menu header). The HPM remembers the current menu
+  position, so the 0.3.0 approach of opening menu links directly kept landing on the same
+  page and found no values.
+- Menu values are named after their menu (e.g. "Störstatus") and the dump files are called
+  `page_menu_1_3_1.html` (path of menu numbers from the main menu).
+- Besides the access-code menus, "Anlagenschemen" and menus with reset/delete/test in their
+  name are never opened.
+
 ## 0.3.0
 
 - Reads the WEB-FB menu tree (`webfb.rsp` → `menue.rsp?branchnr=…&level=…`), so the

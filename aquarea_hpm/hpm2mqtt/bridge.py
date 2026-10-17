@@ -114,7 +114,7 @@ class Bridge:
 
     @staticmethod
     def _is_menu(dp: Datapoint) -> bool:
-        return dp.page.startswith(("menue", "webfb"))
+        return dp.page.startswith("menu:")
 
     def entity_config(self, dp: Datapoint) -> tuple[str, dict]:
         oid = self.object_id(dp.id)
@@ -209,9 +209,14 @@ class Bridge:
         _LOGGER.info("Scanning the HPM web interface for values ...")
         self.client.on_page = lambda key, html: self._dump(f"page_{key}", html)
         extra = list(self.opt.get("extra_pages", []) or [])
+        max_pages = int(self.opt.get("max_pages", 150))
+        pages = self.client.crawl(max_pages, tuple(extra))
         if self.opt.get("include_menus", True):
-            extra.insert(0, "webfb.rsp")  # WEB-FB: the HPM's full parameter menu (menue.rsp tree)
-        pages = self.client.crawl(int(self.opt.get("max_pages", 150)), tuple(extra))
+            # WEB-FB: the HPM's full parameter menu tree (navigated step by step like a person would)
+            try:
+                pages.update(self.client.walk_menus(max_pages))
+            except Exception as err:  # noqa: BLE001 - the overview pages are still worth publishing
+                _LOGGER.warning("Could not read the WEB-FB menus: %s", err)
         points: dict[str, Datapoint] = {}
         for page in pages.values():
             for dp in page.datapoints:
@@ -277,7 +282,12 @@ class Bridge:
                 self.last_published[oid] = state
 
     def poll_page(self, key: str):
-        html = self.client.get(key)
+        if key.startswith("menu:"):
+            path = tuple(int(b) for b in key[5:].split("/") if b)
+            names = tuple(self.pages[key].title.split(" / ")) if key in self.pages else ()
+            html = self.client.get_menu(path, names)
+        else:
+            html = self.client.get(key)
         page = parse_page(html, key, self.pages[key].title if key in self.pages else key)
         for fresh in page.datapoints:
             dp = self.points.get(fresh.id)
@@ -345,7 +355,7 @@ class Bridge:
                 else:
                     with_params = now - last_param_poll >= param_interval
                     for key in self.pages:
-                        if with_params or not key.startswith(("menue", "webfb")):
+                        if with_params or not key.startswith("menu:"):
                             self.poll_page(key)
                             self._drain_commands(time.monotonic())
                     if with_params:
