@@ -151,7 +151,8 @@ if you really need to.
   reports *busy*, close the HPM page in your browser. Don't set `request_delay` or the
   intervals much lower than the defaults.
 - **Scan time.** A full scan reads about 300 menu pages and takes 2–4 minutes. Values update
-  during polling; the scan itself only runs at start, every `rescan_hours` and on request.
+  during polling. The scan result is stored, so a restart starts polling right away; a new
+  scan only runs every `rescan_hours`, after an add-on update or option change, and on request.
 - **Other HPM installations** (other schemas, more heating circuits or tanks) should work:
   the add-on discovers what it finds. The recommended-settings list matches menu names
   such as *Heizkreis 2* as well.

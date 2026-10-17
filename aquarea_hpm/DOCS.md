@@ -51,7 +51,7 @@ discovery. An overview with the list of controllable settings is in the add-on's
 |---|---|---|
 | `scan_interval` | `60` | Seconds between reads of the overview pages (current values). |
 | `parameter_interval` | `900` | Seconds between reads of the menu pages. Reading all menu pages takes a few minutes, so keep this well above that. |
-| `rescan_hours` | `24` | Hours between full rescans that look for new or removed values. The **Rescan values** button starts one immediately. |
+| `rescan_hours` | `24` | Hours between full rescans that look for new or removed values. The scan result is kept across restarts; an add-on update or a changed option starts a new scan. The **Rescan values** button starts one immediately. |
 | `request_delay` | `0.3` | Pause between two HTTP requests in seconds (optional). The HPM is a small controller, so don't go below 0.2. |
 
 ### MQTT and diagnostics
