@@ -25,7 +25,7 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 tmp = Path(tempfile.mkdtemp())
 options = {"host": "127.0.0.1:18099", "device_name": "Test HPM", "scan_interval": 10, "parameter_interval": 10, "request_delay": 0,
            "dump_html": True, "dump_dir": str(tmp / "dump"), "state_file": str(tmp / "entities.json"),
-           "session_file": str(tmp / "session"), "access_code": "4321",
+           "session_file": str(tmp / "session"), "access_code": "4321", "cache_file": str(tmp / "scan_cache.json"),
            }
 bridge = Bridge(options, {"host": "127.0.0.1", "port": 18830})
 threading.Thread(target=bridge.run, daemon=True).start()
@@ -117,6 +117,21 @@ assert any(sid in fake_hpm.UNLOCKED for sid in fake_hpm.SESSIONS) or fake_hpm.UN
 # Logout frees the session; a restart re-uses a stored session instead of opening a new one.
 bridge.client.logout()
 assert not (tmp / "session").exists()
+# A restart re-uses the stored scan instead of walking the whole web interface again.
+restarted = Bridge(options, {"host": "127.0.0.1", "port": 18830})
+assert restarted.load_scan_cache(3600) is not None
+assert set(restarted.points) == set(bridge.points) and set(restarted.editors) == set(bridge.editors)
+assert set(restarted.pages) == set(bridge.pages)
+assert all(isinstance(e.options, list) for e in restarted.editors.values())
+for key in restarted.pages:  # polling and writing work with the restored scan
+    restarted.poll_page(key)
+restarted.handle_command("dp_menu_2_1_1_2_1", "22.0")
+restarted.handle_command("dp_60_1_1_1", "Kühlen")
+assert fake_hpm.WRITES[-2:] == [("RaumNZ1", "22.0"), ("60:1.1.1", "Kühlen")], fake_hpm.WRITES
+restarted.client.logout()
+assert Bridge({**options, "menu_values": "all"}, {"host": "127.0.0.1", "port": 18830}).load_scan_cache(3600) is None, \
+    "changed options must force a new scan"
+assert restarted.load_scan_cache(0) is None, "an expired scan must not be used"
 
 from hpm2mqtt.hpm import HpmClient, HpmLocked, parse_page  # noqa: E402
 locked = HpmClient("127.0.0.1:18099", request_delay=0)

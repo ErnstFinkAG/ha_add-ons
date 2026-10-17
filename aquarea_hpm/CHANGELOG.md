@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.3
+
+- A restart no longer scans the whole HPM web interface again. The last scan is stored in
+  `/data` and reused until `rescan_hours` have passed; polling starts right away. A new
+  scan still runs after an add-on update, when an option that affects the scan changes,
+  and when you press **Rescan values**.
+
 ## 0.5.2
 
 - If the MQTT broker is not reachable at start (e.g. Mosquitto still starting after a

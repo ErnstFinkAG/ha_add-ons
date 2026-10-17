@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import json
 import logging
 import os
@@ -50,6 +52,7 @@ class Bridge:
         self.avail_topic = f"{self.base}/status"
         self.dump_dir = Path(options.get("dump_dir", "/share/aquarea_hpm")) if options.get("dump_html") else None
         self.state_file = Path(options.get("state_file", "/data/entities.json"))
+        self.cache_file = Path(options.get("cache_file", "/data/scan_cache.json"))
 
         self.pages: dict[str, Page] = {}
         self.points: dict[str, Datapoint] = {}
@@ -303,7 +306,64 @@ class Bridge:
         _LOGGER.info("Found %d values on %d pages, %d of them controllable", len(points), len(self.pages), len(editors))
         self.publish_discovery()
         self.publish_states(force=True)
+        self.save_scan_cache()
         self.scan_status = f"Scan finished {time.strftime('%H:%M')}: {seen[0]} pages read, {len(points)} values"
+
+    # -- scan cache --------------------------------------------------------------------
+    # The result of a full scan is kept in /data so a restart polls right away instead of
+    # walking the whole web interface again. Changed options or a new add-on version
+    # (different code) invalidate it.
+    _CACHE_OPTIONS = ("host", "username", "access_code", "include_menus", "menu_values", "menu_settings",
+                      "enable_control", "extra_pages", "max_pages", "max_menu_pages")
+
+    def _cache_fingerprint(self) -> str:
+        digest = hashlib.sha256()
+        for module in sorted(Path(__file__).parent.glob("*.py")):
+            digest.update(module.read_bytes())
+        digest.update(json.dumps({k: self.opt.get(k) for k in self._CACHE_OPTIONS}, sort_keys=True).encode())
+        return digest.hexdigest()
+
+    def save_scan_cache(self):
+        data = {"fingerprint": self._cache_fingerprint(), "time": time.time(),
+                "pages": {k: p.title for k, p in self.pages.items()},
+                "points": [dataclasses.asdict(dp) for dp in self.points.values()],
+                "editors": {i: dataclasses.asdict(e) for i, e in self.editors.items()}}
+        try:
+            self.cache_file.write_text(json.dumps(data, ensure_ascii=False))
+        except OSError as err:
+            _LOGGER.debug("Could not store the scan result: %s", err)
+
+    def load_scan_cache(self, max_age: float) -> Optional[float]:
+        """Restore the last scan if it is still valid; returns its age in seconds."""
+        try:
+            data = json.loads(self.cache_file.read_text())
+            age = time.time() - float(data["time"])
+            if data.get("fingerprint") != self._cache_fingerprint() or not 0 <= age < max_age:
+                return None
+
+            def editor(d):
+                return Editor(**{**d, "options": [tuple(o) for o in d.get("options", [])]}) if d else None
+
+            points = {}
+            for d in data["points"]:
+                dp = Datapoint(**{**d, "inline_editor": editor(d.get("inline_editor")),
+                                  "change": tuple(d["change"]) if d.get("change") else None})
+                points[dp.id] = dp
+            editors = {i: editor(e) for i, e in data["editors"].items()}
+            pages = {k: Page(k, title) for k, title in data["pages"].items()}
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        if not points:
+            return None
+        self.pages, self.points, self.editors = pages, points, editors
+        self.object_ids = {self.object_id(i): i for i in points}
+        self.last_published.clear()
+        _LOGGER.info("Using the last scan from %s (%d values); the next full scan runs in %.1f h or on Rescan values",
+                     time.strftime("%d.%m. %H:%M", time.localtime(data["time"])), len(points), (max_age - age) / 3600)
+        self.scan_status = (f"Using the scan from {time.strftime('%d.%m. %H:%M', time.localtime(data['time']))}: "
+                            f"{len(points)} values (press Rescan values to scan again)")
+        self.publish_discovery()
+        return age
 
     # -- states ------------------------------------------------------------------------
     def publish_states(self, force: bool = False):
@@ -384,6 +444,9 @@ class Bridge:
         param_interval = max(scan_interval, int(self.opt.get("parameter_interval", 900)))
         rescan_interval = max(1, float(self.opt.get("rescan_hours", 24))) * 3600
         last_param_poll = last_scan = 0.0
+        cached_age = self.load_scan_cache(rescan_interval)
+        if cached_age is not None:
+            last_scan = time.monotonic() - cached_age
         backoff = 30
         while True:
             try:
