@@ -44,6 +44,10 @@ def main():
         if options.get("mqtt_username"):
             mqtt_conf["username"] = options["mqtt_username"]
             mqtt_conf["password"] = options.get("mqtt_password", "")
+    if options.get("mqtt_host"):
+        logging.info("Using the MQTT broker from the add-on options")
+    elif mqtt_conf.get("host"):
+        logging.info("Using the MQTT broker of the Mosquitto add-on")
     if not mqtt_conf.get("host"):
         sys.exit("No MQTT broker found: install the Mosquitto broker add-on or set mqtt_host")
     bridge = Bridge(options, mqtt_conf)

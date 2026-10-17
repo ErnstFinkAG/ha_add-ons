@@ -96,7 +96,21 @@ class Bridge:
         self.mqtt.publish(topic, payload, qos=1, retain=retain)
 
     def connect_mqtt(self):
-        self.mqtt.connect(self.mqtt_conf["host"], int(self.mqtt_conf.get("port", 1883)), keepalive=60)
+        host, port = self.mqtt_conf["host"], int(self.mqtt_conf.get("port") or 1883)
+        user = self.mqtt_conf.get("username") or "(none)"
+        delay = 5
+        while True:
+            _LOGGER.info("Connecting to MQTT broker %s:%s as %s", host, port, user)
+            try:
+                self.mqtt.connect(host, port, keepalive=60)
+                break
+            except OSError as err:
+                # Broker not up yet (e.g. Mosquitto still starting after a reboot) or wrong address.
+                _LOGGER.warning("MQTT broker %s:%s not reachable (%s); retrying in %ss. "
+                                "Check that the Mosquitto broker add-on is running, or the mqtt_host/mqtt_port options.",
+                                host, port, err, delay)
+                time.sleep(delay)
+                delay = min(delay * 2, 60)
         self.mqtt.loop_start()
 
     # -- discovery ---------------------------------------------------------------------

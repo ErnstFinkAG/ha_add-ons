@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2
+
+- If the MQTT broker is not reachable at start (e.g. Mosquitto still starting after a
+  reboot, or a wrong `mqtt_host`/`mqtt_port`), the add-on now waits and retries instead of
+  crashing. The log shows which broker address, port and user it uses.
+
 ## 0.5.1
 
 - No installation-specific defaults any more: `host` is empty and `device_name` is
