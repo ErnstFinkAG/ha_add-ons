@@ -13,6 +13,7 @@ Submitting that form opens an editor page; submitting the editor's form stores t
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 import time
@@ -31,11 +32,16 @@ NUMBER_RE = re.compile(r"^(?:(?P<label>.*?)\s+)?(?P<value>[-+]?\d+(?:[.,]\d+)?)\
 # Pages worth crawling. Everything else (leave.rsp, resize.rsp, webfb.rsp, vinfo.rsp,
 # setgrvalue.rsp ...) either logs out, changes the layout or only shows detail.
 CRAWL_RE = re.compile(r"^/?(v\d+\.rsp|menue\.rsp)$", re.I)
+RSP_REF_RE = re.compile(r"""([A-Za-z0-9_]+\.rsp(?:\?[^"'\s<>]*)?)""")
 NEVER_CRAWL_RE = re.compile(r"(leave|logout|abmelden|resize|webfb|setgrvalue|reset|delete)", re.I)
 
 
 class HpmError(Exception):
     pass
+
+
+class HpmBusy(HpmError):
+    """The HPM answered with sorry.rsp: all of its web sessions are in use."""
 
 
 @dataclass
@@ -153,6 +159,8 @@ def parse_page(html: str, key: str, fallback_title: str = "") -> Page:
             dp = by_id.get(hidden["id"])
             if dp is None:
                 label, value, unit, decimals = parse_value(form.get_text(" "))
+                if not label or label == str(value):
+                    label = _row_label(form) or label
                 dp = Datapoint(hidden["id"], label or f"Wert {hidden['id']}", _clean(form.get_text(" ")), value, unit, decimals, key, page.title)
                 by_id[dp.id] = dp
             dp.writable = True
@@ -161,6 +169,14 @@ def parse_page(html: str, key: str, fallback_title: str = "") -> Page:
             target = urlparse(urljoin("http://hpm/", action))
             if form.get("method", "GET").upper() == "GET" and CRAWL_RE.match(target.path) and not NEVER_CRAWL_RE.search(action):
                 page.links.append((page_key(action), _clean(form.get_text(" ")) or page_key(action)))
+
+    # Navigation that is done with JavaScript (onclick, location.href, frames) instead of links
+    known = {k for k, _ in page.links}
+    for ref in RSP_REF_RE.findall(html.replace("&amp;", "&")):
+        ref_key = page_key(ref)
+        if ref_key not in known and CRAWL_RE.match(urlparse(ref).path) and not NEVER_CRAWL_RE.search(ref):
+            known.add(ref_key)
+            page.links.append((ref_key, ref_key))
 
     page.datapoints = list(by_id.values())
     return page
@@ -220,7 +236,8 @@ def parse_editor(html: str) -> Optional[Editor]:
 
 
 class HpmClient:
-    def __init__(self, host: str, username: str = "", password: str = "", timeout: float = 10.0, request_delay: float = 0.3):
+    def __init__(self, host: str, username: str = "", password: str = "", timeout: float = 10.0, request_delay: float = 0.3,
+                 session_file: Optional[str] = None):
         self.base = host if host.startswith("http") else f"http://{host}"
         self.base = self.base.rstrip("/") + "/"
         self.username, self.password = username, password
@@ -231,6 +248,7 @@ class HpmClient:
         self.lock = threading.RLock()
         self._last_request = 0.0
         self.on_page = None  # optional callback(key, html) used while crawling
+        self.session_file = session_file
 
     # -- low level ---------------------------------------------------------------------
     def _throttle(self):
@@ -247,7 +265,21 @@ class HpmClient:
     def _remember_session(self, url: str, html: str):
         ids = SESSION_RE.findall(url) + SESSION_RE.findall(html)
         if ids:
-            self.sessionid = Counter(ids).most_common(1)[0][0]
+            sessionid = Counter(ids).most_common(1)[0][0]
+            if sessionid != self.sessionid and self.session_file:
+                try:
+                    with open(self.session_file, "w", encoding="utf-8") as handle:
+                        handle.write(sessionid)
+                except OSError:
+                    pass
+            self.sessionid = sessionid
+
+    def _stored_session(self) -> Optional[str]:
+        try:
+            with open(self.session_file or "", encoding="utf-8") as handle:
+                return handle.read().strip() or None
+        except OSError:
+            return None
 
     def _request(self, method: str, path: str, data: Optional[dict] = None) -> tuple[str, str]:
         self._throttle()
@@ -269,10 +301,42 @@ class HpmClient:
         return bool(re.search(r"<input[^>]+type=[\"']?password", html, re.I))
 
     # -- session -----------------------------------------------------------------------
+    def logout(self):
+        """Free the HPM web session (it only has a few) when the add-on stops."""
+        with self.lock:
+            if self.sessionid is None:
+                return
+            try:
+                self._request("GET", f"leave.rsp?sessionid={self.sessionid}")
+                _LOGGER.info("Logged out of the HPM")
+            except requests.RequestException as err:
+                _LOGGER.debug("Logout failed: %s", err)
+            self.sessionid = None
+            if self.session_file:
+                try:
+                    os.remove(self.session_file)
+                except OSError:
+                    pass
+
     def login(self) -> tuple[str, str]:
         with self.lock:
+            stored = self._stored_session() if self.sessionid is None else None
+            if stored:
+                # The add-on was restarted without logging out: take the old session back
+                # instead of using up another of the HPM's few session slots.
+                self.sessionid = stored
+                try:
+                    url, html = self._request("GET", f"v0.rsp?sessionid={stored}")
+                    if not self._needs_login(html) and "sorry.rsp" not in url and stored in html:
+                        _LOGGER.info("Re-using HPM session %s", stored)
+                        return url, html
+                except requests.RequestException:
+                    pass
             self.sessionid = None
             url, html = self._request("GET", "")
+            if "sorry.rsp" in url:
+                raise HpmBusy("The HPM has no free web session (sorry.rsp). Close HPM pages open in a browser "
+                              "or wait a few minutes for old sessions to expire")
             if self._needs_login(html):
                 if not self.password:
                     raise HpmError("The HPM asks for a login; set username and password in the add-on options")

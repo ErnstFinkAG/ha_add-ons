@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+- Log out of the HPM when the add-on stops and re-use the previous session after a restart,
+  so restarts no longer end on `sorry.rsp` (all HPM web sessions in use).
+- Clear message and back-off when the HPM has no free session.
+- Find pages that are linked through JavaScript or frames, not only plain links.
+- Better names for changeable values that have no label in their own link.
+
 ## 0.1.0
 
 - First version: crawls all HPM overview and menu pages, publishes every value via MQTT
