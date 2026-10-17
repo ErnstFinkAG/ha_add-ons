@@ -232,9 +232,27 @@ def _heading_name(soup: BeautifulSoup) -> Optional[str]:
     return None
 
 
-def parse_info_name(html: str) -> Optional[str]:
-    """Name of a value from its vinfo.rsp page (same headings as the editor, when present)."""
-    return _heading_name(BeautifulSoup(html, "html.parser"))
+def parse_info(html: str) -> tuple[Optional[str], bool]:
+    """Name of a value from its vinfo.rsp page and whether the page shows a value at all.
+
+    The HPM's "Parameterinformationen" table has rows like ``Aktueller Wert: Aussen   13.5 °C``
+    and ``Langtext: Aussentemperatur``. Links that only lead to a status page show nothing
+    but the parameter number.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    rows = {}
+    for tr in soup.find_all("tr"):
+        cells = tr.find_all("td")
+        if len(cells) >= 2:
+            key = _clean(cells[0].get_text(" ")).rstrip(":").lower()
+            rows[key] = cells[1].get_text(" ").replace("\xa0", " ").strip()
+    if not rows:
+        return _heading_name(soup), True
+    current = rows.get("aktueller wert")
+    name = _clean(rows.get("langtext", "")) or None
+    if name is None and current:
+        name = re.split(r"\s{2,}", current, maxsplit=1)[0].strip() or None
+    return name, current is not None
 
 
 def parse_editor(html: str) -> Optional[Editor]:
