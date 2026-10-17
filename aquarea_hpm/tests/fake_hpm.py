@@ -29,13 +29,16 @@ PAGES = {
 # the real HPM: menue.rsp?branchnr=B&level=L opens child B of the current menu (L = depth + 1)
 # or goes up to the ancestor at depth L; anything else just shows the current menu again.
 MENU = {
-    1: ("Globales", {1: ("Meldungen", {1: ("Störstatus", [["Heizkr.1", "0"], ["Wärmep.1", "0"]])}),
+    1: ("Globales", {1: ("Meldungen", {1: ("Störstatus", {1: ("Status", [["Heizkr.1", "0"], ["Wärmep.1", "0"]])})}),
                      3: ("Service", {1: ("Hardware", [["Reglertemp", "31 °C"], ["ProdNr", "011511100047"]]),
                                      2: ("Raumtemperaturen", [["Komfort", "21.0 °C"]], 3),
                                      5: ("Zugriff", [], 7)}, 4),
                      5: ("Strukturierung", {2: ("WEB", [["Niveau 1", "11111111"]], 7)})}),
-    2: ("MSR-GLT", {1: ("Heizkreis", [["Vorlauf HK", "34.5 °C"], ["Jahreszeit: Sommer", None], ["Niveau 2", "22222222"],
-                                      ["FText", ""]])}),
+    2: ("MSR-GLT", {1: ("Heizkreise", {1: ("Heizkreis 1", {
+        1: ("Istwerte", [["Vorlauf HK", "34.5 °C"], ["Jahreszeit: Sommer", None], ["Niveau 2", "22222222"], ["FText", ""]]),
+        2: ("Sollwerte", [["RaumNZ1", "20.0 °C", (10, 30)], ["HK-Steilh", "0.6", (0.2, 3.5)], ["Xp", "25.0 K", (1, 99)]]),
+        6: ("Service", {24: ("Fühlerkorrektur", [["Aussen", "0.0 K", (-5, 5)]])}),
+    })})}),
     3: ("Zugriffscodes", []),
     5: ("Anlagenschemen", []),
 }
@@ -99,12 +102,28 @@ def menu(sid, branchnr, level):
                        for b, (n, *_) in children.items())
     else:  # parameter rows, padded like on the real HPM
         body = ""
-        for i, (label, value) in enumerate(children, 1):
+        for i, (label, value, *rng) in enumerate(children, 1):
             text = label if value is None else f"{label}{' ' * max(2, 34 - len(label) - len(value))}{value}"
-            body += (f'<tr><td><a href="info.rsp?sessionid={sid}&branchnr={i}&level={len(pos) + 1}" id="{i}">{text}</a></td>'
-                     f'<td><a href="change.rsp?sessionid={sid}&branchnr={i}&level={len(pos) + 1}"><img src="modify.png" alt="ändern"></a></td></tr>')
+            body += f'<tr><td><a href="info.rsp?sessionid={sid}&branchnr={i}&level={len(pos)}" id="{i}">{text}</a></td>'
+            if rng:
+                body += f'<td><a href="change.rsp?sessionid={sid}&branchnr={i}&level={len(pos)}"><img src="modify.png" alt="ändern"></a></td>'
+            body += "</tr>"
     number = f"<p>Menü {'.'.join(map(str, numbers))}.x</p>" if pos else ""
     return wrap("WEB-FB", [f'<div id="mainpane">{number}<table class="mentext">{head}{body}</table></div>'], sid)
+
+
+def menu_editor(sid, branchnr, level):
+    """Editor behind the pencil icon of a WEB-FB menu row (same layout as the overview editor)."""
+    pos = MENU_POS.get(sid, ())
+    assert level == len(pos), (level, pos)
+    label, value, (lo, hi) = menu_node(pos)[2][1][branchnr - 1]
+    return (f'<html><body><h3>Kurzbezeichnung: {label}</h3><h4>{label} lang</h4>'
+            f'<form method="POST" action="setmenu.rsp"><input type="hidden" name="sessionid" value="{sid}">'
+            f'<input type="hidden" name="branchnr" value="{branchnr}"><input type="hidden" name="level" value="{level}">'
+            f'<table class="change"><tr><td>Neuer Wert</td><td><input name="val" type="text"></td></tr>'
+            f'<tr><td>Bisheriger Wert</td><td> {value.split()[0]}</td></tr><tr><td>Untergrenze</td><td> {lo}</td></tr>'
+            f'<tr><td>Obergrenze</td><td> {hi}</td></tr></table>'
+            f'<input type="submit" name="Set" value="OK"><input type="submit" name="Abort" value="Abbrechen"></form></body></html>')
 
 
 def rows(key, ids, sid):
@@ -199,6 +218,8 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/code.rsp":
             return self.send(f'<html><body><form action="setcode.rsp" method="POST"><input type="hidden" name="sessionid" value="{sid}">'
                              f'Code: <input name="code" type="text"><input type="submit" value="OK"></form></body></html>')
+        if url.path == "/change.rsp":
+            return self.send(menu_editor(sid, int(q["branchnr"]), int(q["level"])))
         if url.path == "/vinfo.rsp":
             return self.send(info(q["id"], sid))
         if url.path == "/menue.rsp":
@@ -222,6 +243,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(page("v0.rsp", sid))
         if sid not in SESSIONS:
             return self.send("<html><body>Sitzung abgelaufen</body></html>")
+        if urlparse(self.path).path == "/setmenu.rsp":
+            assert "Abort" not in form, form
+            row = menu_node(MENU_POS[sid])[2][1][int(form["branchnr"]) - 1]
+            unit = row[1].split()[1:]
+            row[1] = " ".join([form["val"]] + unit)
+            WRITES.append((row[0], form["val"]))
+            return self.send(menu(sid, 0, 99))
         if urlparse(self.path).path == "/ms.rsp":
             MODE["value"] = int(form["MS0"])
             WRITES.append(("ms:MS0", MODES[MODE["value"]]))

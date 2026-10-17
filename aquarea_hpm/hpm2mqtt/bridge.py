@@ -13,7 +13,7 @@ from typing import Optional
 
 import paho.mqtt.client as mqtt
 
-from .hpm import Datapoint, Editor, HpmClient, HpmError, Page, parse_info, parse_menu_page, parse_page
+from .hpm import Datapoint, Editor, HpmClient, HpmError, Page, menu_usefulness, parse_info, parse_menu_page, parse_page
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -223,12 +223,26 @@ class Bridge:
         extra = list(self.opt.get("extra_pages", []) or [])
         max_pages = int(self.opt.get("max_pages", 150))
         pages = self.client.crawl(max_pages, tuple(extra))
-        if self.opt.get("include_menus", True):
+        menu_values = str(self.opt.get("menu_values", "useful")).lower()
+        if self.opt.get("include_menus", True) and menu_values != "none":
             # WEB-FB: the HPM's full parameter menu tree (navigated step by step like a person would)
             try:
                 pages.update(self.client.walk_menus(int(self.opt.get("max_menu_pages", 500))))
             except Exception as err:  # noqa: BLE001 - the overview pages are still worth publishing
                 _LOGGER.warning("Could not read the WEB-FB menus: %s", err)
+        settings = self.opt.get("menu_settings", True)
+        for key, page in pages.items():
+            if not key.startswith("menu:"):
+                continue
+            kept = []
+            for dp in page.datapoints:
+                use = menu_usefulness(dp.menu_title, dp.label)
+                if use is None and menu_values == "useful":
+                    continue
+                # only the recommended settings can be changed; everything else stays read-only
+                dp.writable = dp.writable and use == "set" and bool(settings)
+                kept.append(dp)
+            page.datapoints = kept
         points: dict[str, Datapoint] = {}
         for page in pages.values():
             for dp in page.datapoints:
@@ -255,8 +269,6 @@ class Bridge:
             for dp in points.values():
                 if not dp.writable:
                     continue
-                if self._is_menu(dp) and not self.opt.get("menu_control", False):
-                    continue  # menu parameters stay read-only unless menu_control is on
                 try:
                     editor, html = self.client.probe_editor(dp)
                 except Exception as err:  # noqa: BLE001 - one odd value must not stop the scan

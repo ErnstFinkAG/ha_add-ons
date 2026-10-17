@@ -26,7 +26,7 @@ tmp = Path(tempfile.mkdtemp())
 options = {"host": "127.0.0.1:18099", "device_name": "HPM-800F22", "scan_interval": 10, "parameter_interval": 10, "request_delay": 0,
            "dump_html": True, "dump_dir": str(tmp / "dump"), "state_file": str(tmp / "entities.json"),
            "session_file": str(tmp / "session"), "access_code": "5555",
-           "menu_control": True}
+           }
 bridge = Bridge(options, {"host": "127.0.0.1", "port": 18830})
 threading.Thread(target=bridge.run, daemon=True).start()
 
@@ -61,18 +61,21 @@ num = configs["homeassistant/number/hpm_800f22/dp_55_6_4_3/config"]
 assert (num["min"], num["max"], num["step"]) == (35.0, 60.0, 0.1), num
 sel = configs["homeassistant/select/hpm_800f22/dp_60_1_1_1/config"]
 assert sel["options"] == ["Aus", "Auto", "Heizen", "Kühlen"], sel
-menu_cfg = {t.split("/")[3]: c for t, c in configs.items() if "dp_menu_" in t}
-print(sorted((k, c["name"]) for k, c in menu_cfg.items()))
-assert menu_cfg["dp_menu_1_4_1_1"]["name"] == "Hardware Reglertemp", menu_cfg["dp_menu_1_4_1_1"]
-assert menu_cfg["dp_menu_1_4_1_1"]["unit_of_measurement"] == "°C"
-assert menu_cfg["dp_menu_1_4_1_1"]["entity_category"] == "diagnostic"
-assert "dp_menu_1_1_1_2" in menu_cfg and "dp_menu_1_4_3_1" in menu_cfg  # Störstatus, locked Raumtemperaturen
-assert "dp_menu_2_1_2" in menu_cfg  # "Jahreszeit: Sommer"
-assert not any("niveau" in c["name"].lower() for c in menu_cfg.values()), "access codes must never be published"
-assert "dp_menu_2_1_4" not in menu_cfg  # empty text
-wait(lambda: seen.get(f"{base}/dp_menu_2_1_1/state") == "34.5", "menu value state")
+menu_cfg = {t.split("/")[3]: (t.split("/")[1], c) for t, c in configs.items() if "dp_menu_" in t}
+print(sorted((k, comp, c["name"]) for k, (comp, c) in menu_cfg.items()))
+# menu_values=useful: status, Istwerte, hardware info and the recommended settings only
+assert set(menu_cfg) == {"dp_menu_1_1_1_1_1", "dp_menu_1_1_1_1_2", "dp_menu_1_4_1_1", "dp_menu_1_4_1_2",
+                         "dp_menu_2_1_1_1_1", "dp_menu_2_1_1_1_2", "dp_menu_2_1_1_2_1", "dp_menu_2_1_1_2_2"}, sorted(menu_cfg)
+assert menu_cfg["dp_menu_1_4_1_1"][1]["name"] == "Hardware Reglertemp"
+assert menu_cfg["dp_menu_1_4_1_1"][1]["unit_of_measurement"] == "°C"
+assert menu_cfg["dp_menu_1_4_1_1"][1]["entity_category"] == "diagnostic"
+setp = menu_cfg["dp_menu_2_1_1_2_1"]
+assert setp[0] == "number" and (setp[1]["min"], setp[1]["max"]) == (10.0, 30.0), setp
+assert menu_cfg["dp_menu_2_1_1_2_2"][0] == "number"
+wait(lambda: seen.get(f"{base}/dp_menu_2_1_1_1_1/state") == "34.5", "menu value state")
 wait(lambda: seen.get(f"{base}/dp_menu_1_4_1_2/state") == "011511100047", "ProdNr state")
-wait(lambda: seen.get(f"{base}/dp_menu_2_1_2/state") == "Sommer", "Jahreszeit state")
+wait(lambda: seen.get(f"{base}/dp_menu_2_1_1_1_2/state") == "Sommer", "Jahreszeit state")
+
 assert not fake_hpm.VIOLATIONS, fake_hpm.VIOLATIONS
 assert num["name"] == "Brauchwasser Sollwert Nacht", num["name"]  # descriptive name from the editor page
 assert configs["homeassistant/sensor/hpm_800f22/dp_33_6_1_1/config"]["name"] == "Anlagenübersicht Aussentemperatur"
@@ -92,18 +95,20 @@ watcher.publish(f"{base}/dp_55_6_4_3/set", "52.5")
 watcher.publish(f"{base}/dp_60_1_1_1/set", "Heizen")
 watcher.publish(f"{base}/dp_37_6_4_7/set", "99")  # read-only value: must be ignored
 watcher.publish(f"{base}/dp_ms_ms0/set", "Sommer")
+watcher.publish(f"{base}/dp_menu_2_1_1_2_1/set", "21.5")  # Heizkreis 1 RaumNZ1 via the menu editor
 wait(lambda: seen.get(f"{base}/dp_55_6_4_3/state") == "52.5", "number write")
 wait(lambda: seen.get(f"{base}/dp_60_1_1_1/state") == "Heizen", "select write")
 wait(lambda: seen.get(f"{base}/dp_ms_ms0/state") == "Sommer", "operating mode write")
+wait(lambda: seen.get(f"{base}/dp_menu_2_1_1_2_1/state") == "21.5", "menu setting write", 30)
 time.sleep(2)
-assert fake_hpm.WRITES == [("55:6.4.3", "52.5"), ("60:1.1.1", "Heizen"), ("ms:MS0", "Sommer")], fake_hpm.WRITES
+assert fake_hpm.WRITES == [("55:6.4.3", "52.5"), ("60:1.1.1", "Heizen"), ("ms:MS0", "Sommer"), ("RaumNZ1", "21.5")], fake_hpm.WRITES
 
 # Session expiry: drop all sessions, the bridge must log in again on the next poll.
 fake_hpm.SESSIONS.clear()
 fake_hpm.VALUES["37:6.4.7"][1] = "50.5"
-fake_hpm.MENU[2][1][1][1][0][1] = "36.0 °C"
+fake_hpm.MENU[2][1][1][1][1][1][1][1][0][1] = "36.0 °C"
 wait(lambda: seen.get(f"{base}/dp_37_6_4_7/state") == "50.5", "re-login after session expiry", 30)
-wait(lambda: seen.get(f"{base}/dp_menu_2_1_1/state") == "36.0", "menu value poll after re-login", 30)
+wait(lambda: seen.get(f"{base}/dp_menu_2_1_1_1_1/state") == "36.0", "menu value poll after re-login", 30)
 assert not fake_hpm.VIOLATIONS, fake_hpm.VIOLATIONS
 assert any(p.name.startswith("editor_") for p in (tmp / "dump").iterdir())
 assert (tmp / "dump" / "page_menu_1_3_1.html").exists()
