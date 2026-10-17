@@ -32,7 +32,16 @@ threading.Thread(target=bridge.run, daemon=True).start()
 
 seen = {}
 watcher = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-watcher.on_message = lambda c, u, m: seen.__setitem__(m.topic, m.payload.decode())
+removed = set()
+
+
+def on_message(client, userdata, msg):
+    seen[msg.topic] = msg.payload.decode()
+    if msg.topic.endswith("/config") and not msg.payload:
+        removed.add(msg.topic)
+
+
+watcher.on_message = on_message
 watcher.connect("127.0.0.1", 18830)
 watcher.subscribe("homeassistant/#")
 watcher.subscribe("hpm/#")
@@ -76,6 +85,7 @@ wait(lambda: seen.get(f"{base}/dp_menu_2_1_1_1_1/state") == "34.5", "menu value 
 wait(lambda: seen.get(f"{base}/dp_menu_1_4_1_2/state") == "011511100047", "ProdNr state")
 wait(lambda: seen.get(f"{base}/dp_menu_2_1_1_1_2/state") == "Sommer", "Jahreszeit state")
 
+assert not removed, f"entities must not be removed while scanning: {removed}"
 assert not fake_hpm.VIOLATIONS, fake_hpm.VIOLATIONS
 assert num["name"] == "Brauchwasser Sollwert Nacht", num["name"]  # descriptive name from the editor page
 assert configs["homeassistant/sensor/test_hpm/dp_33_6_1_1/config"]["name"] == "Anlagenübersicht Aussentemperatur"

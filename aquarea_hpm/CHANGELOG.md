@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.4
+
+- During a full scan the read-only values now appear in Home Assistant as soon as all pages
+  are read; the changeable settings follow when their editors have been checked (this
+  step takes a few minutes because every menu setting is opened once).
+- The web UI shows the progress of every scan step (pages, value names, settings x/y)
+  instead of stopping at the page count.
+
 ## 0.5.3
 
 - A restart no longer scans the whole HPM web interface again. The last scan is stored in
