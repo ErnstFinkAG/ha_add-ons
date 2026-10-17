@@ -61,18 +61,27 @@ assert (num["min"], num["max"], num["step"]) == (35.0, 60.0, 0.1), num
 sel = configs["homeassistant/select/hpm_800f22/dp_60_1_1_1/config"]
 assert sel["options"] == ["Aus", "Auto", "Heizen", "Kühlen"], sel
 assert configs["homeassistant/number/hpm_800f22/dp_201_9_1_1/config"]["entity_category"] == "config"
+assert num["name"] == "Brauchwasser Sollwert Nacht", num["name"]  # descriptive name from the editor page
+assert configs["homeassistant/sensor/hpm_800f22/dp_33_6_1_1/config"]["name"] == "Anlagenübersicht Aussentemperatur"
+assert configs["homeassistant/sensor/hpm_800f22/dp_7_6_2_6/config"]["name"] == "Anlagenübersicht Störmeldung HK1"
+mode = configs["homeassistant/select/hpm_800f22/dp_ms_ms0/config"]
+assert mode["options"] == fake_hpm.MODES, mode
+assert not any("19_6_2_4" in t for t in configs), "unavailable value must be skipped"
 assert seen[f"{base}/dp_33_6_1_1/state"] == "-3.5"
 assert seen[f"{base}/dp_126_6_6_22/state"] == "0"
 assert seen[f"{base}/dp_102_2_2_1_4/state"] == "Ein"
 assert seen[f"{base}/dp_60_1_1_1/state"] == "Auto"
+assert seen[f"{base}/dp_ms_ms0/state"] == "Auto"
 
 watcher.publish(f"{base}/dp_55_6_4_3/set", "52.5")
 watcher.publish(f"{base}/dp_60_1_1_1/set", "Heizen")
 watcher.publish(f"{base}/dp_201_9_1_1/set", "99")  # out of range: must be refused
+watcher.publish(f"{base}/dp_ms_ms0/set", "Sommer")
 wait(lambda: seen.get(f"{base}/dp_55_6_4_3/state") == "52.5", "number write")
 wait(lambda: seen.get(f"{base}/dp_60_1_1_1/state") == "Heizen", "select write")
+wait(lambda: seen.get(f"{base}/dp_ms_ms0/state") == "Sommer", "operating mode write")
 time.sleep(2)
-assert fake_hpm.WRITES == [("55:6.4.3", "52.5"), ("60:1.1.1", "Heizen")], fake_hpm.WRITES
+assert fake_hpm.WRITES == [("55:6.4.3", "52.5"), ("60:1.1.1", "Heizen"), ("ms:MS0", "Sommer")], fake_hpm.WRITES
 
 # Session expiry: drop all sessions, the bridge must log in again on the next poll.
 fake_hpm.SESSIONS.clear()

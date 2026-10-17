@@ -60,6 +60,8 @@ class Datapoint:
     page_title: str
     writable: bool = False
     form: Optional[dict] = None  # hidden fields of the setgrvalue form
+    inline_editor: Optional["Editor"] = None  # selects shown directly on the page (e.g. BArtSchalter)
+    long_name: Optional[str] = None  # descriptive name from the HPM's info/editor page
 
 
 @dataclass
@@ -84,6 +86,10 @@ class Editor:
     minimum: Optional[float] = None
     maximum: Optional[float] = None
     step: Optional[float] = None
+    name: Optional[str] = None  # e.g. "Sollwert NZ1"
+
+
+UNAVAILABLE_RE = re.compile(r"nicht verf(ü|ue)gbar|not available", re.I)
 
 
 def page_key(url: str) -> str:
@@ -130,7 +136,8 @@ def _row_label(node) -> str:
             text = _clean(parent.get_text(" "))
             own = _clean(node.get_text(" "))
             text = text.replace(own, "").strip()
-            if text:
+            # The HPM positions values freely in one big container; its text is not a label.
+            if text and len(text) <= 40 and len(parent.find_all("a")) <= 2:
                 return re.sub(r"\s+", " ", text)
             break
     return ""
@@ -145,11 +152,11 @@ def parse_page(html: str, key: str, fallback_title: str = "") -> Page:
         href = link["href"]
         if "vinfo.rsp" in href and "id=" in href:
             dp_id = dict(parse_qsl(urlparse(href).query)).get("id")
-            if not dp_id or dp_id in by_id:
+            if not dp_id or dp_id in by_id or not _clean(link.get_text(" ")):
                 continue
             label, value, unit, decimals = parse_value(link.get_text(" "))
             if not label or label == str(value):
-                label = _row_label(link) or label or f"Wert {dp_id}"
+                label = _row_label(link) or f"Wert {dp_id}"
             by_id[dp_id] = Datapoint(dp_id, label, _clean(link.get_text(" ")), value, unit, decimals, key, page.title)
         else:
             target = urlparse(urljoin("http://hpm/", href))
@@ -159,7 +166,12 @@ def parse_page(html: str, key: str, fallback_title: str = "") -> Page:
     for form in soup.find_all("form"):
         action = form.get("action", "")
         hidden = {i.get("name"): i.get("value", "") for i in form.find_all("input") if i.get("name") and i.get("type", "").lower() == "hidden"}
+        container = form.find_parent("span", class_="set")
+        hidden_button = container is not None and "display: none" in container.get("style", "").replace("display:none", "display: none")
+        select = form.find("select")
         if "setgrvalue" in action.lower() and "id" in hidden:
+            if hidden_button:  # the HPM hides the button when the value is currently not available
+                continue
             dp = by_id.get(hidden["id"])
             if dp is None:
                 label, value, unit, decimals = parse_value(form.get_text(" "))
@@ -169,6 +181,22 @@ def parse_page(html: str, key: str, fallback_title: str = "") -> Page:
                 by_id[dp.id] = dp
             dp.writable = True
             dp.form = {"action": action, "method": form.get("method", "POST").upper(), "fields": hidden}
+        elif select is not None and select.get("name") and form.get("method", "GET").upper() == "POST":
+            # A selector shown directly on the page, e.g. the operating mode switch (ms.rsp, BArtSchalter).
+            options = [(o.get("value", _clean(o.get_text())), _clean(o.get_text())) for o in select.find_all("option")]
+            chosen = select.find("option", selected=True)
+            current = _clean(chosen.get_text()) if chosen else ""
+            label = ""
+            for prev in form.previous_siblings:
+                text = _clean(prev.get_text(" ") if hasattr(prev, "get_text") else str(prev))
+                if text:
+                    label = text
+                    break
+            dp_id = f"{urlparse(action).path.lstrip('/').split('.')[0]}:{select['name']}"
+            editor = Editor("select", action=action, method="POST", fields=hidden, value_field=select["name"],
+                            options=options, current=current, name=label or None)
+            by_id[dp_id] = Datapoint(dp_id, label or select["name"], current, current, None, 0, key, page.title,
+                                     writable=True, inline_editor=editor, long_name=label or None)
         else:
             target = urlparse(urljoin("http://hpm/", action))
             if form.get("method", "GET").upper() == "GET" and CRAWL_RE.match(target.path) and not NEVER_CRAWL_RE.search(action):
@@ -195,6 +223,20 @@ def _num(text) -> Optional[float]:
         return None
 
 
+def _heading_name(soup: BeautifulSoup) -> Optional[str]:
+    """Descriptive name on HPM parameter pages: <h3>Kurzbezeichnung: RaumNZ1</h3><h4>Sollwert NZ1</h4>."""
+    for tag in ("h4", "h3"):
+        node = soup.find(tag)
+        if node and _clean(node.get_text()):
+            return re.sub(r"^\s*Kurzbezeichnung:\s*", "", _clean(node.get_text())).strip() or None
+    return None
+
+
+def parse_info_name(html: str) -> Optional[str]:
+    """Name of a value from its vinfo.rsp page (same headings as the editor, when present)."""
+    return _heading_name(BeautifulSoup(html, "html.parser"))
+
+
 def parse_editor(html: str) -> Optional[Editor]:
     """Parse the page the HPM shows after clicking a changeable value."""
     soup = BeautifulSoup(html, "html.parser")
@@ -219,10 +261,19 @@ def parse_editor(html: str) -> Optional[Editor]:
         if select is not None:
             options = [(o.get("value", _clean(o.get_text())), _clean(o.get_text())) for o in select.find_all("option")]
             chosen = select.find("option", selected=True)
-            return Editor("select", value_field=select.get("name"), options=options, current=_clean(chosen.get_text()) if chosen else None, **common)
+            return Editor("select", value_field=select.get("name"), options=options, current=_clean(chosen.get_text()) if chosen else None,
+                          name=_heading_name(soup), **common)
         inp = inputs[0]
         text = _clean(soup.get_text(" "))
+        rows = {}
+        for tr in soup.find_all("tr"):
+            cells = [_clean(td.get_text(" ")) for td in tr.find_all("td")]
+            if len(cells) >= 2 and cells[0]:
+                rows[cells[0].lower()] = cells[1]
+        name = _heading_name(soup)
         minimum, maximum = _num(inp.get("min")), _num(inp.get("max"))
+        minimum = minimum if minimum is not None else _num(rows.get("untergrenze") or rows.get("minimum"))
+        maximum = maximum if maximum is not None else _num(rows.get("obergrenze") or rows.get("maximum"))
         if minimum is None:
             m = re.search(r"min(?:imum|\.)?\s*[:=]?\s*([-+]?\d+(?:[.,]\d+)?)", text, re.I)
             minimum = _num(m.group(1)) if m else None
@@ -233,9 +284,10 @@ def parse_editor(html: str) -> Optional[Editor]:
             m = re.search(r"([-+]?\d+(?:[.,]\d+)?)\s*(?:\.\.\.?|…|bis)\s*([-+]?\d+(?:[.,]\d+)?)", text)
             if m:
                 minimum, maximum = _num(m.group(1)), _num(m.group(2))
-        current = inp.get("value")
+        current = inp.get("value") or rows.get("bisheriger wert") or rows.get("aktueller wert")
         kind = "number" if _num(current) is not None or minimum is not None else "text"
-        return Editor(kind, value_field=inp.get("name"), current=current, minimum=minimum, maximum=maximum, step=_num(inp.get("step")), **common)
+        return Editor(kind, value_field=inp.get("name"), current=current, minimum=minimum, maximum=maximum,
+                      step=_num(inp.get("step")), name=name, **common)
     return None
 
 
@@ -440,12 +492,20 @@ class HpmClient:
         _, html = self._request(dp.form["method"], dp.form["action"], fields)
         return parse_editor(html), html
 
+    def info(self, dp_id: str) -> str:
+        """The HPM's detail page for one value (vinfo.rsp)."""
+        return self.get(f"vinfo.rsp?id={dp_id}")
+
     def probe_editor(self, dp: Datapoint) -> tuple[Optional[Editor], str]:
         """Open the editor for a writable value without changing anything."""
+        if dp.inline_editor is not None:
+            return dp.inline_editor, ""
         with self.lock:
             if self.sessionid is None:
                 self.login()
             editor, html = self._open_editor(dp)
+            if editor is None and UNAVAILABLE_RE.search(html):
+                _LOGGER.info("%s is currently not available on the HPM", dp.id)
             pv = dp.form["fields"].get("pv")
             if pv:  # leave the editor the way a browser user would
                 try:
@@ -459,10 +519,13 @@ class HpmClient:
         with self.lock:
             if self.sessionid is None:
                 self.login()
-            editor, html = self._open_editor(dp)
-            if editor is None:
-                self.login()
+            if dp.inline_editor is not None:
+                editor = dp.inline_editor
+            else:
                 editor, html = self._open_editor(dp)
+                if editor is None:
+                    self.login()
+                    editor, html = self._open_editor(dp)
             if editor is None:
                 raise HpmError(f"No editor form found for {dp.id} ({dp.label})")
             data = dict(editor.fields)

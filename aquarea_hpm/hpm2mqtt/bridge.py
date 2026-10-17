@@ -13,7 +13,7 @@ from typing import Optional
 
 import paho.mqtt.client as mqtt
 
-from .hpm import Datapoint, Editor, HpmClient, HpmError, Page, parse_page
+from .hpm import Datapoint, Editor, HpmClient, HpmError, Page, parse_info_name, parse_page
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -115,7 +115,8 @@ class Bridge:
     def entity_config(self, dp: Datapoint) -> tuple[str, dict]:
         oid = self.object_id(dp.id)
         unit = UNIT_ALIASES.get(dp.unit, dp.unit) if dp.unit else None
-        name = f"{dp.page_title} {dp.label}".strip() if dp.page_title and dp.page_title not in dp.label else dp.label
+        base_name = dp.long_name or (dp.label if not dp.label.startswith("Wert ") else dp.id)
+        name = f"{dp.page_title} {base_name}".strip() if dp.page_title and dp.page_title not in base_name else base_name
         cfg = {
             "name": name,
             "unique_id": f"{self.node}_{oid}",
@@ -209,6 +210,16 @@ class Bridge:
             for dp in page.datapoints:
                 if dp.id not in points or (dp.writable and not points[dp.id].writable):
                     points[dp.id] = dp
+        for dp in points.values():
+            if dp.inline_editor is not None or dp.long_name:
+                continue
+            try:
+                html = self.client.info(dp.id)
+            except Exception as err:  # noqa: BLE001 - a missing name is not worth stopping the scan
+                _LOGGER.debug("No info page for %s: %s", dp.id, err)
+                continue
+            self._dump(f"info_{dp.id}", html)
+            dp.long_name = parse_info_name(html)
         editors: dict[str, Editor] = {}
         if self.opt.get("enable_control", True):
             for dp in points.values():
@@ -225,6 +236,8 @@ class Bridge:
                                     "enable dump_html and share the file to add support", dp.id, dp.label)
                     continue
                 editors[dp.id] = editor
+                if editor.name:
+                    dp.long_name = editor.name
         self.pages = {k: p for k, p in pages.items() if p.datapoints}
         self.points, self.editors = points, editors
         self.object_ids = {self.object_id(i): i for i in points}
@@ -244,7 +257,8 @@ class Bridge:
             if force or self.last_published.get(oid) != state:
                 self._pub(f"{self.base}/{oid}/state", state)
                 self._pub(f"{self.base}/{oid}/attributes",
-                          {"hpm_id": dp.id, "page": dp.page, "page_title": dp.page_title, "raw": dp.raw, "label": dp.label})
+                          {"hpm_id": dp.id, "page": dp.page, "page_title": dp.page_title, "raw": dp.raw, "label": dp.label,
+                           "name": dp.long_name})
                 self.last_published[oid] = state
 
     def poll_page(self, key: str):
@@ -257,6 +271,9 @@ class Bridge:
             dp.value, dp.raw = fresh.value, fresh.raw
             if fresh.form:
                 dp.form = fresh.form
+            if fresh.inline_editor is not None:
+                dp.inline_editor = fresh.inline_editor
+                self.editors[dp.id] = fresh.inline_editor
 
     def handle_command(self, object_id: str, payload: str):
         if object_id == "__republish__":

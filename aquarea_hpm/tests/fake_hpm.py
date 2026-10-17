@@ -15,17 +15,21 @@ VALUES = {
     "126:6.6.22": ["Freq", "0", "", None],
     "102:2.2.1.4": ["Status", "Ein", "", None],
     "17:6.2.1": ["RaumNZ1", "22.0", "°C", None],
-    "33:6.1.1": ["Aussen", "-3.5", "°C", None],
+    "33:6.1.1": ["", "-3.5", "°C", None],
+    "7:6.2.6": ["", "keine Störung", "", None],
     "201:9.1.1": ["Komfort Raum", "21.0", "°C", ("number", 15, 28)],
 }
 PAGES = {
-    "v0.rsp": ("Anlagenübersicht", ["33:6.1.1"]),
+    "v0.rsp": ("Anlagenübersicht", ["33:6.1.1", "7:6.2.6"]),
     "v21.rsp": ("Wärmepumpe 1", ["126:6.6.22", "102:2.2.1.4"]),
     "v107000.rsp": ("Brauchwasser", ["37:6.4.7", "55:6.4.3", "60:1.1.1"]),
     "v50.rsp": ("Heizkreis 1", ["17:6.2.1"]),
     "menue.rsp?branchnr=1&level=1": ("Menü", []),
     "menue.rsp?branchnr=1&level=2": ("Raumtemperaturen", ["201:9.1.1"]),
 }
+NAMES = {"33:6.1.1": "Aussentemperatur", "7:6.2.6": "Störmeldung HK1", "55:6.4.3": "Sollwert Nacht"}
+MODE = {"value": 1}
+MODES = ["Aus", "Auto", "Sommer", "Ferien", "Dauer", "Hand"]
 SESSIONS = set()
 UNLOCKED = set()
 ACCESS_CODE = "5555"
@@ -42,7 +46,7 @@ def page(key, sid):
     body = []
     for dp in ids:
         label, value, unit, editor = VALUES[dp]
-        text = f"{label}{' ' * (28 - len(label))}{value} {unit}".rstrip()
+        text = (f"{label}{' ' * (28 - len(label))}{value} {unit}" if label else f"     {value} {unit}").rstrip()
         link = f'<span class="dp"><a class="infolink" href="vinfo.rsp?sessionid={sid}&id={dp}">{text}</a></span>'
         if editor:
             pv = key.split("?")[0]
@@ -50,6 +54,13 @@ def page(key, sid):
                     f'<input type="hidden" name="id" value="{dp}"><input type="hidden" name="pv" value="{pv}">'
                     f'<input type="submit" value="&nbsp; "></form>')
         body.append(f"<tr><td>{link}</td></tr>")
+    # Hidden "set" button of a value that is currently unavailable (real HPM markup)
+    body.append(f'<span class="set" style="display: none;"><form action="setgrvalue.rsp" method="POST"><input type="hidden" name="sessionid" value="{sid}">'
+                f'<input type="hidden" name="id" value="19:6.2.4"><input type="hidden" name="pv" value="{key}"></form></span>')
+    if key == "v0.rsp":
+        opts = "".join(f'<option value="{i}"{" selected" if i == MODE["value"] else ""}>{m}</option>' for i, m in enumerate(MODES))
+        body.append(f'<div>BArtSchalter<br><form id="MS0Form" method="POST" action="ms.rsp"><select name="MS0">{opts}</select>'
+                    f'<input type="submit" value="OK"><input type="hidden" name="sessionid" value="{sid}"></form></div>')
     if key == "menue.rsp?branchnr=1&level=1":
         body.append(f'<tr><td><a href="menue.rsp?sessionid={sid}&branchnr=1&level=2">Raumtemperaturen</a></td></tr>')
     return (f'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"><html><head>'
@@ -58,17 +69,27 @@ def page(key, sid):
 
 
 def editor(dp, sid, pv):
+    """Same structure as the real HPM editor (execgrset.rsp, German table)."""
     label, value, unit, (kind, *spec) = VALUES[dp]
     if kind == "select":
         opts = "".join(f'<option value="{i}"{" selected" if o == value else ""}>{o}</option>' for i, o in enumerate(spec[0]))
-        field = f'<select name="val">{opts}</select>'
+        field, rows = f'<select name="val">{opts}</select>', ""
     else:
-        field = f'<input type="text" name="val" value="{value}" size="6"> {unit} &nbsp; Min: {spec[0]}.0 &nbsp; Max: {spec[1]}.0'
-    return (f'<html><head><title>{label}</title></head><body><form action="setgrvalue.rsp" method="POST">'
-            f'<input type="hidden" name="sessionid" value="{sid}"><input type="hidden" name="id" value="{dp}">'
-            f'<input type="hidden" name="pv" value="{pv}">{label}: {field}'
-            f'<input type="submit" name="ok" value="OK"><input type="submit" name="cancel" value="Abbrechen"></form>'
-            f'<a href="{pv}?sessionid={sid}">zurück</a></body></html>')
+        field = '<input name="val" type="text" size="20" maxlength="42">'
+        rows = (f"<tr><td>Bisheriger Wert</td><td> {value}</td></tr><tr><td>Untergrenze</td><td> {spec[0]}.0</td></tr>"
+                f"<tr><td>Obergrenze</td><td> {spec[1]}.0</td></tr>")
+    return (f'<html><head><title>{label}</title></head><body><a href="v0.rsp?sessionid={sid}">Startbild</a><center>'
+            f'<h2>Parameter {dp.split(":")[1]}</h2><h3>Kurzbezeichnung: {label}      </h3><h4>{NAMES.get(dp, label)}</h4>'
+            f'<form method="POST" action="execgrset.rsp" name="valueform"><input type="hidden" name="sessionid" value="{sid}">'
+            f'<table class="change"><tr><td>Neuer Wert</td><td>{field}</td></tr>{rows}</table>'
+            f'<input type="submit" name="Set" value="OK"><input type="submit" name="Abort" value="Abbrechen">'
+            f'<input type="hidden" name="id" value="{dp}"><input type="hidden" name="pv" value="{pv}"></form></center></body></html>')
+
+
+def info(dp, sid):
+    label = VALUES[dp][0]
+    return (f'<html><body><a href="v0.rsp?sessionid={sid}">Startbild</a><h2>Parameter {dp.split(":")[1]}</h2>'
+            f'<h3>Kurzbezeichnung: {label}</h3><h4>{NAMES.get(dp, label)}</h4></body></html>')
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -100,6 +121,8 @@ class Handler(BaseHTTPRequestHandler):
         if sid not in SESSIONS:
             return self.send("<html><body>Sitzung abgelaufen</body></html>")
         key = url.path.lstrip("/") + ("?" + "&".join(f"{k}={v}" for k, v in q.items()) if q else "")
+        if url.path == "/vinfo.rsp":
+            return self.send(info(q["id"], sid))
         if key not in PAGES:
             return self.send("not found", 404)
         if key == "menue.rsp?branchnr=1&level=2" and sid not in UNLOCKED:
@@ -115,12 +138,18 @@ class Handler(BaseHTTPRequestHandler):
             if form.get("code") == ACCESS_CODE:
                 UNLOCKED.add(sid)
             return self.send(page("v0.rsp", sid))
-        if sid not in SESSIONS or urlparse(self.path).path != "/setgrvalue.rsp":
+        if sid not in SESSIONS:
             return self.send("<html><body>Sitzung abgelaufen</body></html>")
+        if urlparse(self.path).path == "/ms.rsp":
+            MODE["value"] = int(form["MS0"])
+            WRITES.append(("ms:MS0", MODES[MODE["value"]]))
+            return self.send(page("v0.rsp", sid))
         dp, pv = form["id"], form["pv"]
-        if "val" not in form:
+        if urlparse(self.path).path == "/setgrvalue.rsp":
+            if dp == "19:6.2.4":
+                return self.send(f'<html><body>Dieser Parameter ist zur Zeit nicht verfügbar<br><a href="{pv}?sessionid={sid}">zurück</a></body></html>')
             return self.send(editor(dp, sid, pv))
-        assert "cancel" not in form, "cancel button must not be submitted"
+        assert urlparse(self.path).path == "/execgrset.rsp" and "Abort" not in form, form
         kind, *spec = VALUES[dp][3]
         VALUES[dp][1] = spec[0][int(form["val"])] if kind == "select" else form["val"]
         WRITES.append((dp, VALUES[dp][1]))
