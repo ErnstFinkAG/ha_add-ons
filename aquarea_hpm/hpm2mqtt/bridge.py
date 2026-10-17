@@ -112,6 +112,10 @@ class Bridge:
             "configuration_url": self.client.base,
         }
 
+    @staticmethod
+    def _is_menu(dp: Datapoint) -> bool:
+        return dp.page.startswith(("menue", "webfb"))
+
     def entity_config(self, dp: Datapoint) -> tuple[str, dict]:
         oid = self.object_id(dp.id)
         unit = UNIT_ALIASES.get(dp.unit, dp.unit) if dp.unit else None
@@ -156,7 +160,7 @@ class Bridge:
                     cfg["device_class"] = device_class
                 cfg["state_class"] = state_class
                 cfg["suggested_display_precision"] = dp.decimals
-        if dp.page.startswith("menue"):
+        if self._is_menu(dp):
             cfg["entity_category"] = "config" if component != "sensor" else "diagnostic"
         return component, cfg
 
@@ -204,7 +208,10 @@ class Bridge:
     def discover(self):
         _LOGGER.info("Scanning the HPM web interface for values ...")
         self.client.on_page = lambda key, html: self._dump(f"page_{key}", html)
-        pages = self.client.crawl(int(self.opt.get("max_pages", 150)), tuple(self.opt.get("extra_pages", []) or []))
+        extra = list(self.opt.get("extra_pages", []) or [])
+        if self.opt.get("include_menus", True):
+            extra.insert(0, "webfb.rsp")  # WEB-FB: the HPM's full parameter menu (menue.rsp tree)
+        pages = self.client.crawl(int(self.opt.get("max_pages", 150)), tuple(extra))
         points: dict[str, Datapoint] = {}
         for page in pages.values():
             for dp in page.datapoints:
@@ -226,19 +233,13 @@ class Bridge:
                 no_value.append(dp.id)
         for dp_id in no_value:
             points.pop(dp_id, None)
-        if self.dump_dir is not None:
-            # Read-only look at the WEB-FB start page (the HPM's display/menu emulation) for later
-            # analysis. Only this one GET; none of its buttons are followed.
-            try:
-                self._dump("webfb_start", self.client.get("webfb.rsp"))
-                self.client.get("v0.rsp")
-            except Exception as err:  # noqa: BLE001 - diagnostics only
-                _LOGGER.debug("Could not save the WEB-FB page: %s", err)
         editors: dict[str, Editor] = {}
         if self.opt.get("enable_control", True):
             for dp in points.values():
                 if not dp.writable:
                     continue
+                if self._is_menu(dp) and not self.opt.get("menu_control", False):
+                    continue  # menu parameters stay read-only unless menu_control is on
                 try:
                     editor, html = self.client.probe_editor(dp)
                 except Exception as err:  # noqa: BLE001 - one odd value must not stop the scan
@@ -344,7 +345,7 @@ class Bridge:
                 else:
                     with_params = now - last_param_poll >= param_interval
                     for key in self.pages:
-                        if with_params or not key.startswith("menue"):
+                        if with_params or not key.startswith(("menue", "webfb")):
                             self.poll_page(key)
                             self._drain_commands(time.monotonic())
                     if with_params:

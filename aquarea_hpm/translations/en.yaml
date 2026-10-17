@@ -29,6 +29,12 @@ configuration:
   enable_control:
     name: Enable control
     description: Create number/select entities for changeable values. Turn off for read-only sensors.
+  include_menus:
+    name: Read WEB-FB menus
+    description: Also read the parameters in the HPM's WEB-FB menu tree (read-only). Access code menus are never read.
+  menu_control:
+    name: Control menu parameters
+    description: Make changeable WEB-FB menu parameters controllable from Home Assistant. Off by default because the menus contain installer settings.
   extra_pages:
     name: Extra pages
     description: Additional page names to read, e.g. "v100100.rsp" or "menue.rsp?branchnr=2&level=3".

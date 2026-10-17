@@ -33,6 +33,8 @@ NUMBER_RE = re.compile(r"^(?:(?P<label>.*?)\s+)?(?P<value>[-+]?\d+(?:[.,]\d+)?)\
 # setgrvalue.rsp ...) either logs out, changes the layout or only shows detail.
 CRAWL_RE = re.compile(r"^/?(v\d+\.rsp|menue\.rsp)$", re.I)
 RSP_REF_RE = re.compile(r"""([A-Za-z0-9_]+\.rsp(?:\?[^"'\s<>]*)?)""")
+# Menu branches never read: they show or change access codes.
+SKIP_TEXT_RE = re.compile(r"zugriff|passw|kennw|access", re.I)
 NEVER_CRAWL_RE = re.compile(r"(leave|logout|abmelden|resize|webfb|setgrvalue|reset|delete)", re.I)
 
 
@@ -495,6 +497,9 @@ class HpmClient:
                 pages[key] = page
                 _LOGGER.debug("Page %s (%s): %d values, %d links", key, page.title, len(page.datapoints), len(page.links))
                 for link_key, text in page.links:
+                    if SKIP_TEXT_RE.search(text):
+                        seen.add(link_key)
+                        continue
                     if link_key not in seen:
                         seen.add(link_key)
                         titles.setdefault(link_key, text)

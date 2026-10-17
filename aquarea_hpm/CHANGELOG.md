@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Reads the WEB-FB menu tree (`webfb.rsp` → `menue.rsp?branchnr=…&level=…`), so the
+  parameters behind the HPM's menus become sensors. Menus are read every
+  `parameter_interval`.
+- Access-code menus (Zugriffscodes, Zugriffscode eingeben) are never opened.
+- Menu parameters are read-only unless the new `menu_control` option is turned on.
+- Replaces the 0.2.2 WEB-FB start-page snapshot (all menu pages are in the debug zip now).
+
 ## 0.2.2
 
 - With `dump_html` on, the WEB-FB start page (the HPM's display/menu emulation) is saved

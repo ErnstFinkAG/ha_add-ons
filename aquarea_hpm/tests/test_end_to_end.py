@@ -25,7 +25,8 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 tmp = Path(tempfile.mkdtemp())
 options = {"host": "127.0.0.1:18099", "device_name": "HPM-800F22", "scan_interval": 10, "request_delay": 0,
            "dump_html": True, "dump_dir": str(tmp / "dump"), "state_file": str(tmp / "entities.json"),
-           "session_file": str(tmp / "session"), "access_code": "5555"}
+           "session_file": str(tmp / "session"), "access_code": "5555",
+           "menu_control": True}
 bridge = Bridge(options, {"host": "127.0.0.1", "port": 18830})
 threading.Thread(target=bridge.run, daemon=True).start()
 
@@ -90,7 +91,7 @@ fake_hpm.SESSIONS.clear()
 fake_hpm.VALUES["37:6.4.7"][1] = "50.5"
 wait(lambda: seen.get(f"{base}/dp_37_6_4_7/state") == "50.5", "re-login after session expiry", 30)
 assert any(p.name.startswith("editor_") for p in (tmp / "dump").iterdir())
-assert (tmp / "dump" / "webfb_start.html").exists()
+assert (tmp / "dump" / "page_webfb.rsp.html").exists()
 # Logout frees the session; a restart re-uses a stored session instead of opening a new one.
 bridge.client.logout()
 assert not (tmp / "session").exists()
