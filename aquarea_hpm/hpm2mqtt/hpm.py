@@ -33,6 +33,10 @@ NUMBER_RE = re.compile(r"^(?:(?P<label>.*?)\s+)?(?P<value>[-+]?\d+(?:[.,]\d+)?)\
 # setgrvalue.rsp ...) either logs out, changes the layout or only shows detail.
 CRAWL_RE = re.compile(r"^/?(v\d+\.rsp|menue\.rsp)$", re.I)
 RSP_REF_RE = re.compile(r"""([A-Za-z0-9_]+\.rsp(?:\?[^"'\s<>]*)?)""")
+# Menu branches never read: they show or change access codes.
+SKIP_TEXT_RE = re.compile(r"zugriff|passw|kennw|access", re.I)
+# The WEB-FB button that asks for an access code (e.g. Niveau 1 = 5555) to unlock more parameters.
+CODE_ENTRY_RE = re.compile(r"zugriffscode\s+eingeben|code\s+eingeben|enter\s+code", re.I)
 NEVER_CRAWL_RE = re.compile(r"(leave|logout|abmelden|resize|webfb|setgrvalue|reset|delete)", re.I)
 
 
@@ -70,6 +74,7 @@ class Page:
     title: str
     datapoints: list = field(default_factory=list)
     links: list = field(default_factory=list)  # (key, text)
+    code_entry: Optional[str] = None  # page key of the "Zugriffscode eingeben" button, if any
 
 
 @dataclass
@@ -160,7 +165,9 @@ def parse_page(html: str, key: str, fallback_title: str = "") -> Page:
             by_id[dp_id] = Datapoint(dp_id, label, _clean(link.get_text(" ")), value, unit, decimals, key, page.title)
         else:
             target = urlparse(urljoin("http://hpm/", href))
-            if CRAWL_RE.match(target.path) and not NEVER_CRAWL_RE.search(href):
+            if CODE_ENTRY_RE.search(_clean(link.get_text(" "))) and not NEVER_CRAWL_RE.search(href):
+                page.code_entry = page_key(href)
+            elif CRAWL_RE.match(target.path) and not NEVER_CRAWL_RE.search(href):
                 page.links.append((page_key(href), _clean(link.get_text(" "))))
 
     for form in soup.find_all("form"):
@@ -199,13 +206,19 @@ def parse_page(html: str, key: str, fallback_title: str = "") -> Page:
                                      writable=True, inline_editor=editor, long_name=label or None)
         else:
             target = urlparse(urljoin("http://hpm/", action))
-            if form.get("method", "GET").upper() == "GET" and CRAWL_RE.match(target.path) and not NEVER_CRAWL_RE.search(action):
+            button_text = " ".join([_clean(form.get_text(" "))] + [i.get("value", "") for i in form.find_all("input")
+                                                                   if i.get("type", "").lower() == "submit"])
+            if CODE_ENTRY_RE.search(button_text) and form.get("method", "GET").upper() == "GET" and action:
+                page.code_entry = page_key(action)
+            elif form.get("method", "GET").upper() == "GET" and CRAWL_RE.match(target.path) and not NEVER_CRAWL_RE.search(action):
                 page.links.append((page_key(action), _clean(form.get_text(" ")) or page_key(action)))
 
     # Navigation that is done with JavaScript (onclick, location.href, frames) instead of links
     known = {k for k, _ in page.links}
     for ref in RSP_REF_RE.findall(html.replace("&amp;", "&")):
         ref_key = page_key(ref)
+        if ref_key == "menue.rsp":  # e.g. a hidden "pv" return-page field; a menu needs its branch
+            continue
         if ref_key not in known and CRAWL_RE.match(urlparse(ref).path) and not NEVER_CRAWL_RE.search(ref):
             known.add(ref_key)
             page.links.append((ref_key, ref_key))
@@ -324,6 +337,7 @@ class HpmClient:
         self.on_page = None  # optional callback(key, html) used while crawling
         self.session_file = session_file
         self.access_code = access_code
+        self.code_entry_key: Optional[str] = None
 
     # -- low level ---------------------------------------------------------------------
     def _throttle(self):
@@ -396,14 +410,21 @@ class HpmClient:
     def _submit_password(self, url: str, html: str, secret: str, username: str = "") -> tuple[str, str]:
         """Fill in and submit the form that has a password field (login or access code)."""
         soup = BeautifulSoup(html, "html.parser")
-        form = next(f for f in soup.find_all("form") if f.find("input", attrs={"type": re.compile("password", re.I)}))
+        form = next((f for f in soup.find_all("form") if f.find("input", attrs={"type": re.compile("password", re.I)})), None)
+        text_only = False
+        if form is None:  # code entry pages may use a plain text field
+            form = next(f for f in soup.find_all("form")
+                        if f.find("input", attrs={"type": re.compile("^(text|number)$", re.I)}) or
+                        f.find("input", attrs={"type": False, "name": True}))
+            text_only = True
         data = {}
         for inp in form.find_all("input"):
             name, kind = inp.get("name"), inp.get("type", "text").lower()
             if not name:
                 continue
-            if kind == "password":
+            if kind == "password" or text_only and kind in ("text", "number", ""):
                 data[name] = secret
+                text_only = False  # only the first text field gets the code
             elif kind in ("text", ""):
                 data[name] = username
             elif kind == "hidden" or kind == "submit" and name not in data:
@@ -444,6 +465,8 @@ class HpmClient:
             if self.sessionid is None:
                 raise HpmError(f"No session id found on {url}")
             _LOGGER.info("Connected to HPM at %s (session %s)", self.base, self.sessionid)
+            if self.code_entry_key and self.access_code:
+                self._enter_access_code(self.code_entry_key)  # a new session starts locked again
             return url, html
 
     def get(self, key: str) -> str:
@@ -454,6 +477,8 @@ class HpmClient:
                     self.login()
                 try:
                     url, html = self._request("GET", self._with_session(key))
+                except requests.HTTPError as err:
+                    raise HpmError(f"Fetching {key} failed: {err}") from err  # page problem, session is fine
                 except requests.RequestException as err:
                     if attempt:
                         raise HpmError(f"Fetching {key} failed: {err}") from err
@@ -494,7 +519,13 @@ class HpmClient:
                 page = parse_page(html, key, titles.get(key, ""))
                 pages[key] = page
                 _LOGGER.debug("Page %s (%s): %d values, %d links", key, page.title, len(page.datapoints), len(page.links))
+                if page.code_entry and self.access_code and page.code_entry not in seen:
+                    seen.add(page.code_entry)
+                    self._enter_access_code(page.code_entry)
                 for link_key, text in page.links:
+                    if SKIP_TEXT_RE.search(text):
+                        seen.add(link_key)
+                        continue
                     if link_key not in seen:
                         seen.add(link_key)
                         titles.setdefault(link_key, text)
@@ -502,6 +533,16 @@ class HpmClient:
             if queue:
                 _LOGGER.warning("Stopped crawling after max_pages=%d; %d pages not visited", max_pages, len(queue))
             return pages
+
+    def _enter_access_code(self, key: str):
+        """Open the code entry page and submit access_code, unlocking deeper menu parameters."""
+        self.code_entry_key = key
+        try:
+            url, html = self._request("GET", self._with_session(key))
+            self._submit_password(url, html, self.access_code)
+            _LOGGER.info("Entered the access code on the HPM")
+        except (requests.RequestException, StopIteration) as err:
+            _LOGGER.warning("Could not enter the access code via %s: %s", key, err)
 
     # -- writing -----------------------------------------------------------------------
     def _open_editor(self, dp: Datapoint) -> tuple[Optional[Editor], str]:

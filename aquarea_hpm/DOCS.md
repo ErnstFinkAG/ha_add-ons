@@ -21,7 +21,9 @@ else becomes a `sensor`.
 3. For values inside a `setgrvalue.rsp` form it opens the editor page (like clicking the value
    in a browser, nothing is changed) to learn whether it is a list (select) or a number and
    its min/max.
-4. Overview pages are polled every `scan_interval`, menu/parameter pages every
+4. With `include_menus` (default on) it also walks the WEB-FB menu tree. Those parameters
+   are read-only unless `menu_control` is on; access-code menus are never opened.
+5. Overview pages are polled every `scan_interval`, menu/parameter pages every
    `parameter_interval`, and a full rescan runs every `rescan_hours` or when you press the
    **Rescan values** button.
 

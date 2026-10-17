@@ -132,7 +132,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.send("<html><body>Sitzung abgelaufen</body></html>")
         key = url.path.lstrip("/") + ("?" + "&".join(f"{k}={v}" for k, v in q.items()) if q else "")
         if url.path == "/webfb.rsp":
-            return self.send(f'<html><body><a href="v0.rsp?sessionid={sid}">Startbild</a><img src="display.png"></body></html>')
+            return self.send(f'<html><body><a href="v0.rsp?sessionid={sid}">Startbild</a>'
+                             f'<a href="menue.rsp?sessionid={sid}&branchnr=1&level=1">Globales</a>'
+                             f'<a href="menue.rsp?sessionid={sid}&branchnr=3&level=1">Zugriffscodes</a>'
+                             f'<form action="code.rsp"><input type="hidden" name="sessionid" value="{sid}">'
+                             f'<input type="submit" value="Zugriffscode eingeben"></form></body></html>')
+        if url.path == "/code.rsp":
+            return self.send(f'<html><body><form action="setcode.rsp" method="POST"><input type="hidden" name="sessionid" value="{sid}">'
+                             f'Code: <input name="code" type="text"><input type="submit" value="OK"></form></body></html>')
+        if key == "menue.rsp?branchnr=3&level=1":
+            raise AssertionError("access code menu must never be opened")
         if url.path == "/vinfo.rsp":
             return self.send(info(q["id"], sid))
         if key not in PAGES:
@@ -146,7 +155,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         form = {k: v[0] for k, v in parse_qs(self.rfile.read(length).decode("iso-8859-1")).items()}
         sid = form.get("sessionid")
-        if urlparse(self.path).path == "/code.rsp" and sid in SESSIONS:
+        if urlparse(self.path).path in ("/code.rsp", "/setcode.rsp") and sid in SESSIONS:
             if form.get("code") == ACCESS_CODE:
                 UNLOCKED.add(sid)
             return self.send(page("v0.rsp", sid))
