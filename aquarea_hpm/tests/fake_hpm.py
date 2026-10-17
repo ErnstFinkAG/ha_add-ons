@@ -91,9 +91,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Location", f"/v0.rsp?sessionid={sid}")
             self.end_headers()
             return
-        if url.path == "/leave.rsp":
-            raise AssertionError("bridge must never log out")
         sid = q.pop("sessionid", None)
+        if url.path == "/leave.rsp":
+            SESSIONS.discard(sid)
+            return self.send("<html><body>Abgemeldet</body></html>")
         if sid not in SESSIONS:
             return self.send("<html><body>Sitzung abgelaufen</body></html>")
         key = url.path.lstrip("/") + ("?" + "&".join(f"{k}={v}" for k, v in q.items()) if q else "")

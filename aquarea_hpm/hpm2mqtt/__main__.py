@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import signal
 import sys
 
 import requests
@@ -35,7 +36,16 @@ def main():
             mqtt_conf[key] = options[f"mqtt_{key}"]
     if not mqtt_conf.get("host"):
         sys.exit("No MQTT broker found: install the Mosquitto broker add-on or set mqtt_host")
-    Bridge(options, mqtt_conf).run()
+    bridge = Bridge(options, mqtt_conf)
+
+    def stop(signum, frame):
+        # Free the HPM session slot so a restart or a browser can log in right away.
+        bridge.client.logout()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    bridge.run()
 
 
 if __name__ == "__main__":
