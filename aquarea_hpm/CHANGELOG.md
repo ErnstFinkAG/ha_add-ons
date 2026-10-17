@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.1
+
+- No installation-specific defaults any more: `host` is empty and `device_name` is
+  `Aquarea HPM`. Set your own HPM address after installing. Existing installations keep
+  their saved options.
+- MQTT settings are now visible in the configuration: `mqtt_host`, `mqtt_port`,
+  `mqtt_username`, `mqtt_password`. Leave `mqtt_host` empty to use the Mosquitto broker
+  add-on automatically; set it to use any other broker. The Mosquitto add-on is no longer
+  required.
+- Rewritten README and documentation.
+
 ## 0.5.0
 
 - New option `menu_values` (default `useful`): only the menu values worth having in Home
@@ -13,7 +24,7 @@
   - Pufferspeicher: boost (ÜberhZ1, Überhöhung), max storage temperature, min off time
   - Wärmepumpe: max setpoint, boost, bivalence point
   - Week programmes of HK1 and Quiet mode (start/end of NZ1/NZ2 per day), special periods
-  - HPM clock: time, date, summer/winter switching (the clock currently reads 28.05.10)
+  - HPM clock: time, date, summer/winter switching
   - Photovoltaik and Smart Grid temperatures and times
   Installer settings (terminals, network, sensor correction, controller tuning, manual
   overrides, acknowledgements, restarts) always stay read-only. Values are written through
@@ -67,7 +78,7 @@
 - Reads the WEB-FB menu tree (`webfb.rsp` → `menue.rsp?branchnr=…&level=…`), so the
   parameters behind the HPM's menus become sensors. Menus are read every
   `parameter_interval`.
-- If `access_code` is set (e.g. 5555 for Niveau 1), it is entered through WEB-FB's
+- If `access_code` is set (the code of a service level), it is entered through WEB-FB's
   "Zugriffscode eingeben" before the menus are read, and again after every re-login.
 - The Zugriffscodes menu itself is never opened, so codes don't end up in Home Assistant.
 - A page error (404) no longer throws away the session (and the entered code).

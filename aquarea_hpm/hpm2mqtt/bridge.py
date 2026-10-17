@@ -44,7 +44,7 @@ class Bridge:
                                 request_delay=float(options.get("request_delay", 0.3)),
                                 session_file=options.get("session_file", "/data/hpm_session"),
                                 access_code=options.get("access_code", ""))
-        self.node = slug(options.get("device_name", "HPM-800F22")) or "hpm"
+        self.node = slug(options.get("device_name") or "Aquarea HPM") or "hpm"
         self.base = f"{options.get('topic_prefix', 'hpm')}/{self.node}"
         self.disc_prefix = options.get("discovery_prefix", "homeassistant")
         self.avail_topic = f"{self.base}/status"
@@ -107,7 +107,7 @@ class Bridge:
     def device_info(self) -> dict:
         return {
             "identifiers": [f"panasonic_hpm_{self.node}"],
-            "name": self.opt.get("device_name", "HPM-800F22"),
+            "name": self.opt.get("device_name") or "Aquarea HPM",
             "manufacturer": "Panasonic",
             "model": "Aquarea Heat Pump Manager (PAW-HPM)",
             "configuration_url": self.client.base,

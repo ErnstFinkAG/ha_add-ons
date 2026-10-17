@@ -87,7 +87,7 @@ MENU_NUMBER_RE = re.compile(r"Men(ü|ue)\s+((?:\d+\.)+)x", re.I)
 RSP_REF_RE = re.compile(r"""([A-Za-z0-9_]+\.rsp(?:\?[^"'\s<>]*)?)""")
 # Menu branches never read: they show or change access codes.
 SKIP_TEXT_RE = re.compile(r"zugriff|passw|kennw|access", re.I)
-# The WEB-FB button that asks for an access code (e.g. Niveau 1 = 5555) to unlock more parameters.
+# The WEB-FB button that asks for an access code to unlock more parameters.
 CODE_ENTRY_RE = re.compile(r"zugriffscode\s+eingeben|code\s+eingeben|enter\s+code", re.I)
 NEVER_CRAWL_RE = re.compile(r"(leave|logout|abmelden|resize|webfb|setgrvalue|reset|delete)", re.I)
 

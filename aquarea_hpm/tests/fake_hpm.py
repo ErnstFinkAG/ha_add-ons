@@ -33,9 +33,9 @@ MENU = {
                      3: ("Service", {1: ("Hardware", [["Reglertemp", "31 °C"], ["ProdNr", "011511100047"]]),
                                      2: ("Raumtemperaturen", [["Komfort", "21.0 °C"]], 3),
                                      5: ("Zugriff", [], 7)}, 4),
-                     5: ("Strukturierung", {2: ("WEB", [["Niveau 1", "11111111"]], 7)})}),
+                     5: ("Strukturierung", {2: ("WEB", [["Niveau 1", "98765432"]], 7)})}),
     2: ("MSR-GLT", {1: ("Heizkreise", {1: ("Heizkreis 1", {
-        1: ("Istwerte", [["Vorlauf HK", "34.5 °C"], ["Jahreszeit: Sommer", None], ["Niveau 2", "22222222"], ["FText", ""]]),
+        1: ("Istwerte", [["Vorlauf HK", "34.5 °C"], ["Jahreszeit: Sommer", None], ["Niveau 2", "87654321"], ["FText", ""]]),
         2: ("Sollwerte", [["RaumNZ1", "20.0 °C", (10, 30)], ["HK-Steilh", "0.6", (0.2, 3.5)], ["Xp", "25.0 K", (1, 99)]]),
         6: ("Service", {24: ("Fühlerkorrektur", [["Aussen", "0.0 K", (-5, 5)]])}),
     })})}),
@@ -51,7 +51,7 @@ MODE = {"value": 1}
 MODES = ["Aus", "Auto", "Sommer", "Ferien", "Dauer", "Hand"]
 SESSIONS = set()
 UNLOCKED = set()
-ACCESS_CODE = "5555"
+ACCESS_CODE = "4321"
 WRITES = []
 
 

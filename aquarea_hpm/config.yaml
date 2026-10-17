@@ -1,5 +1,5 @@
 name: Aquarea HPM Bridge
-version: "0.5.0"
+version: "0.5.1"
 slug: aquarea_hpm
 description: Sensors and controls for the Panasonic Aquarea Heat Pump Manager (PAW-HPM) via MQTT discovery
 url: https://github.com/ErnstFinkAG/ha_add-ons/tree/main/aquarea_hpm
@@ -16,15 +16,15 @@ panel_icon: mdi:heat-pump
 startup: application
 boot: auto
 services:
-  - mqtt:need
+  - mqtt:want
 map:
   - share:rw
 options:
-  host: 10.80.30.71
+  host: ""
   username: ""
   password: ""
   access_code: ""
-  device_name: HPM-800F22
+  device_name: Aquarea HPM
   scan_interval: 60
   parameter_interval: 900
   rescan_hours: 24
@@ -34,10 +34,14 @@ options:
   menu_values: useful
   menu_settings: true
   extra_pages: []
+  mqtt_host: ""
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password: ""
   dump_html: false
   log_level: info
 schema:
-  host: str
+  host: str?
   username: str?
   password: password?
   access_code: password?
@@ -59,7 +63,7 @@ schema:
   topic_prefix: str?
   discovery_prefix: str?
   mqtt_host: str?
-  mqtt_port: port?
+  mqtt_port: port
   mqtt_username: str?
   mqtt_password: password?
   log_level: list(debug|info|warning|error)
