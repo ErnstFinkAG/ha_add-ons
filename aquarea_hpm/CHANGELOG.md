@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0
+
+Based on the pages of a real HPM (schema 10130):
+
+- Changeable setpoints now work: the editor (`execgrset.rsp`) with its German table
+  (Bisheriger Wert / Untergrenze / Obergrenze) becomes a number entity with the HPM's limits.
+- The operating mode switch on the overview page (BArtSchalter: Aus, Auto, Sommer, Ferien,
+  Dauer, Hand) is now a select entity.
+- Entities get the HPM's descriptive names (e.g. "Heizkreis 1 Sollwert NZ1") from the
+  parameter and info pages instead of the whole page text.
+- Values the HPM hides as currently unavailable are skipped.
+
 ## 0.1.3
 
 - Status page in Home Assistant (add-on → Open Web UI, or the sidebar) listing every value.
