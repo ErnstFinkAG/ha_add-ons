@@ -1,0 +1,36 @@
+configuration:
+  host:
+    name: HPM address
+    description: IP address or host name of the Heat Pump Manager web interface.
+  username:
+    name: Username
+    description: Only needed if the HPM web login is enabled.
+  password:
+    name: Password
+    description: Only needed if the HPM web login is enabled.
+  device_name:
+    name: Device name
+    description: Name of the device in Home Assistant; also used in entity ids and MQTT topics.
+  scan_interval:
+    name: Poll interval (s)
+    description: How often the overview pages (temperatures, states) are read.
+  parameter_interval:
+    name: Parameter poll interval (s)
+    description: How often the menu pages with settings are read. They rarely change, so this is slower.
+  rescan_hours:
+    name: Rescan interval (h)
+    description: How often the whole web interface is scanned again for new values.
+  max_pages:
+    name: Maximum pages
+    description: Upper limit of pages visited during a scan.
+  enable_control:
+    name: Enable control
+    description: Create number/select entities for changeable values. Turn off for read-only sensors.
+  extra_pages:
+    name: Extra pages
+    description: Additional page names to read, e.g. "v100100.rsp" or "menue.rsp?branchnr=2&level=3".
+  dump_html:
+    name: Save raw pages
+    description: Saves every page and editor the add-on reads to /share/aquarea_hpm for troubleshooting.
+  log_level:
+    name: Log level
