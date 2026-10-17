@@ -47,6 +47,18 @@ configuration:
   extra_pages:
     name: Extra pages
     description: Additional page names to read, e.g. "v100100.rsp" or "menue.rsp?branchnr=2&level=3".
+  mqtt_host:
+    name: MQTT broker
+    description: Host name or IP of the MQTT broker. Leave empty to use the Mosquitto broker add-on automatically.
+  mqtt_port:
+    name: MQTT port
+    description: Port of the MQTT broker (usually 1883). Only used together with "MQTT broker".
+  mqtt_username:
+    name: MQTT username
+    description: User for the MQTT broker. Leave empty to use the Mosquitto add-on's own credentials.
+  mqtt_password:
+    name: MQTT password
+    description: Password for the MQTT broker.
   dump_html:
     name: Save raw pages
     description: Saves every page and editor the add-on reads to /share/aquarea_hpm for troubleshooting.

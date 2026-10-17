@@ -33,10 +33,17 @@ def main():
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     log_buffer = web.LogBuffer()
     logging.getLogger().addHandler(log_buffer)
-    mqtt_conf = mqtt_from_supervisor()
-    for key in ("host", "port", "username", "password"):
-        if options.get(f"mqtt_{key}"):
-            mqtt_conf[key] = options[f"mqtt_{key}"]
+    if not options.get("host"):
+        sys.exit("Set 'host' (IP address of the HPM) in the add-on configuration")
+    if options.get("mqtt_host"):
+        # Own broker: take everything from the options, nothing from the Mosquitto add-on.
+        mqtt_conf = {"host": options["mqtt_host"], "port": options.get("mqtt_port") or 1883,
+                     "username": options.get("mqtt_username", ""), "password": options.get("mqtt_password", "")}
+    else:
+        mqtt_conf = mqtt_from_supervisor()
+        if options.get("mqtt_username"):
+            mqtt_conf["username"] = options["mqtt_username"]
+            mqtt_conf["password"] = options.get("mqtt_password", "")
     if not mqtt_conf.get("host"):
         sys.exit("No MQTT broker found: install the Mosquitto broker add-on or set mqtt_host")
     bridge = Bridge(options, mqtt_conf)

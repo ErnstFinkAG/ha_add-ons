@@ -23,9 +23,9 @@ server = fake_hpm.serve(18099)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 
 tmp = Path(tempfile.mkdtemp())
-options = {"host": "127.0.0.1:18099", "device_name": "HPM-800F22", "scan_interval": 10, "parameter_interval": 10, "request_delay": 0,
+options = {"host": "127.0.0.1:18099", "device_name": "Test HPM", "scan_interval": 10, "parameter_interval": 10, "request_delay": 0,
            "dump_html": True, "dump_dir": str(tmp / "dump"), "state_file": str(tmp / "entities.json"),
-           "session_file": str(tmp / "session"), "access_code": "5555",
+           "session_file": str(tmp / "session"), "access_code": "4321",
            }
 bridge = Bridge(options, {"host": "127.0.0.1", "port": 18830})
 threading.Thread(target=bridge.run, daemon=True).start()
@@ -48,7 +48,7 @@ def wait(cond, what, timeout=20):
     raise AssertionError(f"timeout waiting for {what}; seen={json.dumps(seen, indent=1, ensure_ascii=False)[:3000]}")
 
 
-base = "hpm/hpm_800f22"
+base = "hpm/test_hpm"
 wait(lambda: len([t for t in seen if t.endswith("/config")]) >= 10, "discovery")
 configs = {t: json.loads(p) for t, p in seen.items() if t.endswith("/config") and p}
 for t in sorted(configs):
@@ -56,10 +56,10 @@ for t in sorted(configs):
     print(f"{t.split('/')[1]:13} {c['name']:40} {c.get('unit_of_measurement', ''):3} "
           f"{c.get('options', '') or (c.get('min'), c.get('max')) if 'command_topic' in c else ''}")
 
-assert "homeassistant/sensor/hpm_800f22/dp_37_6_4_7/config" in configs
-num = configs["homeassistant/number/hpm_800f22/dp_55_6_4_3/config"]
+assert "homeassistant/sensor/test_hpm/dp_37_6_4_7/config" in configs
+num = configs["homeassistant/number/test_hpm/dp_55_6_4_3/config"]
 assert (num["min"], num["max"], num["step"]) == (35.0, 60.0, 0.1), num
-sel = configs["homeassistant/select/hpm_800f22/dp_60_1_1_1/config"]
+sel = configs["homeassistant/select/test_hpm/dp_60_1_1_1/config"]
 assert sel["options"] == ["Aus", "Auto", "Heizen", "Kühlen"], sel
 menu_cfg = {t.split("/")[3]: (t.split("/")[1], c) for t, c in configs.items() if "dp_menu_" in t}
 print(sorted((k, comp, c["name"]) for k, (comp, c) in menu_cfg.items()))
@@ -78,13 +78,13 @@ wait(lambda: seen.get(f"{base}/dp_menu_2_1_1_1_2/state") == "Sommer", "Jahreszei
 
 assert not fake_hpm.VIOLATIONS, fake_hpm.VIOLATIONS
 assert num["name"] == "Brauchwasser Sollwert Nacht", num["name"]  # descriptive name from the editor page
-assert configs["homeassistant/sensor/hpm_800f22/dp_33_6_1_1/config"]["name"] == "Anlagenübersicht Aussentemperatur"
-assert configs["homeassistant/sensor/hpm_800f22/dp_7_6_2_6/config"]["name"] == "Anlagenübersicht Störmeldung HK1"
-mode = configs["homeassistant/select/hpm_800f22/dp_ms_ms0/config"]
+assert configs["homeassistant/sensor/test_hpm/dp_33_6_1_1/config"]["name"] == "Anlagenübersicht Aussentemperatur"
+assert configs["homeassistant/sensor/test_hpm/dp_7_6_2_6/config"]["name"] == "Anlagenübersicht Störmeldung HK1"
+mode = configs["homeassistant/select/test_hpm/dp_ms_ms0/config"]
 assert mode["options"] == fake_hpm.MODES, mode
 assert not any("19_6_2_4" in t for t in configs), "unavailable value must be skipped"
 assert not any("2_2_1_9" in t for t in configs), "status-page links without a value must be skipped"
-assert configs["homeassistant/sensor/hpm_800f22/dp_34_6_1_2/config"]["name"] == "Anlagenübersicht Kurz"  # no Langtext
+assert configs["homeassistant/sensor/test_hpm/dp_34_6_1_2/config"]["name"] == "Anlagenübersicht Kurz"  # no Langtext
 assert seen[f"{base}/dp_33_6_1_1/state"] == "-3.5"
 assert seen[f"{base}/dp_126_6_6_22/state"] == "0"
 assert seen[f"{base}/dp_102_2_2_1_4/state"] == "Ein"
@@ -112,7 +112,7 @@ wait(lambda: seen.get(f"{base}/dp_menu_2_1_1_1_1/state") == "36.0", "menu value 
 assert not fake_hpm.VIOLATIONS, fake_hpm.VIOLATIONS
 assert any(p.name.startswith("editor_") for p in (tmp / "dump").iterdir())
 assert (tmp / "dump" / "page_menu_1_3_1.html").exists()
-assert not any("11111111" in p.read_text() for p in (tmp / "dump").iterdir()), "code pages must not be dumped"
+assert not any("98765432" in p.read_text() for p in (tmp / "dump").iterdir()), "code pages must not be dumped"
 assert any(sid in fake_hpm.UNLOCKED for sid in fake_hpm.SESSIONS) or fake_hpm.UNLOCKED, "access code was not entered"
 # Logout frees the session; a restart re-uses a stored session instead of opening a new one.
 bridge.client.logout()
