@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.3
+
+- The add-on page shows whether a scan is still running (and how many pages it has read)
+  or when it finished, and refreshes itself while scanning. Download the debug zip after
+  "Scan finished".
+
 ## 0.4.2
 
 - Each scan starts with an empty debug page folder, so the debug zip only holds pages from
