@@ -188,7 +188,7 @@ class Bridge:
         except (OSError, ValueError):
             return {}
 
-    def publish_discovery(self):
+    def publish_discovery(self, cleanup: bool = True):
         published = {}
         for dp in self.points.values():
             component, cfg = self.entity_config(dp)
@@ -206,13 +206,14 @@ class Bridge:
             topic = f"{self.disc_prefix}/{component}/{self.node}/{oid}/config"
             self._pub(topic, cfg)
             published[topic] = True
-        for topic in self._load_previous():
-            if topic not in published:
-                self._pub(topic, "")  # remove entities that disappeared or changed type
-        try:
-            self.state_file.write_text(json.dumps(published))
-        except OSError as err:
-            _LOGGER.debug("Could not store entity list: %s", err)
+        if cleanup:  # not for the partial list published while a scan is still running
+            for topic in self._load_previous():
+                if topic not in published:
+                    self._pub(topic, "")  # remove entities that disappeared or changed type
+            try:
+                self.state_file.write_text(json.dumps(published))
+            except OSError as err:
+                _LOGGER.debug("Could not store entity list: %s", err)
         self._pub(self.avail_topic, "online")
         _LOGGER.info("Published %d entities (%d controllable)", len(self.points),
                      sum(1 for d in self.points.values() if d.id in self.editors))
@@ -266,9 +267,11 @@ class Bridge:
                 if dp.id not in points or (dp.writable and not points[dp.id].writable):
                     points[dp.id] = dp
         no_value = []
-        for dp in points.values():
+        pages_read = seen[0]
+        for n, dp in enumerate(list(points.values()), 1):
             if dp.inline_editor is not None or dp.long_name or self._is_menu(dp):
                 continue
+            self.scan_status = f"Scan running: {pages_read} pages read, reading value names ({n}/{len(points)})"
             try:
                 html = self.client.info(dp.id)
             except Exception as err:  # noqa: BLE001 - a missing name is not worth stopping the scan
@@ -282,10 +285,21 @@ class Bridge:
         for dp_id in no_value:
             points.pop(dp_id, None)
         editors: dict[str, Editor] = {}
-        if self.opt.get("enable_control", True):
-            for dp in points.values():
-                if not dp.writable:
-                    continue
+        writable = [dp for dp in points.values() if dp.writable] if self.opt.get("enable_control", True) else []
+        if writable:
+            # Publish the read-only values right away; opening every editor takes a few minutes
+            # (each menu setting means navigating to its menu again).
+            self.pages = {k: p for k, p in pages.items() if p.datapoints}
+            self.points = {i: dp for i, dp in points.items() if not dp.writable}
+            self.editors = {}
+            self.object_ids = {self.object_id(i): i for i in self.points}
+            self.last_published.clear()
+            self.publish_discovery(cleanup=False)
+            self.publish_states(force=True)
+            _LOGGER.info("Published %d read-only values; checking %d changeable settings next", len(self.points), len(writable))
+            for n, dp in enumerate(writable, 1):
+                self.scan_status = (f"Scan running: {pages_read} pages read, {len(self.points)} values published, "
+                                    f"checking settings ({n}/{len(writable)})")
                 try:
                     editor, html = self.client.probe_editor(dp)
                 except Exception as err:  # noqa: BLE001 - one odd value must not stop the scan
