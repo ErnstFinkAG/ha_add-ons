@@ -33,7 +33,16 @@ NUMBER_RE = re.compile(r"^(?:(?P<label>.*?)\s+)?(?P<value>[-+]?\d+(?:[.,]\d+)?)\
 # setgrvalue.rsp ...) either logs out, changes the layout or only shows detail.
 CRAWL_RE = re.compile(r"^/?(v\d+\.rsp)$", re.I)
 # WEB-FB menu nodes never opened: access codes, plant schema selection and action-like entries.
-MENU_SKIP_RE = re.compile(r"zugriff|passw|kennw|anlagenschem|werkseinst|reset|l(ö|oe)sch|quittier|neustart|test|^web$", re.I)
+MENU_SKIP_RE = re.compile(r"zugriff|passw|kennw|anlagenschem|werkseinst|reset|l(ö|oe)sch|quittier|neustart|test|^web$|^trend$|projektmanag", re.I)
+# Menu levels that say nothing about what a value is; left out of entity names.
+GENERIC_MENUS = {"msr-glt", "globales", "funktion", "service", "wärmeerzeuger", "heizkreise", "uhren",
+                 "uhr kanalauswahl", "uhr status", "uhr service", "konfiguration", "schnittstellen"}
+
+
+def menu_title(title: str) -> str:
+    """Short, distinctive name for values of a menu, e.g. "Wärmepumpe 1 Überhöhung"."""
+    names = [n for n in title.split(" / ") if n and n.lower() not in GENERIC_MENUS]
+    return " ".join(names[-2:]) or (title.split(" / ")[-1] if title else "Menü")
 # Menu rows that hold user names or access codes; never read into Home Assistant.
 SECRET_ROW_RE = re.compile(r"niveau|benutzer|passw|kennw|code|zugriff|pin\b", re.I)
 MENU_NUMBER_RE = re.compile(r"Men(ü|ue)\s+((?:\d+\.)+)x", re.I)
@@ -367,7 +376,7 @@ def parse_menu_page(html: str, key: str, title: str) -> Page:
         page.datapoints.append(Datapoint(
             id=f"menu:{number}.{query['branchnr']}" if number else f"menu:{key[5:]}.{query['branchnr']}",
             label=label, raw=raw, value=value, unit=unit, decimals=decimals, page=key,
-            page_title=title.split(" / ")[-1] if title else "Menü"))
+            page_title=menu_title(title)))
     return page
 
 

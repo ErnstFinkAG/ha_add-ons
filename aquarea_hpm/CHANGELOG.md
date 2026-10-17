@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.4
+
+- Skips the Trend menus (empty recording buffers, about 580 values) and the
+  Projektmanagement list. Home Assistant removes those entities on the next scan.
+- Menu value names include their section, e.g. "Wärmepumpe 1 Überhöhung Aktiv" instead of
+  "Überhöhung Aktiv" (generic levels like Funktion or Service are left out). Entity ids
+  that already exist stay the same.
+
 ## 0.4.3
 
 - The add-on page shows whether a scan is still running (and how many pages it has read)
