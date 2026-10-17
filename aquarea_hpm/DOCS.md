@@ -13,7 +13,8 @@ else becomes a `sensor`.
 ## How it works
 
 1. Opens `http://<host>/`, which redirects to `v0.rsp?sessionid=…`, and keeps that session.
-   If the web login is enabled, set `username`/`password`.
+   If the web login is enabled, set `password` (and `username` only if the login asks for
+   one). Deeper menus that ask for another code get `access_code`.
 2. Follows every `v*.rsp` page and `menue.rsp` menu link (never logout or layout links) and
    collects each value link (`vinfo.rsp?…&id=37:6.4.7`). The HPM id becomes the entity's
    unique id, so names can change without losing history.

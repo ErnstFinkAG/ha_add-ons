@@ -40,6 +40,10 @@ class HpmError(Exception):
     pass
 
 
+class HpmLocked(HpmError):
+    """A page asks for an access code that is not configured or was refused."""
+
+
 class HpmBusy(HpmError):
     """The HPM answered with sorry.rsp: all of its web sessions are in use."""
 
@@ -237,7 +241,7 @@ def parse_editor(html: str) -> Optional[Editor]:
 
 class HpmClient:
     def __init__(self, host: str, username: str = "", password: str = "", timeout: float = 10.0, request_delay: float = 0.3,
-                 session_file: Optional[str] = None):
+                 session_file: Optional[str] = None, access_code: str = ""):
         self.base = host if host.startswith("http") else f"http://{host}"
         self.base = self.base.rstrip("/") + "/"
         self.username, self.password = username, password
@@ -249,6 +253,7 @@ class HpmClient:
         self._last_request = 0.0
         self.on_page = None  # optional callback(key, html) used while crawling
         self.session_file = session_file
+        self.access_code = access_code
 
     # -- low level ---------------------------------------------------------------------
     def _throttle(self):
@@ -318,6 +323,29 @@ class HpmClient:
                 except OSError:
                     pass
 
+    def _submit_password(self, url: str, html: str, secret: str, username: str = "") -> tuple[str, str]:
+        """Fill in and submit the form that has a password field (login or access code)."""
+        soup = BeautifulSoup(html, "html.parser")
+        form = next(f for f in soup.find_all("form") if f.find("input", attrs={"type": re.compile("password", re.I)}))
+        data = {}
+        for inp in form.find_all("input"):
+            name, kind = inp.get("name"), inp.get("type", "text").lower()
+            if not name:
+                continue
+            if kind == "password":
+                data[name] = secret
+            elif kind in ("text", ""):
+                data[name] = username
+            elif kind == "hidden" or kind == "submit" and name not in data:
+                data[name] = inp.get("value", "")
+        if "sessionid" in data and self.sessionid:
+            data["sessionid"] = self.sessionid
+        return self._request(form.get("method", "POST").upper(), urljoin(url, form.get("action", "")), data)
+
+    @staticmethod
+    def _is_login_page(url: str) -> bool:
+        return bool(re.search(r"/(login|enter|getlogin)\.rsp", url, re.I))
+
     def login(self) -> tuple[str, str]:
         with self.lock:
             stored = self._stored_session() if self.sessionid is None else None
@@ -340,20 +368,7 @@ class HpmClient:
             if self._needs_login(html):
                 if not self.password:
                     raise HpmError("The HPM asks for a login; set username and password in the add-on options")
-                soup = BeautifulSoup(html, "html.parser")
-                form = next(f for f in soup.find_all("form") if f.find("input", attrs={"type": re.compile("password", re.I)}))
-                data = {}
-                for inp in form.find_all("input"):
-                    name, kind = inp.get("name"), inp.get("type", "text").lower()
-                    if not name:
-                        continue
-                    if kind == "password":
-                        data[name] = self.password
-                    elif kind in ("text", ""):
-                        data[name] = self.username
-                    elif kind in ("hidden", "submit"):
-                        data[name] = inp.get("value", "")
-                url, html = self._request(form.get("method", "POST").upper(), urljoin(url, form.get("action", "")), data)
+                url, html = self._submit_password(url, html, self.password, self.username)
                 if self._needs_login(html):
                     raise HpmError("HPM login failed; check username and password")
             if self.sessionid is None:
@@ -374,6 +389,14 @@ class HpmClient:
                         raise HpmError(f"Fetching {key} failed: {err}") from err
                     self.sessionid = None
                     continue
+                if self._needs_login(html) and not self._is_login_page(url):
+                    # A deeper menu asking for an access code (e.g. the service level).
+                    if not self.access_code:
+                        raise HpmLocked(f"{key} asks for an access code; set access_code to read it")
+                    self._submit_password(url, html, self.access_code)
+                    url, html = self._request("GET", self._with_session(key))
+                    if self._needs_login(html) and not self._is_login_page(url):
+                        raise HpmLocked(f"{key}: the access code was not accepted")
                 if self._needs_login(html) or "sessionid" not in html:
                     self.sessionid = None
                     continue

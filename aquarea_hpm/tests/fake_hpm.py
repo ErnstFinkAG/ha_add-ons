@@ -27,6 +27,8 @@ PAGES = {
     "menue.rsp?branchnr=1&level=2": ("Raumtemperaturen", ["201:9.1.1"]),
 }
 SESSIONS = set()
+UNLOCKED = set()
+ACCESS_CODE = "5555"
 WRITES = []
 
 
@@ -100,12 +102,19 @@ class Handler(BaseHTTPRequestHandler):
         key = url.path.lstrip("/") + ("?" + "&".join(f"{k}={v}" for k, v in q.items()) if q else "")
         if key not in PAGES:
             return self.send("not found", 404)
+        if key == "menue.rsp?branchnr=1&level=2" and sid not in UNLOCKED:
+            return self.send(f'<html><body><form action="code.rsp" method="POST">Code: <input type="password" name="code">'
+                             f'<input type="hidden" name="sessionid" value="{sid}"><input type="submit" value="OK"></form></body></html>')
         self.send(page(key, sid))
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         form = {k: v[0] for k, v in parse_qs(self.rfile.read(length).decode("iso-8859-1")).items()}
         sid = form.get("sessionid")
+        if urlparse(self.path).path == "/code.rsp" and sid in SESSIONS:
+            if form.get("code") == ACCESS_CODE:
+                UNLOCKED.add(sid)
+            return self.send(page("v0.rsp", sid))
         if sid not in SESSIONS or urlparse(self.path).path != "/setgrvalue.rsp":
             return self.send("<html><body>Sitzung abgelaufen</body></html>")
         dp, pv = form["id"], form["pv"]

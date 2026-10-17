@@ -25,7 +25,7 @@ threading.Thread(target=server.serve_forever, daemon=True).start()
 tmp = Path(tempfile.mkdtemp())
 options = {"host": "127.0.0.1:18099", "device_name": "HPM-800F22", "scan_interval": 10, "request_delay": 0,
            "dump_html": True, "dump_dir": str(tmp / "dump"), "state_file": str(tmp / "entities.json"),
-           "session_file": str(tmp / "session")}
+           "session_file": str(tmp / "session"), "access_code": "5555"}
 bridge = Bridge(options, {"host": "127.0.0.1", "port": 18830})
 threading.Thread(target=bridge.run, daemon=True).start()
 
@@ -83,7 +83,19 @@ assert any(p.name.startswith("editor_") for p in (tmp / "dump").iterdir())
 bridge.client.logout()
 assert not (tmp / "session").exists()
 
-from hpm2mqtt.hpm import parse_page  # noqa: E402
+from hpm2mqtt.hpm import HpmClient, HpmLocked, parse_page  # noqa: E402
+locked = HpmClient("127.0.0.1:18099", request_delay=0)
+try:
+    locked.get("menue.rsp?branchnr=1&level=2")
+    raise AssertionError("code-protected menu must not open without access_code")
+except HpmLocked:
+    pass
+wrong = HpmClient("127.0.0.1:18099", request_delay=0, access_code="1234")
+try:
+    wrong.get("menue.rsp?branchnr=1&level=2")
+    raise AssertionError("wrong access code must be reported")
+except HpmLocked:
+    pass
 js = parse_page('<a onclick="location.href=\'v21.rsp?sessionid=AB12\'">WP</a><frame src="menue.rsp?sessionid=AB12&amp;branchnr=2">'
                 '<a href="leave.rsp?sessionid=AB12">x</a>', "v0.rsp")
 assert {k for k, _ in js.links} == {"v21.rsp", "menue.rsp?branchnr=2"}, js.links
