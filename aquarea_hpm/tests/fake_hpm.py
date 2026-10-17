@@ -16,11 +16,12 @@ VALUES = {
     "102:2.2.1.4": ["Status", "Ein", "", None],
     "17:6.2.1": ["RaumNZ1", "22.0", "°C", None],
     "33:6.1.1": ["", "-3.5", "°C", None],
+    "34:6.1.2": ["", "Ein", "", None],
     "7:6.2.6": ["", "keine Störung", "", None],
     "201:9.1.1": ["Komfort Raum", "21.0", "°C", ("number", 15, 28)],
 }
 PAGES = {
-    "v0.rsp": ("Anlagenübersicht", ["33:6.1.1", "7:6.2.6"]),
+    "v0.rsp": ("Anlagenübersicht", ["33:6.1.1", "7:6.2.6", "34:6.1.2"]),
     "v21.rsp": ("Wärmepumpe 1", ["126:6.6.22", "102:2.2.1.4"]),
     "v107000.rsp": ("Brauchwasser", ["37:6.4.7", "55:6.4.3", "60:1.1.1"]),
     "v50.rsp": ("Heizkreis 1", ["17:6.2.1"]),
@@ -57,6 +58,8 @@ def page(key, sid):
     # Hidden "set" button of a value that is currently unavailable (real HPM markup)
     body.append(f'<span class="set" style="display: none;"><form action="setgrvalue.rsp" method="POST"><input type="hidden" name="sessionid" value="{sid}">'
                 f'<input type="hidden" name="id" value="19:6.2.4"><input type="hidden" name="pv" value="{key}"></form></span>')
+    if key == "v21.rsp":
+        body.append(f'<span class="dp"><a class="infolink" href="vinfo.rsp?sessionid={sid}&id=102:2.2.1.9">Status</a></span>')
     if key == "v0.rsp":
         opts = "".join(f'<option value="{i}"{" selected" if i == MODE["value"] else ""}>{m}</option>' for i, m in enumerate(MODES))
         body.append(f'<div>BArtSchalter<br><form id="MS0Form" method="POST" action="ms.rsp"><select name="MS0">{opts}</select>'
@@ -87,9 +90,16 @@ def editor(dp, sid, pv):
 
 
 def info(dp, sid):
-    label = VALUES[dp][0]
-    return (f'<html><body><a href="v0.rsp?sessionid={sid}">Startbild</a><h2>Parameter {dp.split(":")[1]}</h2>'
-            f'<h3>Kurzbezeichnung: {label}</h3><h4>{NAMES.get(dp, label)}</h4></body></html>')
+    """Same structure as the real HPM vinfo.rsp page."""
+    rows = f"<tr><td>Parameternummer:</td><td>{dp.split(':')[1]}</td></tr>"
+    if dp in VALUES:
+        label, value, unit, _ = VALUES[dp]
+        short = label or "Kurz"
+        rows += f'<tr><td class="icap">Aktueller Wert:</td><td class="icont">{short}{" " * 20}{value} {unit}</td></tr>'
+        if dp in NAMES:
+            rows += f'<tr><td class="icap">Langtext:</td><td class="icont">{NAMES[dp]}</td></tr>'
+    return (f'<html><body><a href="v0.rsp?sessionid={sid}">Startbild</a><center><table class="info">'
+            f'<tr><th colspan="2">Parameterinformationen</th></tr>{rows}</table></center></body></html>')
 
 
 class Handler(BaseHTTPRequestHandler):

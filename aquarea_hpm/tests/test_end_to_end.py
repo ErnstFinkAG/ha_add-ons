@@ -67,6 +67,8 @@ assert configs["homeassistant/sensor/hpm_800f22/dp_7_6_2_6/config"]["name"] == "
 mode = configs["homeassistant/select/hpm_800f22/dp_ms_ms0/config"]
 assert mode["options"] == fake_hpm.MODES, mode
 assert not any("19_6_2_4" in t for t in configs), "unavailable value must be skipped"
+assert not any("2_2_1_9" in t for t in configs), "status-page links without a value must be skipped"
+assert configs["homeassistant/sensor/hpm_800f22/dp_34_6_1_2/config"]["name"] == "Anlagenübersicht Kurz"  # no Langtext
 assert seen[f"{base}/dp_33_6_1_1/state"] == "-3.5"
 assert seen[f"{base}/dp_126_6_6_22/state"] == "0"
 assert seen[f"{base}/dp_102_2_2_1_4/state"] == "Ein"

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Names come from the HPM's "Parameterinformationen" (Langtext), e.g. "Heizkreis 1
+  Aussentemperatur", "Heizkreis 1 Vorlauftemperatur", "Pufferspeicher Puffertemperatur oben".
+- The "Status" links that only open a status page are no longer published as sensors.
+
 ## 0.2.0
 
 Based on the pages of a real HPM (schema 10130):

@@ -13,7 +13,7 @@ from typing import Optional
 
 import paho.mqtt.client as mqtt
 
-from .hpm import Datapoint, Editor, HpmClient, HpmError, Page, parse_info_name, parse_page
+from .hpm import Datapoint, Editor, HpmClient, HpmError, Page, parse_info, parse_page
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -210,6 +210,7 @@ class Bridge:
             for dp in page.datapoints:
                 if dp.id not in points or (dp.writable and not points[dp.id].writable):
                     points[dp.id] = dp
+        no_value = []
         for dp in points.values():
             if dp.inline_editor is not None or dp.long_name:
                 continue
@@ -219,7 +220,12 @@ class Bridge:
                 _LOGGER.debug("No info page for %s: %s", dp.id, err)
                 continue
             self._dump(f"info_{dp.id}", html)
-            dp.long_name = parse_info_name(html)
+            dp.long_name, has_value = parse_info(html)
+            if not has_value and not dp.writable:
+                _LOGGER.debug("Skipping %s (%s): only a link to a status page", dp.id, dp.raw)
+                no_value.append(dp.id)
+        for dp_id in no_value:
+            points.pop(dp_id, None)
         editors: dict[str, Editor] = {}
         if self.opt.get("enable_control", True):
             for dp in points.values():
