@@ -207,6 +207,9 @@ class Bridge:
 
     def discover(self):
         _LOGGER.info("Scanning the HPM web interface for values ...")
+        if self.dump_dir is not None and self.dump_dir.is_dir():
+            for old in self.dump_dir.glob("*.html"):  # pages from earlier scans/versions would be misleading
+                old.unlink(missing_ok=True)
         self.client.on_page = lambda key, html: self._dump(f"page_{key}", html)
         extra = list(self.opt.get("extra_pages", []) or [])
         max_pages = int(self.opt.get("max_pages", 150))
