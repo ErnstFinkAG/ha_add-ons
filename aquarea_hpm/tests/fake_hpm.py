@@ -131,6 +131,8 @@ class Handler(BaseHTTPRequestHandler):
         if sid not in SESSIONS:
             return self.send("<html><body>Sitzung abgelaufen</body></html>")
         key = url.path.lstrip("/") + ("?" + "&".join(f"{k}={v}" for k, v in q.items()) if q else "")
+        if url.path == "/webfb.rsp":
+            return self.send(f'<html><body><a href="v0.rsp?sessionid={sid}">Startbild</a><img src="display.png"></body></html>')
         if url.path == "/vinfo.rsp":
             return self.send(info(q["id"], sid))
         if key not in PAGES:

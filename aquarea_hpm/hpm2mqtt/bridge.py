@@ -226,6 +226,14 @@ class Bridge:
                 no_value.append(dp.id)
         for dp_id in no_value:
             points.pop(dp_id, None)
+        if self.dump_dir is not None:
+            # Read-only look at the WEB-FB start page (the HPM's display/menu emulation) for later
+            # analysis. Only this one GET; none of its buttons are followed.
+            try:
+                self._dump("webfb_start", self.client.get("webfb.rsp"))
+                self.client.get("v0.rsp")
+            except Exception as err:  # noqa: BLE001 - diagnostics only
+                _LOGGER.debug("Could not save the WEB-FB page: %s", err)
         editors: dict[str, Editor] = {}
         if self.opt.get("enable_control", True):
             for dp in points.values():

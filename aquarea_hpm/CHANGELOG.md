@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- With `dump_html` on, the WEB-FB start page (the HPM's display/menu emulation) is saved
+  read-only into the debug zip as `webfb_start.html`, to check whether the menu can be read
+  safely. None of its buttons are pressed.
+
 ## 0.2.1
 
 - Names come from the HPM's "Parameterinformationen" (Langtext), e.g. "Heizkreis 1
