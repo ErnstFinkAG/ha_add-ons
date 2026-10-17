@@ -61,10 +61,18 @@ num = configs["homeassistant/number/hpm_800f22/dp_55_6_4_3/config"]
 assert (num["min"], num["max"], num["step"]) == (35.0, 60.0, 0.1), num
 sel = configs["homeassistant/select/hpm_800f22/dp_60_1_1_1/config"]
 assert sel["options"] == ["Aus", "Auto", "Heizen", "Kühlen"], sel
-assert configs["homeassistant/number/hpm_800f22/dp_201_9_1_1/config"]["entity_category"] == "config"
-assert configs["homeassistant/sensor/hpm_800f22/dp_202_3_1_1/config"]["entity_category"] == "diagnostic"
-assert "homeassistant/sensor/hpm_800f22/dp_203_1_1_1_1/config" in configs  # Globales / Meldungen / Störstatus
-assert seen[f"{base}/dp_202_3_1_1/state"] == "34.5"
+menu_cfg = {t.split("/")[3]: c for t, c in configs.items() if "dp_menu_" in t}
+print(sorted((k, c["name"]) for k, c in menu_cfg.items()))
+assert menu_cfg["dp_menu_1_4_1_1"]["name"] == "Hardware Reglertemp", menu_cfg["dp_menu_1_4_1_1"]
+assert menu_cfg["dp_menu_1_4_1_1"]["unit_of_measurement"] == "°C"
+assert menu_cfg["dp_menu_1_4_1_1"]["entity_category"] == "diagnostic"
+assert "dp_menu_1_1_1_2" in menu_cfg and "dp_menu_1_4_3_1" in menu_cfg  # Störstatus, locked Raumtemperaturen
+assert "dp_menu_2_1_2" in menu_cfg  # "Jahreszeit: Sommer"
+assert not any("niveau" in c["name"].lower() for c in menu_cfg.values()), "access codes must never be published"
+assert "dp_menu_2_1_4" not in menu_cfg  # empty text
+assert seen[f"{base}/dp_menu_2_1_1/state"] == "34.5"
+assert seen[f"{base}/dp_menu_1_4_1_2/state"] == "011511100047"
+assert seen[f"{base}/dp_menu_2_1_2/state"] == "Sommer"
 assert not fake_hpm.VIOLATIONS, fake_hpm.VIOLATIONS
 assert num["name"] == "Brauchwasser Sollwert Nacht", num["name"]  # descriptive name from the editor page
 assert configs["homeassistant/sensor/hpm_800f22/dp_33_6_1_1/config"]["name"] == "Anlagenübersicht Aussentemperatur"
@@ -82,7 +90,7 @@ assert seen[f"{base}/dp_ms_ms0/state"] == "Auto"
 
 watcher.publish(f"{base}/dp_55_6_4_3/set", "52.5")
 watcher.publish(f"{base}/dp_60_1_1_1/set", "Heizen")
-watcher.publish(f"{base}/dp_201_9_1_1/set", "99")  # out of range: must be refused
+watcher.publish(f"{base}/dp_37_6_4_7/set", "99")  # read-only value: must be ignored
 watcher.publish(f"{base}/dp_ms_ms0/set", "Sommer")
 wait(lambda: seen.get(f"{base}/dp_55_6_4_3/state") == "52.5", "number write")
 wait(lambda: seen.get(f"{base}/dp_60_1_1_1/state") == "Heizen", "select write")
@@ -93,13 +101,13 @@ assert fake_hpm.WRITES == [("55:6.4.3", "52.5"), ("60:1.1.1", "Heizen"), ("ms:MS
 # Session expiry: drop all sessions, the bridge must log in again on the next poll.
 fake_hpm.SESSIONS.clear()
 fake_hpm.VALUES["37:6.4.7"][1] = "50.5"
-fake_hpm.VALUES["202:3.1.1"][1] = "36.0"
+fake_hpm.MENU[2][1][1][1][0][1] = "36.0 °C"
 wait(lambda: seen.get(f"{base}/dp_37_6_4_7/state") == "50.5", "re-login after session expiry", 30)
-wait(lambda: seen.get(f"{base}/dp_202_3_1_1/state") == "36.0", "menu value poll after re-login", 30)
-wait(lambda: seen.get(f"{base}/dp_201_9_1_1/state") == "21.0", "locked menu value after re-login", 30)
+wait(lambda: seen.get(f"{base}/dp_menu_2_1_1/state") == "36.0", "menu value poll after re-login", 30)
 assert not fake_hpm.VIOLATIONS, fake_hpm.VIOLATIONS
 assert any(p.name.startswith("editor_") for p in (tmp / "dump").iterdir())
 assert (tmp / "dump" / "page_menu_1_3_1.html").exists()
+assert not any("11111111" in p.read_text() for p in (tmp / "dump").iterdir()), "code pages must not be dumped"
 assert any(sid in fake_hpm.UNLOCKED for sid in fake_hpm.SESSIONS) or fake_hpm.UNLOCKED, "access code was not entered"
 # Logout frees the session; a restart re-uses a stored session instead of opening a new one.
 bridge.client.logout()
@@ -110,7 +118,7 @@ locked = HpmClient("127.0.0.1:18099", request_delay=0)
 locked.get("menue.rsp?branchnr=1&level=1")
 locked.get("menue.rsp?branchnr=3&level=2")
 try:
-    locked.get("menue.rsp?branchnr=1&level=3")
+    locked.get("menue.rsp?branchnr=2&level=3")
     raise AssertionError("code-protected menu must not open without access_code")
 except HpmLocked:
     pass
@@ -118,7 +126,7 @@ wrong = HpmClient("127.0.0.1:18099", request_delay=0, access_code="1234")
 wrong.get("menue.rsp?branchnr=1&level=1")
 wrong.get("menue.rsp?branchnr=3&level=2")
 try:
-    wrong.get("menue.rsp?branchnr=1&level=3")
+    wrong.get("menue.rsp?branchnr=2&level=3")
     raise AssertionError("wrong access code must be reported")
 except HpmLocked:
     pass

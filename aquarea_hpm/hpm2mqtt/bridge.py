@@ -13,7 +13,7 @@ from typing import Optional
 
 import paho.mqtt.client as mqtt
 
-from .hpm import Datapoint, Editor, HpmClient, HpmError, Page, parse_info, parse_page
+from .hpm import Datapoint, Editor, HpmClient, HpmError, Page, parse_info, parse_menu_page, parse_page
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -214,7 +214,7 @@ class Bridge:
         if self.opt.get("include_menus", True):
             # WEB-FB: the HPM's full parameter menu tree (navigated step by step like a person would)
             try:
-                pages.update(self.client.walk_menus(max_pages))
+                pages.update(self.client.walk_menus(int(self.opt.get("max_menu_pages", 500))))
             except Exception as err:  # noqa: BLE001 - the overview pages are still worth publishing
                 _LOGGER.warning("Could not read the WEB-FB menus: %s", err)
         points: dict[str, Datapoint] = {}
@@ -224,7 +224,7 @@ class Bridge:
                     points[dp.id] = dp
         no_value = []
         for dp in points.values():
-            if dp.inline_editor is not None or dp.long_name:
+            if dp.inline_editor is not None or dp.long_name or self._is_menu(dp):
                 continue
             try:
                 html = self.client.info(dp.id)
@@ -286,9 +286,10 @@ class Bridge:
             path = tuple(int(b) for b in key[5:].split("/") if b)
             names = tuple(self.pages[key].title.split(" / ")) if key in self.pages else ()
             html = self.client.get_menu(path, names)
+            page = parse_menu_page(html, key, self.pages[key].title if key in self.pages else key)
         else:
             html = self.client.get(key)
-        page = parse_page(html, key, self.pages[key].title if key in self.pages else key)
+            page = parse_page(html, key, self.pages[key].title if key in self.pages else key)
         for fresh in page.datapoints:
             dp = self.points.get(fresh.id)
             if dp is None:
