@@ -70,7 +70,7 @@ assert "dp_menu_1_1_1_2" in menu_cfg and "dp_menu_1_4_3_1" in menu_cfg  # Störs
 assert "dp_menu_2_1_2" in menu_cfg  # "Jahreszeit: Sommer"
 assert not any("niveau" in c["name"].lower() for c in menu_cfg.values()), "access codes must never be published"
 assert "dp_menu_2_1_4" not in menu_cfg  # empty text
-assert seen[f"{base}/dp_menu_2_1_1/state"] == "34.5"
+wait(lambda: seen.get(f"{base}/dp_menu_2_1_1/state") == "34.5", "menu value state")
 assert seen[f"{base}/dp_menu_1_4_1_2/state"] == "011511100047"
 assert seen[f"{base}/dp_menu_2_1_2/state"] == "Sommer"
 assert not fake_hpm.VIOLATIONS, fake_hpm.VIOLATIONS
@@ -140,7 +140,7 @@ buf = web.LogBuffer()
 buf.lines.append("hello log")
 web.start(bridge, buf, 18100)
 page = urllib.request.urlopen("http://127.0.0.1:18100/api/hassio_ingress/abc/").read().decode()
-assert "SW-Spei" in page and "aquarea_hpm_debug.zip" in page, page[:500]
+assert "SW-Spei" in page and "aquarea_hpm_debug.zip" in page and "Scan finished" in page, page[:800]
 data = urllib.request.urlopen("http://127.0.0.1:18100/api/hassio_ingress/abc/aquarea_hpm_debug.zip").read()
 names = zipfile.ZipFile(io.BytesIO(data)).namelist()
 assert "log.txt" in names and "values.tsv" in names and any(n.startswith("pages/editor_") for n in names), names

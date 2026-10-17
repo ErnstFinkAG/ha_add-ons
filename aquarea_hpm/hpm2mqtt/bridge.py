@@ -39,6 +39,7 @@ def slug(text: str) -> str:
 class Bridge:
     def __init__(self, options: dict, mqtt_conf: dict):
         self.opt = options
+        self.scan_status = "Waiting for the first scan"
         self.client = HpmClient(options["host"], options.get("username", ""), options.get("password", ""),
                                 request_delay=float(options.get("request_delay", 0.3)),
                                 session_file=options.get("session_file", "/data/hpm_session"),
@@ -210,7 +211,15 @@ class Bridge:
         if self.dump_dir is not None and self.dump_dir.is_dir():
             for old in self.dump_dir.glob("*.html"):  # pages from earlier scans/versions would be misleading
                 old.unlink(missing_ok=True)
-        self.client.on_page = lambda key, html: self._dump(f"page_{key}", html)
+        seen = [0]
+
+        def on_page(key, html):
+            seen[0] += 1
+            self.scan_status = f"Scan running: {seen[0]} pages read so far (wait for it to finish before downloading the zip)"
+            self._dump(f"page_{key}", html)
+
+        self.scan_status = "Scan running"
+        self.client.on_page = on_page
         extra = list(self.opt.get("extra_pages", []) or [])
         max_pages = int(self.opt.get("max_pages", 150))
         pages = self.client.crawl(max_pages, tuple(extra))
@@ -268,6 +277,7 @@ class Bridge:
         _LOGGER.info("Found %d values on %d pages, %d of them controllable", len(points), len(self.pages), len(editors))
         self.publish_discovery()
         self.publish_states(force=True)
+        self.scan_status = f"Scan finished {time.strftime('%H:%M')}: {seen[0]} pages read, {len(points)} values"
 
     # -- states ------------------------------------------------------------------------
     def publish_states(self, force: bool = False):

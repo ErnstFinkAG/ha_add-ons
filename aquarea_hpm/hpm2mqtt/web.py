@@ -75,12 +75,14 @@ def start(bridge, log_buffer: LogBuffer, port: int = 8099):
             note = (f"{pages} saved HPM pages are included." if bridge.dump_dir is not None
                     else "Turn on <b>dump_html</b> in the add-on options and restart to include the raw HPM pages.")
             return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+{'<meta http-equiv="refresh" content="5">' if bridge.scan_status.startswith("Scan running") else ''}
 <title>Aquarea HPM Bridge</title><style>
 body{{font-family:system-ui,sans-serif;margin:16px;color:#1c1c1c;background:#fafafa}}
 a.btn{{display:inline-block;padding:10px 16px;background:#03a9f4;color:#fff;border-radius:6px;text-decoration:none}}
 table{{border-collapse:collapse;width:100%;margin-top:16px;font-size:14px}}td,th{{border-bottom:1px solid #ddd;padding:6px;text-align:left}}
 @media (prefers-color-scheme:dark){{body{{background:#111;color:#e1e1e1}}td,th{{border-color:#333}}}}
 </style></head><body><h2>Aquarea HPM Bridge</h2>
+<p><b>{html.escape(bridge.scan_status)}</b></p>
 <p>{len(bridge.points)} values, {len(bridge.editors)} controllable. {note}</p>
 <p><a class="btn" href="aquarea_hpm_debug.zip">Download debug zip</a> (log, value list, saved pages)</p>
 <table><tr><th>Page</th><th>Name</th><th>Value</th><th>Control</th><th>HPM id</th></tr>{rows}</table></body></html>"""
