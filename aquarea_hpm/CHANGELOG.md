@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2
+
+- Each scan starts with an empty debug page folder, so the debug zip only holds pages from
+  the current version (an old copy of the WEB menu page with login codes was still in it).
+
 ## 0.4.1
 
 - Reads the values on the WEB-FB parameter menus (rows like `Reglertemp   31 °C`), using
