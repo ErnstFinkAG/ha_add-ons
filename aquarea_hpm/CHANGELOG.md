@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.5
+
+- When the HPM shows an unexpected page while the add-on moves through the menus, the log
+  now says what that page contains (for example the main menu, a "busy" notice or a code
+  prompt) instead of only `got ()`. This makes failed menu writes possible to diagnose.
+
 ## 0.5.4
 
 - During a full scan the read-only values now appear in Home Assistant as soon as all pages

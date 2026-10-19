@@ -386,6 +386,13 @@ def menu_number(html: str) -> tuple:
     return tuple(int(n) for n in match.group(2).strip(".").split(".")) if match else ()
 
 
+def _page_hint(html: str, length: int = 160) -> str:
+    """The start of a page's visible text, to tell in the log what the HPM showed instead."""
+    soup = BeautifulSoup(html, "html.parser")
+    pane = soup.select_one("#mainpane") or soup.body or soup
+    return _clean(pane.get_text(" "))[:length]
+
+
 def _menu_row_value(text: str):
     """Split a menu row like 'Reglertemp     31 °C' into (label, value, unit, decimals, raw)."""
     text = text.replace("\xa0", " ").strip("\r\n")
@@ -710,7 +717,8 @@ class HpmClient:
             if check:
                 now = menu_number(html)
                 if len(now) != depth + 1 or now[:-1] != before:
-                    raise HpmError(f"expected a sub-menu of {before}, got {now}")
+                    raise HpmError(f"expected a sub-menu of {before}, got {now or 'a page without menu number'}: "
+                                   f"{_page_hint(html)!r}")
             self._menu_pos, self._menu_page = path[:depth + 1], html
         return html
 
