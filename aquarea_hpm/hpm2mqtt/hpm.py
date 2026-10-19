@@ -561,6 +561,7 @@ class HpmClient:
                     url, html = self._request("GET", f"v0.rsp?sessionid={stored}")
                     if not self._needs_login(html) and "sorry.rsp" not in url and stored in html:
                         _LOGGER.info("Re-using HPM session %s", stored)
+                        self._unlock(html)
                         return url, html
                 except requests.RequestException:
                     pass
@@ -578,9 +579,22 @@ class HpmClient:
             if self.sessionid is None:
                 raise HpmError(f"No session id found on {url}")
             _LOGGER.info("Connected to HPM at %s (session %s)", self.base, self.sessionid)
-            if self.code_entry_key and self.access_code:
-                self._enter_access_code(self.code_entry_key)  # a new session starts locked again
+            self._unlock(html)  # a new session starts locked again
             return url, html
+
+    def _unlock(self, start_html: str):
+        """Enter access_code in the current session. After a restart from the scan cache no page
+        has been crawled yet, so the code entry button is looked up on the start page or WEB-FB."""
+        if not self.access_code:
+            return
+        key = self.code_entry_key or parse_page(start_html, "v0.rsp").code_entry
+        if key is None:
+            _, html = self._request("GET", self._with_session("webfb.rsp"))
+            key = parse_page(html, "webfb.rsp").code_entry
+        if key is None:
+            _LOGGER.warning("No access code entry found on the HPM; menus behind the code stay locked")
+            return
+        self._enter_access_code(key)
 
     def get(self, key: str) -> str:
         """Fetch a page by its key, (re)creating the session when needed."""

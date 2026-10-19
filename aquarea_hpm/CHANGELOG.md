@@ -2,6 +2,10 @@
 
 ## 0.5.5
 
+- Fix: after a restart that reused the last scan (0.5.3), the add-on no longer entered the
+  `access_code` on the HPM. The menus then looked different from the scan, so menu values
+  could not be read and every menu setting failed with `expected a sub-menu of …, got ()`.
+  The code is now entered on every new or reused HPM session.
 - When the HPM shows an unexpected page while the add-on moves through the menus, the log
   now says what that page contains (for example the main menu, a "busy" notice or a code
   prompt) instead of only `got ()`. This makes failed menu writes possible to diagnose.
