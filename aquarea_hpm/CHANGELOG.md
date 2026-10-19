@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.6
+
+- Menus are now found by their name instead of only by their position. The HPM numbers its
+  sub-menus by position and hides some of them depending on settings (for example the Quiet
+  week programme) and access level. When an entry appeared or disappeared, the positions
+  from the scan opened the wrong menu, and reading and changing settings failed with
+  `expected a sub-menu of …`.
+
 ## 0.5.5
 
 - Fix: after a restart that reused the last scan (0.5.3), the add-on no longer entered the
