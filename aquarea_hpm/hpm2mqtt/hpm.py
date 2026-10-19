@@ -699,7 +699,10 @@ class HpmClient:
 
     def _menu_reset(self) -> str:
         self._menu_pos = None
-        self._request("GET", self._with_session("webfb.rsp"))
+        _, start = self._request("GET", self._with_session("webfb.rsp"))
+        # The HPM drops back to the locked level after a while; without the code it hides menu
+        # entries, so the branch numbers from the scan would open the wrong menus.
+        self._unlock(start)
         html = self._menu_step(1, 0)  # Hauptmenü
         self._menu_pos, self._menu_page = (), html
         return html
