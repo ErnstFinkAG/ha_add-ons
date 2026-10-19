@@ -386,6 +386,13 @@ def menu_number(html: str) -> tuple:
     return tuple(int(n) for n in match.group(2).strip(".").split(".")) if match else ()
 
 
+def _page_hint(html: str, length: int = 160) -> str:
+    """The start of a page's visible text, to tell in the log what the HPM showed instead."""
+    soup = BeautifulSoup(html, "html.parser")
+    pane = soup.select_one("#mainpane") or soup.body or soup
+    return _clean(pane.get_text(" "))[:length]
+
+
 def _menu_row_value(text: str):
     """Split a menu row like 'Reglertemp     31 °C' into (label, value, unit, decimals, raw)."""
     text = text.replace("\xa0", " ").strip("\r\n")
@@ -554,6 +561,7 @@ class HpmClient:
                     url, html = self._request("GET", f"v0.rsp?sessionid={stored}")
                     if not self._needs_login(html) and "sorry.rsp" not in url and stored in html:
                         _LOGGER.info("Re-using HPM session %s", stored)
+                        self._unlock(html)
                         return url, html
                 except requests.RequestException:
                     pass
@@ -571,9 +579,22 @@ class HpmClient:
             if self.sessionid is None:
                 raise HpmError(f"No session id found on {url}")
             _LOGGER.info("Connected to HPM at %s (session %s)", self.base, self.sessionid)
-            if self.code_entry_key and self.access_code:
-                self._enter_access_code(self.code_entry_key)  # a new session starts locked again
+            self._unlock(html)  # a new session starts locked again
             return url, html
+
+    def _unlock(self, start_html: str):
+        """Enter access_code in the current session. After a restart from the scan cache no page
+        has been crawled yet, so the code entry button is looked up on the start page or WEB-FB."""
+        if not self.access_code:
+            return
+        key = self.code_entry_key or parse_page(start_html, "v0.rsp").code_entry
+        if key is None:
+            _, html = self._request("GET", self._with_session("webfb.rsp"))
+            key = parse_page(html, "webfb.rsp").code_entry
+        if key is None:
+            _LOGGER.warning("No access code entry found on the HPM; menus behind the code stay locked")
+            return
+        self._enter_access_code(key)
 
     def get(self, key: str) -> str:
         """Fetch a page by its key, (re)creating the session when needed."""
@@ -678,7 +699,10 @@ class HpmClient:
 
     def _menu_reset(self) -> str:
         self._menu_pos = None
-        self._request("GET", self._with_session("webfb.rsp"))
+        _, start = self._request("GET", self._with_session("webfb.rsp"))
+        # The HPM drops back to the locked level after a while; without the code it hides menu
+        # entries, so the branch numbers from the scan would open the wrong menus.
+        self._unlock(start)
         html = self._menu_step(1, 0)  # Hauptmenü
         self._menu_pos, self._menu_page = (), html
         return html
@@ -710,7 +734,8 @@ class HpmClient:
             if check:
                 now = menu_number(html)
                 if len(now) != depth + 1 or now[:-1] != before:
-                    raise HpmError(f"expected a sub-menu of {before}, got {now}")
+                    raise HpmError(f"expected a sub-menu of {before}, got {now or 'a page without menu number'}: "
+                                   f"{_page_hint(html)!r}")
             self._menu_pos, self._menu_page = path[:depth + 1], html
         return html
 

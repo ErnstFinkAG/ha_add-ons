@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.5
+
+- Fix: after a restart that reused the last scan (0.5.3), the add-on no longer entered the
+  `access_code` on the HPM. The menus then looked different from the scan, so menu values
+  could not be read and every menu setting failed with `expected a sub-menu of …, got ()`.
+  The code is now entered on every new or reused HPM session.
+- Fix: the HPM drops back to the locked level after a while, even within one session. The
+  add-on now enters the code again every time it starts from the main menu (also on the
+  retry after a failed menu step), so menu settings keep working after the scan.
+- When the HPM shows an unexpected page while the add-on moves through the menus, the log
+  now says what that page contains (for example the main menu, a "busy" notice or a code
+  prompt) instead of only `got ()`. This makes failed menu writes possible to diagnose.
+
 ## 0.5.4
 
 - During a full scan the read-only values now appear in Home Assistant as soon as all pages
