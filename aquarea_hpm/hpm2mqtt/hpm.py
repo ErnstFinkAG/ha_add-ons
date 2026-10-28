@@ -730,7 +730,7 @@ class HpmClient:
             self._menu_pos, self._menu_page = pos, html
         for depth in range(common, len(path)):
             before = menu_number(html)
-            html = self._menu_step(path[depth], depth + 1)
+            html = self._menu_step(self._branch(html, path[depth], names[depth] if len(names) == len(path) else ""), depth + 1)
             if check:
                 now = menu_number(html)
                 if len(now) != depth + 1 or now[:-1] != before:
@@ -738,6 +738,19 @@ class HpmClient:
                                    f"{_page_hint(html)!r}")
             self._menu_pos, self._menu_page = path[:depth + 1], html
         return html
+
+    def _branch(self, html: str, branchnr: int, name: str) -> int:
+        """The branch number of sub-menu ``name`` on the current menu page.
+
+        The HPM numbers sub-menus by position and hides some depending on settings and access
+        level, so the number found during the scan can point to another menu later on."""
+        if name:
+            found = [b for b, text in self.menu_children(html) if text == name]
+            if len(found) == 1:
+                if found[0] != branchnr:
+                    _LOGGER.debug("Menu %s moved from branch %d to %d", name, branchnr, found[0])
+                return found[0]
+        return branchnr
 
     def get_menu(self, path: tuple, names: tuple = ()) -> str:
         """Fetch the menu page at ``path`` (branch numbers from the main menu).
