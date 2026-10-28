@@ -61,6 +61,16 @@ A Home Assistant Add-on for publishing WH65LP weather station data (via RS485/TC
 
 The add-on publishes `online`/`offline` on `<mqtt_prefix>/status`. Entities become unavailable when no valid frame arrives for 60 seconds.
 
+## Troubleshooting timeouts
+
+`No valid frame for 60s` means the TCP connection to the gateway is up but no complete WH65LP frame arrived. The warning lists what came in since the last frame:
+
+- **0 bytes received**: the station sent nothing, or the gateway did not forward it. Set the gateway to transparent TCP server mode (not Modbus TCP to RTU), allow only this client, and check the station power and A/B wiring.
+- **CRC or checksum errors**: bytes arrive but are corrupted. Check the serial settings (9600 baud, 8N1, no flow control), the RS485 termination and the ground between station and gateway.
+- **bytes skipped, no errors**: the data contains no WH65LP frames; the serial settings are likely wrong.
+
+With `log_level: debug` every rejected frame is logged in hex.
+
 ## WH65LP information
 
 - Weatherstation sends Datapacket every 16 seconds.
