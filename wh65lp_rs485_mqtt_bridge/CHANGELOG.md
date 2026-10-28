@@ -2,7 +2,8 @@ WH65LP RS485 to MQTT Bridge - Change Log
 ========================================
 
 ## 1.2.7 - 2026-10-28
-- Fix the timeouts: the RS485 gateway inserts a 0x00 after every 0xFA byte, so every frame that contained 0xFA (for example at 10.6 °C) failed the CRC and was dropped, for as long as that value stayed the same. Such frames are now repaired and published. The timeout warning counts them as "frames repaired".
+- Fix the timeouts: the RS485 gateway inserts a 0x00 after every 0xFA byte, so every frame that contained 0xFA (for example at 10.6 °C) failed the CRC and was dropped, for as long as that value stayed the same. The inserted bytes are now removed from the stream as it arrives, before frames are parsed.
+- New option `fa_escape` (default on). Turn it off if your gateway does not insert 0x00 after 0xFA.
 
 ## 1.2.6 - 2026-10-28
 - Timeouts: when no valid frame arrives for 60 s, the log now says how many bytes arrived since the last frame and how many failed the CRC or checksum, with a hint whether the gateway sends nothing or the serial data is corrupted.

@@ -15,7 +15,7 @@ CONFIG_PATH = "/data/options.json"
 WH65LP_PAYLOAD_LEN = 21
 WH65LP_CORE_LEN = 17  # sensor data incl. CRC and sum, without the pressure block
 WH65LP_START_BYTE = 0x24
-STUFFED_BYTE = 0xFA  # some gateways send 0xFA as 0xFA 0x00
+ESCAPED_BYTE = 0xFA  # the gateway sends 0xFA as 0xFA 0x00 (option fa_escape)
 
 # The station sends a frame every ~16 s. Mark the device unavailable after
 # STALE_AFTER seconds without a valid frame and reconnect after RECONNECT_AFTER.
@@ -169,7 +169,7 @@ def decode_wh65lp_payload(p: bytes) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
 
 
 def new_stats() -> Dict[str, int]:
-    return {"bytes": 0, "frames": 0, "skipped": 0, "crc": 0, "checksum": 0, "no_pressure": 0, "unstuffed": 0}
+    return {"bytes": 0, "frames": 0, "skipped": 0, "crc": 0, "checksum": 0, "no_pressure": 0, "escapes": 0}
 
 
 def format_stats(stats: Dict[str, int]) -> str:
@@ -177,26 +177,31 @@ def format_stats(stats: Dict[str, int]) -> str:
         f"{stats['bytes']} bytes received, {stats['frames']} valid frames, "
         f"{stats['crc']} CRC errors, {stats['checksum']} checksum errors, "
         f"{stats['no_pressure']} frames without valid pressure, "
-        f"{stats['unstuffed']} frames repaired (0xFA 0x00), {stats['skipped']} bytes skipped"
+        f"{stats['escapes']} gateway 0x00 after 0xFA removed, {stats['skipped']} bytes skipped"
     )
 
 
-def unstuff(buffer: bytearray, length: int) -> Tuple[bytes, list]:
-    """Read up to length bytes from buffer, dropping a 0x00 that follows 0xFA.
+class GatewayUnescaper:
+    """Remove the 0x00 the gateway inserts after every 0xFA byte, as data arrives.
 
-    Some RS485 gateways insert 0x00 after every 0xFA byte they forward. Returns
-    the cleaned bytes and, for each of them, how many raw bytes it ends at.
+    State is kept across recv() chunks, so a 0xFA at the end of one chunk and
+    its 0x00 at the start of the next are handled too.
     """
-    out = bytearray()
-    ends = []
-    i = 0
-    while i < len(buffer) and len(out) < length:
-        out.append(buffer[i])
-        i += 1
-        if buffer[i - 1] == STUFFED_BYTE and i < len(buffer) and buffer[i] == 0x00:
-            i += 1
-        ends.append(i)
-    return bytes(out), ends
+
+    def __init__(self, stats: Dict[str, int]):
+        self.after_fa = False
+        self.stats = stats
+
+    def feed(self, chunk: bytes) -> bytes:
+        out = bytearray()
+        for b in chunk:
+            if self.after_fa and b == 0x00:
+                self.after_fa = False
+                self.stats["escapes"] += 1
+                continue
+            out.append(b)
+            self.after_fa = b == ESCAPED_BYTE
+        return bytes(out)
 
 
 def extract_wh65lp_payloads(buffer: bytearray, stats: Optional[Dict[str, int]] = None):
@@ -206,9 +211,6 @@ def extract_wh65lp_payloads(buffer: bytearray, stats: Optional[Dict[str, int]] =
     4 bytes of pressure with their own checksum. When the pressure block is
     invalid, only the 17 checked bytes are consumed, so a short or corrupted
     pressure block does not swallow the start of the next frame.
-
-    A frame that fails as received is tried again with the gateway's 0xFA 0x00
-    stuffing removed (see unstuff).
     """
     if stats is None:
         stats = new_stats()
@@ -228,36 +230,21 @@ def extract_wh65lp_payloads(buffer: bytearray, stats: Optional[Dict[str, int]] =
             return
 
         payload = bytes(buffer[:WH65LP_PAYLOAD_LEN])
-        ends = list(range(1, WH65LP_PAYLOAD_LEN + 1))
 
         try:
             decoded = decode_wh65lp_payload(payload)
         except FrameError as e:
-            cleaned, cleaned_ends = unstuff(buffer, WH65LP_PAYLOAD_LEN)
-            if cleaned == payload:
-                decoded = None
-            elif len(cleaned) < WH65LP_PAYLOAD_LEN:
-                # Stuffing made the frame longer than what has arrived so far.
-                return
-            else:
-                try:
-                    decoded = decode_wh65lp_payload(cleaned)
-                    payload, ends = cleaned, cleaned_ends
-                    stats["unstuffed"] += 1
-                except FrameError:
-                    decoded = None
-            if decoded is None:
-                stats[e.reason] = stats.get(e.reason, 0) + 1
-                logging.debug(f"Rejected frame {payload.hex(' ')}: {e}")
-                stats["skipped"] += 1
-                del buffer[0:1]
-                continue
+            stats[e.reason] = stats.get(e.reason, 0) + 1
+            logging.debug(f"Rejected frame {payload.hex(' ')}: {e}")
+            stats["skipped"] += 1
+            del buffer[0:1]
+            continue
 
         stats["frames"] += 1
         if pressure_valid(payload):
-            consumed = ends[WH65LP_PAYLOAD_LEN - 1]
+            consumed = WH65LP_PAYLOAD_LEN
         else:
-            consumed = ends[WH65LP_CORE_LEN - 1]
+            consumed = WH65LP_CORE_LEN
             stats["no_pressure"] += 1
             logging.debug(f"Frame without valid pressure block: {payload.hex(' ')}")
         yield decoded
@@ -346,6 +333,7 @@ def main():
     DISCOVERY_PREFIX = (config.get("discovery_prefix") or "homeassistant").rstrip("/")
     WS_HOST = config["ws_host"]
     WS_PORT = int(config["ws_port"])
+    FA_ESCAPE = bool(config.get("fa_escape", True))
     UNIQUE_PREFIX = (config.get("unique_prefix") or "").strip()
 
     if not UNIQUE_PREFIX:
@@ -433,6 +421,7 @@ def main():
                     buffer.clear()
                     last_frame = time.monotonic()
                     stats = new_stats()
+                    unescaper = GatewayUnescaper(stats) if FA_ESCAPE else None
                     # Counters at the last valid frame, to report what arrived since then.
                     at_last_frame = dict(stats)
                     reported_gap = False
@@ -443,7 +432,7 @@ def main():
                             if not chunk:
                                 raise ConnectionError("Connection closed by peer")
                             stats["bytes"] += len(chunk)
-                            buffer.extend(chunk)
+                            buffer.extend(unescaper.feed(chunk) if unescaper else chunk)
                         except socket.timeout:
                             pass
 

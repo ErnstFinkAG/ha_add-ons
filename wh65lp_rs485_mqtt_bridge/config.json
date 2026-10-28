@@ -17,6 +17,7 @@
     "unique_prefix": "weatherstation1",
     "ws_host": "192.168.1.100",
     "ws_port": 502,
+    "fa_escape": true,
     "log_level": "info"
   },
   "schema": {
@@ -29,6 +30,7 @@
     "unique_prefix": "str",
     "ws_host": "str",
     "ws_port": "port",
-    "log_level": "list(debug|info|warning|error)?"
+    "log_level": "list(debug|info|warning|error)?",
+    "fa_escape": "bool?"
   }
 }
