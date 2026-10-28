@@ -32,6 +32,7 @@ A Home Assistant Add-on for publishing WH65LP weather station data (via RS485/TC
      - `discovery_prefix`: Usually **set to `homeassistant`** for Home Assistant MQTT Discovery.
      - `unique_prefix`: Must be set! Used as entity and unique ID prefix (e.g. `myweatherstation1`).
      - `ws_host`, `ws_port`: IP/port of your WH65LP station (or RS485 gateway).
+     - `fa_escape`: on by default; removes the `00` some RS485 gateways insert after every `FA` byte.
      - `log_level`: `info` by default; `debug` logs every decoded frame.
 
 4. **Start the add-on.**
@@ -55,6 +56,7 @@ A Home Assistant Add-on for publishing WH65LP weather station data (via RS485/TC
   "unique_prefix": "weatherstation1",
   "ws_host": "192.168.1.100",
   "ws_port": 502,
+  "fa_escape": true,
   "log_level": "info"
 }
 ```
@@ -68,6 +70,8 @@ The add-on publishes `online`/`offline` on `<mqtt_prefix>/status`. Entities beco
 - **0 bytes received**: the station sent nothing, or the gateway did not forward it. Set the gateway to transparent TCP server mode (not Modbus TCP to RTU), allow only this client, and check the station power and A/B wiring.
 - **CRC or checksum errors**: bytes arrive but are corrupted. Check the serial settings (9600 baud, 8N1, no flow control), the RS485 termination and the ground between station and gateway.
 - **bytes skipped, no errors**: the data contains no WH65LP frames; the serial settings are likely wrong.
+
+- **gateway 0x00 after 0xFA removed**: the gateway inserts `00` after every `FA` byte, and `fa_escape` (on by default) removes it. If you use a gateway that does not do this, turn `fa_escape` off, otherwise a real `FA 00` in the data would be cut.
 
 With `log_level: debug` every rejected frame is logged in hex.
 
