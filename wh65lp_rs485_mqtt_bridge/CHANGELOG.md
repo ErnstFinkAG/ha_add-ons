@@ -1,6 +1,12 @@
 WH65LP RS485 to MQTT Bridge - Change Log
 ========================================
 
+## 1.2.6 - 2026-10-28
+- Timeouts: when no valid frame arrives for 60 s, the log now says how many bytes arrived since the last frame and how many failed the CRC or checksum, with a hint whether the gateway sends nothing or the serial data is corrupted.
+- Frames whose 4-byte pressure block is missing or corrupted are no longer dropped: the other values are published and pressure keeps its last value. Only the 17 checked bytes are consumed, so the next frame is not lost either.
+- TCP keepalive on the gateway connection, so a dead connection is detected by the OS.
+- `log_level: debug` logs every rejected frame in hex.
+
 ## 1.2.5 - 2026-10-15
 - Fix wind speed above 16.3 m/s: read the 9th bit (byte 3, bit 4).
 - MQTT: retry until the broker is reachable instead of exiting at startup.

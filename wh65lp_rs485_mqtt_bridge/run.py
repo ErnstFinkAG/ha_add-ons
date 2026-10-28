@@ -13,6 +13,7 @@ import paho.mqtt.client as mqtt
 CONFIG_PATH = "/data/options.json"
 
 WH65LP_PAYLOAD_LEN = 21
+WH65LP_CORE_LEN = 17  # sensor data incl. CRC and sum, without the pressure block
 WH65LP_START_BYTE = 0x24
 
 # The station sends a frame every ~16 s. Mark the device unavailable after
@@ -84,29 +85,40 @@ def uv_index(uv_raw: int) -> int:
     return index
 
 
-def decode_wh65lp_payload(p: bytes) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
-    if len(p) != WH65LP_PAYLOAD_LEN:
-        raise ValueError(f"Expected {WH65LP_PAYLOAD_LEN} bytes, got {len(p)}")
+class FrameError(ValueError):
+    """A candidate frame failed validation; reason is a short key for the statistics."""
+
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
+
+
+def check_core(p: bytes):
+    """Validate the 17-byte sensor part (family byte, CRC-8, sum)."""
+    if len(p) < WH65LP_CORE_LEN:
+        raise FrameError("short", f"Expected at least {WH65LP_CORE_LEN} bytes, got {len(p)}")
     if p[0] != WH65LP_START_BYTE:
-        raise ValueError(f"Payload does not start with 0x24: got 0x{p[0]:02X}")
+        raise FrameError("start", f"Payload does not start with 0x24: got 0x{p[0]:02X}")
 
     crc_expected = p[15]
     crc_calc = crc8_poly31_msb(p[:15])
     if crc_calc != crc_expected:
-        raise ValueError(f"CRC mismatch: calc=0x{crc_calc:02X} expected=0x{crc_expected:02X}")
+        raise FrameError("crc", f"CRC mismatch: calc=0x{crc_calc:02X} expected=0x{crc_expected:02X}")
 
     checksum_expected = p[16]
     checksum_calc = sum(p[:16]) & 0xFF
     if checksum_calc != checksum_expected:
-        raise ValueError(f"Checksum mismatch: calc=0x{checksum_calc:02X} expected=0x{checksum_expected:02X}")
+        raise FrameError("checksum", f"Checksum mismatch: calc=0x{checksum_calc:02X} expected=0x{checksum_expected:02X}")
 
-    pressure_checksum_expected = p[20]
-    pressure_checksum_calc = (p[17] + p[18] + p[19]) & 0xFF
-    if pressure_checksum_calc != pressure_checksum_expected:
-        raise ValueError(
-            f"Pressure checksum mismatch: calc=0x{pressure_checksum_calc:02X} "
-            f"expected=0x{pressure_checksum_expected:02X}"
-        )
+
+def pressure_valid(p: bytes) -> bool:
+    return len(p) >= WH65LP_PAYLOAD_LEN and (p[17] + p[18] + p[19]) & 0xFF == p[20]
+
+
+def decode_wh65lp_payload(p: bytes) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
+    """Decode a frame. pressure_hpa is left out when its 4-byte block is missing or invalid."""
+    check_core(p)
+    has_pressure = pressure_valid(p)
 
     temperature: Dict[str, Optional[float]] = {}
     wind: Dict[str, Optional[float]] = {}
@@ -146,25 +158,47 @@ def decode_wh65lp_payload(p: bytes) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
     light_raw = (p[12] << 16) | (p[13] << 8) | p[14]
     sun["light_lux"] = round(light_raw / 10.0, 1) if light_raw != 0xFFFFFF else None
 
-    pressure_raw = (p[17] << 16) | (p[18] << 8) | p[19]
-    sun["pressure_hpa"] = round(pressure_raw / 100.0, 2) if pressure_raw != 0xFFFFFF else None
+    if has_pressure:
+        pressure_raw = (p[17] << 16) | (p[18] << 8) | p[19]
+        sun["pressure_hpa"] = round(pressure_raw / 100.0, 2) if pressure_raw != 0xFFFFFF else None
 
     debug["low_battery"] = int(low_battery)
 
     return temperature, wind, sun, rain, debug
 
 
-def extract_wh65lp_payloads(buffer: bytearray):
-    """Yield decoded frames found in buffer, consuming them."""
+def new_stats() -> Dict[str, int]:
+    return {"bytes": 0, "frames": 0, "skipped": 0, "crc": 0, "checksum": 0, "no_pressure": 0}
+
+
+def format_stats(stats: Dict[str, int]) -> str:
+    return (
+        f"{stats['bytes']} bytes received, {stats['frames']} valid frames, "
+        f"{stats['crc']} CRC errors, {stats['checksum']} checksum errors, "
+        f"{stats['no_pressure']} frames without valid pressure, {stats['skipped']} bytes skipped"
+    )
+
+
+def extract_wh65lp_payloads(buffer: bytearray, stats: Optional[Dict[str, int]] = None):
+    """Yield decoded frames found in buffer, consuming them.
+
+    A frame is 21 bytes: 17 bytes of sensor data checked by CRC-8 and sum, then
+    4 bytes of pressure with their own checksum. When the pressure block is
+    invalid, only the 17 checked bytes are consumed, so a short or corrupted
+    pressure block does not swallow the start of the next frame.
+    """
+    if stats is None:
+        stats = new_stats()
     while True:
         try:
             start = buffer.index(WH65LP_START_BYTE)
         except ValueError:
-            if len(buffer) > 4096:
-                del buffer[:-64]
+            stats["skipped"] += len(buffer)
+            buffer.clear()
             return
 
         if start > 0:
+            stats["skipped"] += start
             del buffer[:start]
 
         if len(buffer) < WH65LP_PAYLOAD_LEN:
@@ -174,12 +208,49 @@ def extract_wh65lp_payloads(buffer: bytearray):
 
         try:
             decoded = decode_wh65lp_payload(payload)
-        except Exception:
+        except FrameError as e:
+            stats[e.reason] = stats.get(e.reason, 0) + 1
+            logging.debug(f"Rejected frame {payload.hex(' ')}: {e}")
+            stats["skipped"] += 1
             del buffer[0:1]
             continue
 
+        stats["frames"] += 1
+        if pressure_valid(payload):
+            consumed = WH65LP_PAYLOAD_LEN
+        else:
+            consumed = WH65LP_CORE_LEN
+            stats["no_pressure"] += 1
+            logging.debug(f"Frame without valid pressure block: {payload.hex(' ')}")
         yield decoded
-        del buffer[:WH65LP_PAYLOAD_LEN]
+        del buffer[:consumed]
+
+
+def stats_since(stats: Dict[str, int], earlier: Dict[str, int]) -> Dict[str, int]:
+    return {k: stats[k] - earlier.get(k, 0) for k in stats}
+
+
+def explain_gap(delta: Dict[str, int]) -> str:
+    """One-line hint on where the frames got lost, from the counters of a gap."""
+    if delta["bytes"] == 0:
+        return (
+            "Nothing arrived from the gateway: the station is not sending, or the "
+            "gateway is not forwarding serial data on this TCP connection."
+        )
+    if delta["crc"] or delta["checksum"]:
+        return (
+            "Data arrives but fails the checksum: check baud rate (9600 8N1), "
+            "RS485 wiring, termination and grounding."
+        )
+    return "Data arrives but contains no WH65LP frame (0x24): check the gateway mode and serial settings."
+
+
+def enable_keepalive(sock: socket.socket):
+    """Let the OS detect a dead gateway connection instead of waiting on a silent socket."""
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    for name, value in (("TCP_KEEPIDLE", 30), ("TCP_KEEPINTVL", 10), ("TCP_KEEPCNT", 3)):
+        if hasattr(socket, name):
+            sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, name), value)
 
 
 def build_discovery(discovery_prefix: str, unique_prefix: str, mqtt_prefix: str, availability_topic: str):
@@ -318,22 +389,30 @@ def main():
                 logging.info(f"Connecting to {WS_HOST}:{WS_PORT} ...")
                 with socket.create_connection((WS_HOST, WS_PORT), timeout=15) as s:
                     s.settimeout(5)
+                    enable_keepalive(s)
                     logging.info("Connected. Listening for WH65LP payloads.")
                     backoff = 1.0
                     buffer.clear()
                     last_frame = time.monotonic()
+                    stats = new_stats()
+                    # Counters at the last valid frame, to report what arrived since then.
+                    at_last_frame = dict(stats)
+                    reported_gap = False
 
                     while True:
                         try:
                             chunk = s.recv(4096)
                             if not chunk:
                                 raise ConnectionError("Connection closed by peer")
+                            stats["bytes"] += len(chunk)
                             buffer.extend(chunk)
                         except socket.timeout:
                             pass
 
-                        for temp, wind, sun, rain, debug in extract_wh65lp_payloads(buffer):
+                        for temp, wind, sun, rain, debug in extract_wh65lp_payloads(buffer, stats):
                             last_frame = time.monotonic()
+                            at_last_frame = dict(stats)
+                            reported_gap = False
 
                             mqtt_publish("temperature_C", temp.get("temperature_C"))
                             mqtt_publish("humidity_percent", temp.get("humidity_percent"))
@@ -344,7 +423,8 @@ def main():
                             mqtt_publish("uv_uW_cm2", sun.get("uv_uW_cm2"))
                             mqtt_publish("uv_index", sun.get("uv_index"))
                             mqtt_publish("light_lux", sun.get("light_lux"))
-                            mqtt_publish("pressure_hpa", sun.get("pressure_hpa"))
+                            if "pressure_hpa" in sun:
+                                mqtt_publish("pressure_hpa", sun["pressure_hpa"])
                             mqtt_publish("low_battery", debug.get("low_battery"))
                             set_available(True)
 
@@ -367,8 +447,18 @@ def main():
                         silent = time.monotonic() - last_frame
                         if silent > STALE_AFTER:
                             set_available(False)
+                            if not reported_gap:
+                                reported_gap = True
+                                logging.warning(
+                                    f"No valid frame for {int(silent)}s; since the last frame: "
+                                    f"{format_stats(stats_since(stats, at_last_frame))}. "
+                                    + explain_gap(stats_since(stats, at_last_frame))
+                                )
                         if silent > RECONNECT_AFTER:
-                            raise TimeoutError(f"No valid frame for {int(silent)}s")
+                            raise TimeoutError(
+                                f"No valid frame for {int(silent)}s "
+                                f"({format_stats(stats_since(stats, at_last_frame))})"
+                            )
 
             except (SystemExit, KeyboardInterrupt):
                 raise
