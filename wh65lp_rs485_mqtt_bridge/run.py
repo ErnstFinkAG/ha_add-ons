@@ -15,6 +15,7 @@ CONFIG_PATH = "/data/options.json"
 WH65LP_PAYLOAD_LEN = 21
 WH65LP_CORE_LEN = 17  # sensor data incl. CRC and sum, without the pressure block
 WH65LP_START_BYTE = 0x24
+STUFFED_BYTE = 0xFA  # some gateways send 0xFA as 0xFA 0x00
 
 # The station sends a frame every ~16 s. Mark the device unavailable after
 # STALE_AFTER seconds without a valid frame and reconnect after RECONNECT_AFTER.
@@ -168,15 +169,34 @@ def decode_wh65lp_payload(p: bytes) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
 
 
 def new_stats() -> Dict[str, int]:
-    return {"bytes": 0, "frames": 0, "skipped": 0, "crc": 0, "checksum": 0, "no_pressure": 0}
+    return {"bytes": 0, "frames": 0, "skipped": 0, "crc": 0, "checksum": 0, "no_pressure": 0, "unstuffed": 0}
 
 
 def format_stats(stats: Dict[str, int]) -> str:
     return (
         f"{stats['bytes']} bytes received, {stats['frames']} valid frames, "
         f"{stats['crc']} CRC errors, {stats['checksum']} checksum errors, "
-        f"{stats['no_pressure']} frames without valid pressure, {stats['skipped']} bytes skipped"
+        f"{stats['no_pressure']} frames without valid pressure, "
+        f"{stats['unstuffed']} frames repaired (0xFA 0x00), {stats['skipped']} bytes skipped"
     )
+
+
+def unstuff(buffer: bytearray, length: int) -> Tuple[bytes, list]:
+    """Read up to length bytes from buffer, dropping a 0x00 that follows 0xFA.
+
+    Some RS485 gateways insert 0x00 after every 0xFA byte they forward. Returns
+    the cleaned bytes and, for each of them, how many raw bytes it ends at.
+    """
+    out = bytearray()
+    ends = []
+    i = 0
+    while i < len(buffer) and len(out) < length:
+        out.append(buffer[i])
+        i += 1
+        if buffer[i - 1] == STUFFED_BYTE and i < len(buffer) and buffer[i] == 0x00:
+            i += 1
+        ends.append(i)
+    return bytes(out), ends
 
 
 def extract_wh65lp_payloads(buffer: bytearray, stats: Optional[Dict[str, int]] = None):
@@ -186,6 +206,9 @@ def extract_wh65lp_payloads(buffer: bytearray, stats: Optional[Dict[str, int]] =
     4 bytes of pressure with their own checksum. When the pressure block is
     invalid, only the 17 checked bytes are consumed, so a short or corrupted
     pressure block does not swallow the start of the next frame.
+
+    A frame that fails as received is tried again with the gateway's 0xFA 0x00
+    stuffing removed (see unstuff).
     """
     if stats is None:
         stats = new_stats()
@@ -205,21 +228,36 @@ def extract_wh65lp_payloads(buffer: bytearray, stats: Optional[Dict[str, int]] =
             return
 
         payload = bytes(buffer[:WH65LP_PAYLOAD_LEN])
+        ends = list(range(1, WH65LP_PAYLOAD_LEN + 1))
 
         try:
             decoded = decode_wh65lp_payload(payload)
         except FrameError as e:
-            stats[e.reason] = stats.get(e.reason, 0) + 1
-            logging.debug(f"Rejected frame {payload.hex(' ')}: {e}")
-            stats["skipped"] += 1
-            del buffer[0:1]
-            continue
+            cleaned, cleaned_ends = unstuff(buffer, WH65LP_PAYLOAD_LEN)
+            if cleaned == payload:
+                decoded = None
+            elif len(cleaned) < WH65LP_PAYLOAD_LEN:
+                # Stuffing made the frame longer than what has arrived so far.
+                return
+            else:
+                try:
+                    decoded = decode_wh65lp_payload(cleaned)
+                    payload, ends = cleaned, cleaned_ends
+                    stats["unstuffed"] += 1
+                except FrameError:
+                    decoded = None
+            if decoded is None:
+                stats[e.reason] = stats.get(e.reason, 0) + 1
+                logging.debug(f"Rejected frame {payload.hex(' ')}: {e}")
+                stats["skipped"] += 1
+                del buffer[0:1]
+                continue
 
         stats["frames"] += 1
         if pressure_valid(payload):
-            consumed = WH65LP_PAYLOAD_LEN
+            consumed = ends[WH65LP_PAYLOAD_LEN - 1]
         else:
-            consumed = WH65LP_CORE_LEN
+            consumed = ends[WH65LP_CORE_LEN - 1]
             stats["no_pressure"] += 1
             logging.debug(f"Frame without valid pressure block: {payload.hex(' ')}")
         yield decoded

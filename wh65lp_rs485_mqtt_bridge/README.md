@@ -69,6 +69,8 @@ The add-on publishes `online`/`offline` on `<mqtt_prefix>/status`. Entities beco
 - **CRC or checksum errors**: bytes arrive but are corrupted. Check the serial settings (9600 baud, 8N1, no flow control), the RS485 termination and the ground between station and gateway.
 - **bytes skipped, no errors**: the data contains no WH65LP frames; the serial settings are likely wrong.
 
+- **frames repaired (0xFA 0x00)**: the gateway inserts `00` after every `FA` byte. The add-on removes it, so this is harmless, but the gateway setting that causes it can be switched off if you find it.
+
 With `log_level: debug` every rejected frame is logged in hex.
 
 ## WH65LP information
